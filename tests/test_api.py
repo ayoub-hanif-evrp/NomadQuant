@@ -1,0 +1,224 @@
+"""HTTP API behavior without a network."""
+
+from pathlib import Path
+
+import pytest
+from fastapi.testclient import TestClient
+
+from nomadquant.api.app import create_app
+from nomadquant.api.schemas import (
+    BrokerAccountResponse,
+    BrokerPositionsResponse,
+    HealthResponse,
+    SystemStatusResponse,
+)
+from nomadquant.broker.alpaca import AlpacaReadOnlyBroker
+from tests.conftest import make_settings
+
+_HTTP_METHODS = {"get", "post", "put", "patch", "delete", "options", "head", "trace"}
+_PLANTED_SECRET = "PLANTED-ALPACA-SECRET-9f3c"
+
+
+class _Account:
+    equity = "100000"
+    buying_power = "25000.50"
+    cash = "80000"
+    currency = "USD"
+    status = "ACTIVE"
+
+
+class _Position:
+    symbol = "SPY"
+    qty = "0.15"
+    side = "long"
+    market_value = "80.10"
+    avg_entry_price = "530"
+    unrealized_pl = "0.40"
+
+
+class _ConnectedClient:
+    def get_account(self) -> _Account:
+        return _Account()
+
+    def get_all_positions(self) -> list[_Position]:
+        return [_Position()]
+
+
+class _LeakyClient:
+    def get_account(self) -> None:
+        raise RuntimeError(f"upstream failed token={_PLANTED_SECRET}")
+
+    def get_all_positions(self) -> None:
+        raise AssertionError("positions must not be requested after account failure")
+
+
+class _RateLimitError(Exception):
+    status_code = 429
+
+
+class _RateLimitedClient:
+    def get_account(self) -> None:
+        raise _RateLimitError(f"slow down {_PLANTED_SECRET}")
+
+    def get_all_positions(self) -> None:
+        raise AssertionError("positions must not be requested after rate limit")
+
+
+def test_health_without_credentials(client: TestClient) -> None:
+    response = client.get("/health")
+    assert response.status_code == 200
+    body = HealthResponse.model_validate(response.json())
+    assert body.status == "ok"
+
+
+def test_status_reports_paper_defaults(client: TestClient) -> None:
+    response = client.get("/api/system/status")
+    assert response.status_code == 200
+    body = SystemStatusResponse.model_validate(response.json())
+    assert body.trading_mode == "paper"
+    assert body.paper_only is True
+    assert body.allow_order_submission is False
+    assert body.initial_virtual_capital_usd == 100
+    assert body.credentials_configured is False
+    assert body.broker_status == "disconnected"
+    assert body.database_ok is True
+
+
+def test_disconnected_account_and_positions(client: TestClient) -> None:
+    account = client.get("/api/broker/account")
+    positions = client.get("/api/broker/positions")
+    assert account.status_code == 200
+    assert positions.status_code == 200
+    account_body = BrokerAccountResponse.model_validate(account.json())
+    positions_body = BrokerPositionsResponse.model_validate(positions.json())
+    assert account_body.status == "disconnected"
+    assert account_body.account is None
+    assert account_body.virtual_capital_usd == 100
+    assert positions_body.status == "disconnected"
+    assert positions_body.positions == []
+
+
+def test_mocked_alpaca_account_is_distinct_from_virtual_capital(tmp_path: Path) -> None:
+    settings = make_settings(
+        tmp_path,
+        alpaca_api_key="paper-key",
+        alpaca_api_secret="paper-secret",
+    )
+    app = create_app(settings)
+    app.state.broker = AlpacaReadOnlyBroker(settings, client=_ConnectedClient())
+    with TestClient(app) as test_client:
+        response = test_client.get("/api/broker/account")
+        positions = test_client.get("/api/broker/positions")
+    account_body = BrokerAccountResponse.model_validate(response.json())
+    positions_body = BrokerPositionsResponse.model_validate(positions.json())
+    assert account_body.status == "connected"
+    assert account_body.account is not None
+    assert account_body.account.equity == "100000"
+    assert account_body.account.buying_power == "25000.50"
+    assert account_body.virtual_capital_usd == 100
+    assert account_body.account.equity != "100"
+    assert positions_body.positions[0].symbol == "SPY"
+    assert positions_body.positions[0].qty == "0.15"
+
+
+def test_broker_errors_do_not_reveal_credentials(tmp_path: Path) -> None:
+    settings = make_settings(
+        tmp_path,
+        alpaca_api_key="paper-key",
+        alpaca_api_secret=_PLANTED_SECRET,
+    )
+    app = create_app(settings)
+    app.state.broker = AlpacaReadOnlyBroker(settings, client=_LeakyClient())
+    with TestClient(app) as test_client:
+        response = test_client.get("/api/broker/account")
+    assert response.status_code == 200
+    assert _PLANTED_SECRET not in response.text
+    body = BrokerAccountResponse.model_validate(response.json())
+    assert body.status == "error"
+    assert body.message == "Alpaca request failed. Details were withheld."
+
+
+def test_rate_limit_is_visible_and_redacted(tmp_path: Path) -> None:
+    settings = make_settings(
+        tmp_path,
+        alpaca_api_key="paper-key",
+        alpaca_api_secret=_PLANTED_SECRET,
+    )
+    app = create_app(settings)
+    app.state.broker = AlpacaReadOnlyBroker(settings, client=_RateLimitedClient())
+    with TestClient(app) as test_client:
+        response = test_client.get("/api/broker/positions")
+    assert response.status_code == 200
+    assert _PLANTED_SECRET not in response.text
+    body = BrokerPositionsResponse.model_validate(response.json())
+    assert body.status == "rate_limited"
+    assert body.positions == []
+
+
+def test_no_order_submission_endpoint(client: TestClient) -> None:
+    schema = client.app.openapi()
+    paths = schema["paths"]
+    assert set(paths) == {
+        "/health",
+        "/api/system/status",
+        "/api/broker/account",
+        "/api/broker/positions",
+    }
+    for path, operations in paths.items():
+        assert "order" not in path.lower()
+        methods = _HTTP_METHODS.intersection(operations)
+        assert methods == {"get"}
+
+
+def test_broker_module_has_no_order_methods() -> None:
+    source = Path("src/nomadquant/broker/alpaca.py").read_text(encoding="utf-8")
+    for token in (
+        "submit_order",
+        "cancel_order",
+        "replace_order",
+        "close_position",
+        "close_all_positions",
+        "liquidate",
+    ):
+        assert token not in source
+
+
+def test_trading_client_is_constructed_for_paper_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured: dict[str, object] = {}
+
+    class _DummyClient:
+        def __init__(
+            self,
+            key: str,
+            secret: str,
+            paper: bool = False,
+            url_override: str = "",
+        ) -> None:
+            captured["key"] = key
+            captured["secret"] = secret
+            captured["paper"] = paper
+            captured["url_override"] = url_override
+
+        def get_account(self) -> _Account:
+            return _Account()
+
+        def get_all_positions(self) -> list[_Position]:
+            return []
+
+    monkeypatch.setattr("alpaca.trading.client.TradingClient", _DummyClient)
+    settings = make_settings(
+        tmp_path,
+        alpaca_api_key="paper-key",
+        alpaca_api_secret="paper-secret",
+    )
+    broker = AlpacaReadOnlyBroker(settings)
+    account = broker.account()
+    assert account.status == "connected"
+    assert captured == {
+        "key": "paper-key",
+        "secret": "paper-secret",
+        "paper": True,
+        "url_override": "https://paper-api.alpaca.markets",
+    }

@@ -1,0 +1,29 @@
+# Local secrets. Never commit a filled-in copy.
+.env
+.env.local
+apps/web/.env.local
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+
+# Operational data generated at runtime
+data/*
+!data/.gitkeep
+*.db
+
+# Node
+apps/web/node_modules/
+apps/web/.next/
+apps/web/out/
+
+# OS / editor
+.DS_Store
+Thumbs.db
