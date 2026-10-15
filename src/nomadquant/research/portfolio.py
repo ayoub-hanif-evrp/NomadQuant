@@ -74,27 +74,27 @@ class Portfolio:
         reason: str,
     ) -> SimulatedTrade | None:
         fill = self._fill_price(price, buy=True)
-        affordable = self.cash
-        if affordable < self.costs.min_notional_usd:
+        commission = self.costs.commission_usd
+        budget = self.cash - commission
+        if budget < self.costs.min_notional_usd:
             return None
-        spend = min(notional, affordable)
+        spend = min(notional, budget)
         quantity = (spend / fill).quantize(
             Decimal(10) ** -self.costs.quantity_precision, rounding=ROUND_DOWN
         )
         if quantity <= 0:
             return None
-        costs = self._trade_costs(quantity * fill)
-        total = quantity * fill + costs["total"]
+        total = quantity * fill + commission
         if total > self.cash:
-            quantity = ((self.cash - costs["total"]) / fill).quantize(
+            quantity = ((self.cash - commission) / fill).quantize(
                 Decimal(10) ** -self.costs.quantity_precision, rounding=ROUND_DOWN
             )
             if quantity <= 0:
                 return None
-            costs = self._trade_costs(quantity * fill)
-            total = quantity * fill + costs["total"]
+            total = quantity * fill + commission
         if total > self.cash:
             return None
+        costs = self._attribution(price, quantity)
         self.cash -= total
         self.positions[symbol] = self.quantity(symbol) + quantity
         return SimulatedTrade(
@@ -131,8 +131,9 @@ class Portfolio:
         if quantity <= 0:
             return None
         proceeds = quantity * fill
-        costs = self._trade_costs(proceeds)
-        self.cash += proceeds - costs["total"]
+        commission = self.costs.commission_usd
+        costs = self._attribution(price, quantity)
+        self.cash += proceeds - commission
         remaining = held - quantity
         if remaining == 0:
             self.positions.pop(symbol, None)
@@ -158,13 +159,12 @@ class Portfolio:
         slip = mid * (self.costs.slippage_bps / Decimal("10000"))
         return mid + half_spread + slip if buy else mid - half_spread - slip
 
-    def _trade_costs(self, notional: Decimal) -> dict[str, Decimal]:
-        commission = self.costs.commission_usd
-        spread = notional * (self.costs.spread_bps / Decimal("10000"))
-        slippage = notional * (self.costs.slippage_bps / Decimal("10000"))
+    def _attribution(self, mid: Decimal, quantity: Decimal) -> dict[str, Decimal]:
+        """Explain fill-versus-mid cost. Cash is charged only the fill and commission."""
+        half_spread = mid * (self.costs.spread_bps / Decimal("10000")) / Decimal("2")
+        slip = mid * (self.costs.slippage_bps / Decimal("10000"))
         return {
-            "commission": commission,
-            "spread": spread,
-            "slippage": slippage,
-            "total": commission + spread + slippage,
+            "commission": self.costs.commission_usd,
+            "spread": quantity * half_spread,
+            "slippage": quantity * slip,
         }

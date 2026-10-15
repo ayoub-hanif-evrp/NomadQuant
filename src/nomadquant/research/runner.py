@@ -14,6 +14,8 @@ from nomadquant.research import ENGINE_VERSION
 from nomadquant.research.engine import DailyBacktestEngine, IncompleteResearchData, SessionBar
 from nomadquant.research.fingerprint import dataset_fingerprint
 from nomadquant.research.models import ExperimentConfig, StrategyResult
+from nomadquant.research.replay import replay_run
+from nomadquant.research.runcard import build_run_card
 from nomadquant.research.store import ResearchStore
 
 
@@ -164,7 +166,8 @@ def run_experiment(
         for strategy_id, result in results.items():
             payload = _result_dict(result)
             research.save_strategy_result(run_id, strategy_id, payload)
-            for decision in result.decisions[:50]:
+            sample = result.decisions[:50]
+            for decision in sample:
                 audit.record_decision(
                     source_type="backtest",
                     symbols=[decision.symbol],
@@ -183,6 +186,10 @@ def run_experiment(
                         "feature_inputs": decision.feature_inputs,
                         "is_simulated": True,
                         "is_broker_order": False,
+                        "audit_sample": True,
+                        "sample_limit": 50,
+                        "complete_history": "research.simulated_decisions",
+                        "complete_decision_count": len(result.decisions),
                     },
                 )
         primary_test = next((item for item in primary.metrics if item.window == "test"), None)
@@ -217,6 +224,21 @@ def run_experiment(
                 "strategies": list(results.keys()),
             },
         )
+        stored = research.get_run(run_id)
+        replay = replay_run(run_id, research_path=research_path, market_path=market_path)
+        card = build_run_card(
+            run_id=run_id,
+            config=config,
+            git_commit=None if stored is None else stored["git_commit"],
+            fingerprint=fingerprint,
+            metrics=research.metrics(run_id),
+            decision_count=sum(len(item.decisions) for item in results.values()),
+            trade_count=sum(len(item.trades) for item in results.values()),
+            replay_verdict=str(replay["verdict"]),
+            caveats=caveats,
+            status="succeeded",
+        )
+        research.save_run_card(run_id, card, datetime.now(UTC).isoformat())
         return {"run_id": run_id, "audit_run_id": audit_run_id, "fingerprint": fingerprint}
     except (IncompleteResearchData, ValueError, RuntimeError) as exc:
         message = str(exc)

@@ -318,6 +318,20 @@ export function ResearchLab() {
         <DecisionInspect detail={decisionDetail} decisionId={selectedDecisionId} />
       ) : null}
 
+      <Panel>
+        <h2 className="kicker">Future research agents</h2>
+        <p className="mt-3 text-sm text-[var(--muted)]">
+          No agent runs yet. A later local Ollama workflow can use the read-only research tools. It will
+          not receive broker credentials or an order method.
+        </p>
+        <dl className="mt-4 space-y-2 text-sm">
+          <div className="flex justify-between gap-4"><dt className="text-[var(--muted)]">Role</dt><dd>Not configured</dd></div>
+          <div className="flex justify-between gap-4"><dt className="text-[var(--muted)]">Ollama model</dt><dd>Not measured</dd></div>
+          <div className="flex justify-between gap-4"><dt className="text-[var(--muted)]">Tool calls</dt><dd>None</dd></div>
+          <div className="flex justify-between gap-4"><dt className="text-[var(--muted)]">Skeptic objections</dt><dd>None</dd></div>
+        </dl>
+      </Panel>
+
       {failedRuns.length > 0 ? (
         <Panel>
           <h2 className="kicker">Failed runs history</h2>
@@ -442,7 +456,9 @@ function RunDetail({ bundle }: { bundle: RunBundle }) {
         {replay ? (
           <>
             <div className="mt-3 flex flex-wrap gap-2">
-              <Badge tone={replay.ok ? "ok" : "err"}>{replay.ok ? "Replay OK" : "Replay mismatches"}</Badge>
+              <Badge tone={replay.verdict === "PASS" ? "ok" : replay.verdict === "FAIL" ? "err" : "info"}>
+                {replay.verdict}
+              </Badge>
               <Badge tone="info">{replay.label}</Badge>
             </div>
             <p className="mt-3 text-sm text-[var(--muted)]">

@@ -5,9 +5,10 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Literal
+from zoneinfo import ZoneInfo
 
 from nomadquant.contracts import BacktestConfig, BacktestResult, Strategy, StrategyContext
 from nomadquant.marketdata.availability import modeled_available_at
@@ -223,7 +224,15 @@ class DailyBacktestEngine:
                 slice_points = equity_points
             if not slice_points:
                 continue
-            start_cap = slice_points[0].equity
+            if name == "full" or not equity_points:
+                opening = config.initial_capital_usd
+            else:
+                prior = [
+                    point
+                    for point in equity_points
+                    if point.session_date < slice_points[0].session_date
+                ]
+                opening = prior[-1].equity if prior else config.initial_capital_usd
             slice_trades = [
                 trade
                 for trade in trades
@@ -236,7 +245,8 @@ class DailyBacktestEngine:
                     window=name,
                     equity=slice_points,
                     trades=slice_trades,
-                    start_capital=start_cap,
+                    start_capital=opening,
+                    opening_equity=opening,
                 )
             )
         return StrategyResult(
@@ -253,7 +263,16 @@ class IncompleteResearchData(RuntimeError):
 
 
 def bar_open_timestamp(session: date) -> str:
-    return datetime(session.year, session.month, session.day, 9, 30).isoformat() + "-05:00"
+    """09:30 America/New_York, including daylight saving time, as UTC."""
+    local = datetime(
+        session.year,
+        session.month,
+        session.day,
+        9,
+        30,
+        tzinfo=ZoneInfo("America/New_York"),
+    )
+    return local.astimezone(UTC).isoformat()
 
 
 def _is_month_start(session: date, sessions: list[date]) -> bool:

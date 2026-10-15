@@ -40,9 +40,13 @@ Local raw daily bars for SPY and QQQ, one feed at a time, with modeled availabil
 
 An operational audit log records startup, broker reads, and market-data jobs. Decision traces have a schema. The dashboard shows those real records and truthful empty states.
 
-## Phase 3 — Quant Research Lab (current)
+## Phase 3 — Quant Research Lab
 
 One event-driven daily backtest engine, a pre-registered SPY time-series momentum hypothesis (price-only), three benchmarks, chronological train/validation/test reporting, decision replay, research CLI/API, and a Research Lab dashboard. Results are labeled backtests. They are not paper fills and not statistical claims.
+
+## Phase 3.1 — scientific trust layer (current)
+
+Cost accounting charges spread and slippage once. Open timestamps use America/New_York. Replay recomputes from the stored bars. Experiment ids are immutable. `nomadquant-research verify` reports PASS, FAIL, NOT_EVALUABLE, or INVALID_ARTIFACT. Statistical significance stays NOT_EVALUABLE.
 
 ## Phase 4 — risk engine before any paper order
 

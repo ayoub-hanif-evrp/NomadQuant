@@ -11,6 +11,7 @@ from nomadquant.audit import AuditLog
 from nomadquant.config import get_settings
 from nomadquant.research.replay import replay_run
 from nomadquant.research.runner import load_config, run_experiment
+from nomadquant.research.verify import verify_run
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -22,6 +23,9 @@ def main(argv: list[str] | None = None) -> None:
 
     replay_parser = sub.add_parser("replay", help="Replay stored simulated decisions.")
     replay_parser.add_argument("--run-id", required=True, type=int)
+
+    verify_parser = sub.add_parser("verify", help="Verify a stored research run.")
+    verify_parser.add_argument("--run-id", required=True, type=int)
 
     args = parser.parse_args(argv)
     settings = get_settings()
@@ -36,6 +40,17 @@ def main(argv: list[str] | None = None) -> None:
             audit=audit,
         )
         print(json.dumps(result, indent=2, default=str))
+        return
+
+    if args.command == "verify":
+        result = verify_run(
+            args.run_id,
+            research_path=settings.research_path,
+            market_path=settings.market_data_path,
+        )
+        print(json.dumps(result, indent=2, default=str))
+        if result["verdict"] not in {"PASS", "NOT_EVALUABLE"}:
+            raise SystemExit(1)
         return
 
     if args.command == "replay":

@@ -752,6 +752,7 @@ export type ResearchReplay = {
   mismatch_count: number;
   mismatches: Record<string, unknown>[];
   ok: boolean;
+  verdict: string;
   label: string;
   is_broker_execution: false;
 };
@@ -1043,6 +1044,7 @@ export function parseResearchReplay(value: unknown): ResearchReplay {
     typeof value.checked_decisions !== "number" ||
     typeof value.mismatch_count !== "number" ||
     typeof value.ok !== "boolean" ||
+    typeof value.verdict !== "string" ||
     typeof value.label !== "string" ||
     !Array.isArray(value.mismatches)
   ) {
@@ -1057,6 +1059,7 @@ export function parseResearchReplay(value: unknown): ResearchReplay {
     mismatch_count: value.mismatch_count,
     mismatches: value.mismatches.map((item) => readPayload(item)),
     ok: value.ok,
+    verdict: value.verdict,
     label: value.label,
     is_broker_execution: false,
   };

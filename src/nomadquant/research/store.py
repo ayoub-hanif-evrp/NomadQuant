@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 from pathlib import Path
@@ -96,9 +97,19 @@ CREATE TABLE IF NOT EXISTS simulated_decisions (
     audit_decision_id INTEGER,
     FOREIGN KEY (run_id) REFERENCES experiment_runs(id)
 );
+CREATE TABLE IF NOT EXISTS run_cards (
+    run_id INTEGER PRIMARY KEY,
+    created_at TEXT NOT NULL,
+    card_json TEXT NOT NULL,
+    sha256 TEXT NOT NULL
+);
 CREATE INDEX IF NOT EXISTS experiment_runs_exp ON experiment_runs (experiment_id);
 CREATE INDEX IF NOT EXISTS decisions_run ON simulated_decisions (run_id, session_date);
 """
+
+
+class ExperimentImmutableError(ValueError):
+    """Raised when a caller tries to replace a registered experiment."""
 
 
 class ResearchStore:
@@ -109,6 +120,18 @@ class ResearchStore:
             connection.executescript(SCHEMA)
 
     def upsert_experiment(self, row: dict[str, Any]) -> None:
+        """Insert an experiment. The same id cannot change its hypothesis or config."""
+        existing = self.get_experiment(str(row["experiment_id"]))
+        if existing is not None:
+            if (
+                existing["hypothesis_id"] != row["hypothesis_id"]
+                or existing["config"] != row["config"]
+            ):
+                raise ExperimentImmutableError(
+                    f"Experiment {row['experiment_id']} already exists with a different "
+                    "hypothesis or configuration. Register a new experiment id."
+                )
+            return
         with self._connect() as connection:
             connection.execute(
                 """
@@ -116,11 +139,6 @@ class ResearchStore:
                     experiment_id, hypothesis_id, title, description, citations_json,
                     config_json, created_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(experiment_id) DO UPDATE SET
-                    title=excluded.title,
-                    description=excluded.description,
-                    citations_json=excluded.citations_json,
-                    config_json=excluded.config_json
                 """,
                 (
                     row["experiment_id"],
@@ -356,6 +374,34 @@ class ResearchStore:
         with self._connect() as connection:
             rows = connection.execute(query, params).fetchall()
         return [_decision(row) for row in rows]
+
+    def save_run_card(self, run_id: int, card: dict[str, Any], created_at: str) -> str:
+        encoded = json.dumps(card, sort_keys=True, default=str)
+        digest = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO run_cards (run_id, created_at, card_json, sha256)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(run_id) DO NOTHING
+                """,
+                (run_id, created_at, encoded, digest),
+            )
+        return digest
+
+    def get_run_card(self, run_id: int) -> dict[str, Any] | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM run_cards WHERE run_id = ?", (run_id,)
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "run_id": row["run_id"],
+            "created_at": row["created_at"],
+            "sha256": row["sha256"],
+            "card": json.loads(row["card_json"]),
+        }
 
     def get_decision(self, decision_id: int) -> dict[str, Any] | None:
         with self._connect() as connection:

@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from nomadquant.research.replay import replay_run
 from nomadquant.research.store import ResearchStore
+from nomadquant.research.verify import verify_run
 
 router = APIRouter(prefix="/api/research")
 
@@ -131,6 +132,27 @@ def decision_detail(decision_id: int, request: Request) -> dict[str, Any]:
     if item is None:
         raise HTTPException(status_code=404, detail="Decision not found.")
     return item
+
+
+@router.get("/runs/{run_id}/card")
+def run_card(run_id: int, request: Request) -> dict[str, Any]:
+    card = _store(request).get_run_card(run_id)
+    if card is None:
+        raise HTTPException(status_code=404, detail="Run card not found.")
+    return card
+
+
+@router.get("/runs/{run_id}/verify")
+def run_verify(run_id: int, request: Request) -> dict[str, Any]:
+    settings = request.app.state.settings
+    report = verify_run(
+        run_id,
+        research_path=settings.research_path,
+        market_path=settings.market_data_path,
+    )
+    if report["verdict"] == "INVALID_ARTIFACT" and report["checks"][0]["name"] == "run_exists":
+        raise HTTPException(status_code=404, detail="Research run not found.")
+    return report
 
 
 @router.get("/runs/{run_id}/replay")

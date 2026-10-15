@@ -16,6 +16,7 @@ def compute_metrics(
     equity: list[EquityPoint],
     trades: list[SimulatedTrade],
     start_capital: Decimal,
+    opening_equity: Decimal | None = None,
 ) -> MetricSet:
     unavailable: list[str] = []
     if start_capital <= 0:
@@ -61,10 +62,12 @@ def compute_metrics(
     gross_return = ((end_capital + costs) / start_capital) - _ONE
     max_dd = max((point.drawdown for point in equity), default=_ZERO)
 
-    returns = _daily_returns(equity)
+    returns = _daily_returns(
+        equity, opening_equity if opening_equity is not None else start_capital
+    )
     vol = _annualized_vol(returns)
-    sharpe = _ratio(returns, vol, downside=False)
-    sortino = _ratio(returns, vol, downside=True)
+    sharpe = _sharpe(returns, vol)
+    sortino = _sortino(returns)
     if vol is None:
         unavailable.append("annualized_volatility")
     if sharpe is None:
@@ -95,14 +98,14 @@ def compute_metrics(
     )
 
 
-def _daily_returns(equity: list[EquityPoint]) -> list[Decimal]:
+def _daily_returns(equity: list[EquityPoint], opening: Decimal) -> list[Decimal]:
     out: list[Decimal] = []
-    for index in range(1, len(equity)):
-        previous = equity[index - 1].equity
-        current = equity[index].equity
-        if previous <= 0:
-            continue
-        out.append((current / previous) - _ONE)
+    previous = opening
+    for point in equity:
+        current = point.equity
+        if previous > 0:
+            out.append((current / previous) - _ONE)
+        previous = current
     return out
 
 
@@ -118,24 +121,27 @@ def _annualized_vol(returns: list[Decimal]) -> Decimal | None:
     return Decimal(str(sqrt(float(variance)))) * Decimal(str(sqrt(float(TRADING_DAYS))))
 
 
-def _ratio(returns: list[Decimal], vol: Decimal | None, *, downside: bool) -> Decimal | None:
-    if len(returns) < 2:
+def _sharpe(returns: list[Decimal], vol: Decimal | None) -> Decimal | None:
+    if len(returns) < 2 or vol is None or vol == 0:
         return None
     mean = sum(returns, start=_ZERO) / Decimal(len(returns))
-    if downside:
-        downs = [item for item in returns if item < 0]
-        if len(downs) < 1:
-            return None
-        down_mean = sum(downs, start=_ZERO) / Decimal(len(downs))
-        variance = sum(((item - down_mean) ** 2 for item in downs), start=_ZERO) / Decimal(
-            max(len(downs) - 1, 1)
-        )
-        if variance <= 0:
-            return None
-        denom = Decimal(str(sqrt(float(variance)))) * Decimal(str(sqrt(float(TRADING_DAYS))))
-    else:
-        if vol is None or vol == 0:
-            return None
-        denom = vol
-    annualized_mean = mean * TRADING_DAYS
-    return annualized_mean / denom
+    return (mean * TRADING_DAYS) / vol
+
+
+def _sortino(returns: list[Decimal]) -> Decimal | None:
+    """Downside deviation versus zero, using every observation.
+
+    Negative-only standard deviation is not used. A path with no losses is
+    undefined rather than infinite.
+    """
+    if len(returns) < 2:
+        return None
+    squares = sum((min(item, _ZERO) ** 2 for item in returns), start=_ZERO)
+    if squares <= 0:
+        return None
+    downside = Decimal(str(sqrt(float(squares / Decimal(len(returns))))))
+    if downside == 0:
+        return None
+    annualized = downside * Decimal(str(sqrt(float(TRADING_DAYS))))
+    mean = sum(returns, start=_ZERO) / Decimal(len(returns))
+    return (mean * TRADING_DAYS) / annualized
