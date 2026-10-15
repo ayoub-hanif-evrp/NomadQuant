@@ -1,0 +1,48 @@
+{
+  "experiment_id": "spy-tsmom-v1",
+  "hypothesis_id": "H-SPY-TSMOM-2012-adapted",
+  "title": "SPY long-only time-series momentum (price-only)",
+  "description": "On SPY, a pre-specified long-only time-series momentum rule, adapted from Moskowitz, Ooi & Pedersen (2012), may offer improved downside-risk characteristics relative to passive SPY exposure over selected historical regimes, after realistic execution costs. The original paper studied a broad futures universe; this experiment tests a single US ETF with $100 capital and no leverage. This is a hypothesis, not a claim of profit.",
+  "citations": [
+    "Moskowitz, Tobias J., Yao Hua Ooi, and Lasse Heje Pedersen. 2012. Time Series Momentum. Journal of Financial Economics 104 (2): 228-250. https://doi.org/10.1016/j.jfineco.2011.11.003",
+    "White, Halbert. 2000. A Reality Check for Data Snooping. Econometrica 68 (5): 1097-1126. https://doi.org/10.1111/1468-0262.00152",
+    "Bailey, David H., and Marcos Lopez de Prado. 2014. The Deflated Sharpe Ratio. Journal of Portfolio Management 40 (5): 94-107. https://doi.org/10.3905/jpm.2014.40.5.094"
+  ],
+  "symbols": ["SPY"],
+  "feed": "sip",
+  "adjustment": "raw",
+  "research_mode": "price_only",
+  "data_start": "2018-01-02",
+  "data_end": "2026-10-14",
+  "evaluation_start": "2019-02-01",
+  "evaluation_end": "2026-10-14",
+  "windows": {
+    "train_start": "2019-02-01",
+    "train_end": "2021-12-31",
+    "validation_start": "2022-01-01",
+    "validation_end": "2023-12-29",
+    "test_start": "2024-01-02",
+    "test_end": "2026-10-14"
+  },
+  "strategy_id": "spy_tsmom_12_1",
+  "lookback_sessions": 252,
+  "skip_sessions": 21,
+  "rebalance": "monthly_first_session",
+  "initial_capital_usd": "100",
+  "costs": {
+    "commission_usd": "0",
+    "spread_bps": "1",
+    "slippage_bps": "1",
+    "min_notional_usd": "1",
+    "quantity_precision": 6
+  },
+  "benchmarks": ["spy_buy_hold", "cash", "tsmom_6m"],
+  "caveats": [
+    "Price-only research: raw closes exclude dividends; not a total-return comparison.",
+    "Signal uses completed session closes; simulated fills occur at the next session open.",
+    "Parameters were fixed before examining results. No optimization grid was run.",
+    "Train/validation/test windows document sample regimes. Parameters were not fitted on train.",
+    "Sharpe and Sortino are descriptive only. Short samples and selection bias remain."
+  ],
+  "engine_version": "1.0.0"
+}

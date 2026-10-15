@@ -17,6 +17,7 @@ dependencies = [
 [project.scripts]
 nomadquant-api = "nomadquant.cli:main"
 nomadquant-data = "nomadquant.marketdata.cli:main"
+nomadquant-research = "nomadquant.research.cli:main"
 
 [dependency-groups]
 dev = [

@@ -42,3 +42,12 @@ def previous_session(day: date) -> date:
             return cursor
         cursor -= timedelta(days=1)
     raise RuntimeError("No NYSE session was found in the previous two weeks.")
+
+
+def next_session(day: date) -> date:
+    cursor = day + timedelta(days=1)
+    for _ in range(14):
+        if is_session(cursor):
+            return cursor
+        cursor += timedelta(days=1)
+    raise RuntimeError("No NYSE session was found in the next two weeks.")

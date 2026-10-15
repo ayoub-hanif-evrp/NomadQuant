@@ -227,6 +227,15 @@ def test_no_order_submission_endpoint(client: TestClient) -> None:
         "/api/observability/decision-traces",
         "/api/observability/decision-traces/{decision_id}",
         "/api/observability/system-health",
+        "/api/research/experiments",
+        "/api/research/experiments/{experiment_id}",
+        "/api/research/runs",
+        "/api/research/runs/{run_id}",
+        "/api/research/runs/{run_id}/equity",
+        "/api/research/runs/{run_id}/trades",
+        "/api/research/runs/{run_id}/decisions",
+        "/api/research/decisions/{decision_id}",
+        "/api/research/runs/{run_id}/replay",
     }
     for path, operations in paths.items():
         assert "order" not in path.lower()

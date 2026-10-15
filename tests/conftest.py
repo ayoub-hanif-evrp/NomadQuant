@@ -19,6 +19,8 @@ _ENV_VARS = (
     "API_HOST",
     "API_PORT",
     "DATABASE_PATH",
+    "MARKET_DATA_PATH",
+    "RESEARCH_PATH",
 )
 
 
@@ -33,6 +35,7 @@ def make_settings(tmp_path: Path, **overrides: object) -> Settings:
     values: dict[str, object] = {
         "database_path": str(tmp_path / "nomadquant.db"),
         "market_data_path": str(tmp_path / "market.sqlite"),
+        "research_path": str(tmp_path / "research.sqlite"),
     }
     values.update(overrides)
     return Settings(_env_file=None, **values)

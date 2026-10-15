@@ -36,13 +36,13 @@ An LLM must not be able to skip the risk check or call broker order tools. The s
 
 Local raw daily bars for SPY and QQQ, one feed at a time, with modeled availability at 16:30 America/New_York and a separate first-retrieved timestamp. Conflicting downloads are kept as revisions. This is not a verified point-in-time archive and not a dividend-adjusted total-return series. Still no orders and no strategy claim. See [MARKET_DATA.md](MARKET_DATA.md).
 
-## Phase 2B — observability (current)
+## Phase 2B — observability
 
-An operational audit log records startup, broker reads, and market-data jobs. Decision traces have a schema and an empty page until a later component records one. The dashboard shows those real records and truthful empty states. It does not show fabricated performance.
+An operational audit log records startup, broker reads, and market-data jobs. Decision traces have a schema. The dashboard shows those real records and truthful empty states.
 
-## Phase 3 — one reproducible backtest
+## Phase 3 — Quant Research Lab (current)
 
-Implement `BacktestEngine` for a single pre-registered hypothesis, with costs, chronological splits, and the three benchmarks in the research standards (buy-and-hold SPY, cash, and a simple baseline). Record every trial. Label the output as a backtest.
+One event-driven daily backtest engine, a pre-registered SPY time-series momentum hypothesis (price-only), three benchmarks, chronological train/validation/test reporting, decision replay, research CLI/API, and a Research Lab dashboard. Results are labeled backtests. They are not paper fills and not statistical claims.
 
 ## Phase 4 — risk engine before any paper order
 

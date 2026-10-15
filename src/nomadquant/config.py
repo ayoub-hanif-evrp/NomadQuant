@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     api_port: int = Field(default=8000, ge=1, le=65535)
     database_path: str = "data/nomadquant.db"
     market_data_path: str = "data/market.sqlite"
+    research_path: str = "data/research.sqlite"
 
     @field_validator("trading_mode")
     @classmethod

@@ -1,8 +1,11 @@
-"""Local audit log for operational events, runs, and future decision traces.
+"""Local audit log for operational events, runs, and decision traces.
 
 This store is separate from market bars. It never records credentials.
+JSON payloads are never truncated into invalid JSON. Oversized evidence is
+stored as content-addressed artifacts with a safe reference in the row.
 """
 
+import hashlib
 import json
 import sqlite3
 from datetime import UTC, datetime
@@ -28,6 +31,25 @@ COMPONENTS = frozenset(
 LEVELS = frozenset({"info", "warning", "error"})
 STATUSES = frozenset({"started", "succeeded", "failed", "warning", "skipped", "empty"})
 ACTIONS = frozenset({"buy", "sell", "hold", "reject", "no_trade"})
+TEXT_LIMIT = 2000
+INLINE_PAYLOAD_LIMIT = 8192
+SENSITIVE_KEYS = frozenset(
+    {
+        "api_key",
+        "api_secret",
+        "secret",
+        "password",
+        "token",
+        "authorization",
+        "bearer",
+        "alpaca_api_key",
+        "alpaca_api_secret",
+        "access_token",
+        "refresh_token",
+        "private_key",
+        ".env",
+    }
+)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS audit_events (
@@ -79,6 +101,13 @@ CREATE TABLE IF NOT EXISTS decision_traces (
     model_provider TEXT,
     confidence TEXT,
     explanation_json TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS audit_artifacts (
+    sha256 TEXT PRIMARY KEY,
+    created_at TEXT NOT NULL,
+    media_type TEXT NOT NULL,
+    byte_size INTEGER NOT NULL,
+    content TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS audit_events_created ON audit_events (created_at);
 CREATE INDEX IF NOT EXISTS audit_events_component ON audit_events (component);
@@ -133,7 +162,7 @@ class AuditLog:
                     self._clean(summary),
                     self._clean(correlation_id),
                     run_id,
-                    self._payload(payload or {}),
+                    self._store_payload(payload or {}),
                     self._clean(error_code),
                     self._clean(error_message_safe),
                 ),
@@ -168,7 +197,7 @@ class AuditLog:
                     self._clean(title),
                     self._clean(summary),
                     self._clean(correlation_id),
-                    self._payload(payload or {}),
+                    self._store_payload(payload or {}),
                     external_key,
                 ),
             )
@@ -186,6 +215,18 @@ class AuditLog:
     ) -> None:
         _require(status, STATUSES, "status")
         with self._connect() as connection:
+            row = connection.execute(
+                "SELECT payload_json FROM runs WHERE id = ?", (run_id,)
+            ).fetchone()
+            if row is None:
+                raise ValueError(f"Unknown run id {run_id}.")
+            existing = self._resolve_payload_text(connection, str(row["payload_json"]))
+            merged = {**existing, **(payload or {})}
+            if "config" in existing and "config" not in (payload or {}):
+                merged["config"] = existing["config"]
+            for key in ("dataset", "hypothesis_id", "experiment_id", "engine_version"):
+                if key in existing and key not in (payload or {}):
+                    merged[key] = existing[key]
             connection.execute(
                 """
                 UPDATE runs
@@ -197,12 +238,27 @@ class AuditLog:
                     _now(),
                     status,
                     self._clean(summary),
-                    self._payload(payload or {}),
+                    self._encode_payload(connection, merged),
                     self._clean(error_code),
                     self._clean(error_message_safe),
                     run_id,
                 ),
             )
+
+    def get_artifact(self, sha256: str) -> dict[str, Any] | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM audit_artifacts WHERE sha256 = ?", (sha256,)
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "sha256": row["sha256"],
+            "created_at": row["created_at"],
+            "media_type": row["media_type"],
+            "byte_size": row["byte_size"],
+            "content": row["content"],
+        }
 
     def record_decision(
         self,
@@ -252,7 +308,7 @@ class AuditLog:
                     broker_event_id,
                     model_provider,
                     confidence,
-                    self._payload(explanation or {}),
+                    self._store_payload(explanation or {}),
                 ),
             )
             return int(cursor.lastrowid or 0)
@@ -360,7 +416,7 @@ class AuditLog:
                         "Market data sync",
                         self._clean(summary),
                         key,
-                        self._payload(payload),
+                        self._store_payload(payload),
                         self._clean(str(row["error_code"])),
                         key,
                     ),
@@ -380,15 +436,31 @@ class AuditLog:
         with self._connect() as connection:
             total = int(connection.execute(count_query, params).fetchone()[0])
             rows = connection.execute(query, [*params, limit, offset]).fetchall()
-        return [mapper(row) for row in rows], total
+            items = [self._hydrate(connection, mapper(row)) for row in rows]
+        return items, total
 
     def _one(self, query: str, params: tuple[object, ...], mapper: Any) -> dict[str, Any] | None:
         with self._connect() as connection:
             row = connection.execute(query, params).fetchone()
-        if row is None:
-            return None
-        mapped: dict[str, Any] = mapper(row)
+            if row is None:
+                return None
+            mapped: dict[str, Any] = self._hydrate(connection, mapper(row))
         return mapped
+
+    def _hydrate(self, connection: sqlite3.Connection, item: dict[str, Any]) -> dict[str, Any]:
+        if "payload" in item and isinstance(item["payload"], dict):
+            digest = item["payload"].get("_artifact_sha256")
+            if isinstance(digest, str):
+                item["payload"] = self._resolve_payload_text(
+                    connection, json.dumps({"_artifact_sha256": digest})
+                )
+        if "explanation" in item and isinstance(item["explanation"], dict):
+            digest = item["explanation"].get("_artifact_sha256")
+            if isinstance(digest, str):
+                item["explanation"] = self._resolve_payload_text(
+                    connection, json.dumps({"_artifact_sha256": digest})
+                )
+        return item
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.path)
@@ -396,10 +468,48 @@ class AuditLog:
         return connection
 
     def _clean(self, value: str) -> str:
-        return redact_text(value, self._secrets)[:2000]
+        return redact_text(value, self._secrets)[:TEXT_LIMIT]
 
-    def _payload(self, payload: dict[str, Any]) -> str:
-        return self._clean(json.dumps(payload, ensure_ascii=True, default=str))
+    def _store_payload(self, payload: dict[str, Any]) -> str:
+        with self._connect() as connection:
+            return self._encode_payload(connection, payload)
+
+    def _encode_payload(self, connection: sqlite3.Connection, payload: dict[str, Any]) -> str:
+        cleaned = _sanitize(payload, self._secrets)
+        encoded = json.dumps(cleaned, ensure_ascii=True, default=str, separators=(",", ":"))
+        encoded = redact_text(encoded, self._secrets)
+        if len(encoded.encode("utf-8")) <= INLINE_PAYLOAD_LIMIT:
+            return encoded
+        digest = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO audit_artifacts
+            (sha256, created_at, media_type, byte_size, content)
+            VALUES (?, ?, 'application/json', ?, ?)
+            """,
+            (digest, _now(), len(encoded.encode("utf-8")), encoded),
+        )
+        ref = {
+            "_artifact_sha256": digest,
+            "_artifact_bytes": len(encoded.encode("utf-8")),
+        }
+        return json.dumps(ref, ensure_ascii=True, separators=(",", ":"))
+
+    def _resolve_payload_text(self, connection: sqlite3.Connection, raw: str) -> dict[str, Any]:
+        parsed = _loads(raw)
+        digest = parsed.get("_artifact_sha256")
+        if not isinstance(digest, str):
+            return parsed
+        row = connection.execute(
+            "SELECT content FROM audit_artifacts WHERE sha256 = ?", (digest,)
+        ).fetchone()
+        if row is None:
+            return {
+                "_artifact_sha256": digest,
+                "_artifact_missing": True,
+                "warning": "Referenced audit artifact is missing.",
+            }
+        return _loads(str(row["content"]))
 
 
 def _require(value: str, allowed: frozenset[str], label: str) -> None:
@@ -449,6 +559,25 @@ def _loads(value: str) -> dict[str, Any]:
     if isinstance(parsed, dict):
         return parsed
     return {}
+
+
+def _sanitize(value: object, secrets: list[str]) -> object:
+    if isinstance(value, dict):
+        cleaned: dict[str, Any] = {}
+        for key, item in value.items():
+            lowered = str(key).lower()
+            if lowered in SENSITIVE_KEYS or any(
+                token in lowered for token in ("secret", "password", "token", "api_key")
+            ):
+                cleaned[str(key)] = "[REDACTED]"
+                continue
+            cleaned[str(key)] = _sanitize(item, secrets)
+        return cleaned
+    if isinstance(value, list):
+        return [_sanitize(item, secrets) for item in value]
+    if isinstance(value, str):
+        return redact_text(value, secrets)
+    return value
 
 
 def _blank(value: object) -> str | None:

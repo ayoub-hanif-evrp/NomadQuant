@@ -50,4 +50,4 @@ The $100 virtual capital is a constraint on what is worth testing. It is not a p
 
 ## What this phase claims
 
-Nothing about returns. The standards exist so later work has a bar before the first experiment is run.
+Phase 3 can produce a labeled offline **backtest** for one pre-registered price-only SPY time-series momentum hypothesis, with benchmarks and inspectable simulated decisions. It does not claim statistical significance, total-return economic performance, or profitability.

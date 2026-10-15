@@ -27,9 +27,10 @@ The machine has 16 GB of RAM and a single developer. Separate services for data,
 | `nomadquant.config` | Fail-closed settings. Paper mode, paper URL, disabled orders, $100 virtual capital, local bind. |
 | `nomadquant.logging` | JSON logs. Configured secrets and assignment-style credentials are redacted. |
 | `nomadquant.db` | SQLite file for operational events such as process startup. Not a research store. |
-| `nomadquant.audit` | Structured events, runs, and future decision traces in that same operational file. |
+| `nomadquant.audit` | Structured events, runs, decision traces, and content-addressed artifacts. |
 | `nomadquant.broker` | Read-only Alpaca paper account and positions. |
 | `nomadquant.marketdata` | Daily-bar download, validation, SQLite store, and cutoff reads. |
+| `nomadquant.research` | Experiment registry, offline daily backtest, metrics, and decision replay. |
 | `nomadquant.api` | Typed GET routes. |
 | `nomadquant.contracts` | Protocols for data, research, strategy, backtest, risk, and paper-broker work. |
 
@@ -52,9 +53,13 @@ The machine has 16 GB of RAM and a single developer. Separate services for data,
 
 `SqliteMarketDataProvider` implements `MarketDataProvider` for one feed. Reads compare the requested cutoff with modeled availability (16:30 America/New_York), not with the bar timestamp. The research database is `data/market.sqlite`. The API status route only reads it. Downloads happen through `nomadquant-data`, which calls `https://data.alpaca.markets` and does not use the trading client. Details are in [MARKET_DATA.md](MARKET_DATA.md) and [DATA_QUALITY.md](DATA_QUALITY.md).
 
-## Contracts that are not implemented yet
+## Research database
 
-`src/nomadquant/contracts.py` defines `ResearchAgent`, `Strategy`, `BacktestEngine`, `RiskEngine`, and `PaperBroker`. `MarketDataProvider` is implemented for raw daily bars.
+`data/research.sqlite` stores experiments, backtest runs, equity points, simulated trades, and simulated decisions. It is separate from market bars and from the operational audit file. Large audit payloads use `audit_artifacts` instead of truncating JSON.
+
+## Contracts
+
+`MarketDataProvider` and `DailyBacktestEngine` (via `BacktestEngine`) are implemented for offline research. `ResearchAgent`, `RiskEngine`, and order-capable brokers are not.
 
 `PaperBroker` has account and position reads only. Order methods are absent on purpose. A future order gateway must be a different object, callable only after `RiskEngine.evaluate` returns `approved=True`. A `ResearchAgent` must never receive that gateway or an Alpaca trading client.
 
@@ -62,7 +67,7 @@ The machine has 16 GB of RAM and a single developer. Separate services for data,
 
 ## What is deliberately missing
 
-Live trading, order submission, a backtest engine, a risk implementation, and agents are out of scope. Daily bars exist so a later backtest has an inspectable input. They are not a performance result.
+Live trading, order submission, a risk implementation, agents, and dividend/total-return corporate-action simulation are out of scope. Phase 3 backtests are price-only and offline.
 
 ## Later extension points
 

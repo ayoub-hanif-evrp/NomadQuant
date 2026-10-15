@@ -55,6 +55,17 @@ The dashboard listens on `http://127.0.0.1:3000`.
 
 Equivalent scripts: `.\scripts\dev-api.ps1` and `.\scripts\dev-web.ps1`.
 
+## Run a research experiment
+
+Requires a complete local market-data window for the symbols and feed in the experiment file. Results are offline **backtests**, not paper trades.
+
+```powershell
+uv run nomadquant-research run --experiment experiments/spy_tsmom_v1.json
+uv run nomadquant-research replay --run-id 1
+```
+
+Inspect the Research Lab page at `http://127.0.0.1:3000/research` while the API is running.
+
 ## Verify the paper account
 
 Create `.env` yourself from `.env.example`. Set `ALPACA_API_KEY` and `ALPACA_API_SECRET` to a paper key pair from the Alpaca dashboard. Leave `ALPACA_BASE_URL` at `https://paper-api.alpaca.markets`. Do not paste keys into a chat. Restart the API after saving the file.

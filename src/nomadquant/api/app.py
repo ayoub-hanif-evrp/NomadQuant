@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from nomadquant.api.observe import router as observability_router
+from nomadquant.api.research_routes import router as research_router
 from nomadquant.api.schemas import (
     BrokerAccountResponse,
     BrokerPositionsResponse,
@@ -79,6 +80,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.audit = AuditLog(active.database_path, active.secret_values)
     app.state.broker = AlpacaReadOnlyBroker(active, audit=app.state.audit)
     app.include_router(observability_router)
+    app.include_router(research_router)
 
     @app.exception_handler(Exception)
     async def unhandled(request: object, exc: Exception) -> JSONResponse:

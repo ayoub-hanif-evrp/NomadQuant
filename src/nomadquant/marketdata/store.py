@@ -309,6 +309,52 @@ class MarketStore:
             ).fetchall()
         return {date.fromisoformat(row["session_date"]) for row in rows}
 
+    def bar_hashes(self, symbol: str, feed: str, start: date, end: date) -> list[tuple[date, str]]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT session_date, content_hash FROM bars
+                WHERE symbol = ? AND feed = ? AND session_date >= ? AND session_date <= ?
+                ORDER BY session_date
+                """,
+                (symbol, feed, start.isoformat(), end.isoformat()),
+            ).fetchall()
+        return [(date.fromisoformat(row["session_date"]), str(row["content_hash"])) for row in rows]
+
+    def session_ohlc(
+        self, symbol: str, feed: str, start: date, end: date
+    ) -> list[tuple[date, Decimal, Decimal, Decimal, Decimal]]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT session_date, open, high, low, close FROM bars
+                WHERE symbol = ? AND feed = ? AND session_date >= ? AND session_date <= ?
+                ORDER BY session_date
+                """,
+                (symbol, feed, start.isoformat(), end.isoformat()),
+            ).fetchall()
+        return [
+            (
+                date.fromisoformat(row["session_date"]),
+                Decimal(row["open"]),
+                Decimal(row["high"]),
+                Decimal(row["low"]),
+                Decimal(row["close"]),
+            )
+            for row in rows
+        ]
+
+    def revision_count(self, symbol: str, feed: str, start: date, end: date) -> int:
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT COUNT(*) AS n FROM bar_revisions
+                WHERE symbol = ? AND feed = ? AND session_date >= ? AND session_date <= ?
+                """,
+                (symbol, feed, start.isoformat(), end.isoformat()),
+            ).fetchone()
+        return int(row["n"]) if row is not None else 0
+
     def latest_run(self) -> sqlite3.Row | None:
         with self._connect() as connection:
             rows: Sequence[sqlite3.Row] = connection.execute(
