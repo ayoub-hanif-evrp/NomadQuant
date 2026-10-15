@@ -28,6 +28,7 @@ import {
   type ReactNode,
 } from "react";
 import { cn } from "@/lib/cn";
+import { connectionLabel, connectionState, connectionTone } from "@/lib/connection";
 import { useRefreshAll, useSystemHealth } from "@/lib/hooks";
 import { Badge, StatusDot } from "@/components/ui";
 
@@ -61,7 +62,7 @@ const NAV: NavGroup[] = [
   {
     title: "Future",
     items: [
-      { href: "/agents", label: "Agents", icon: Bot, available: false },
+      { href: "/agents", label: "Agents", icon: Bot, available: true },
       { href: "/strategies", label: "Risk & Execution", icon: ShieldAlert, available: false },
     ],
   },
@@ -139,12 +140,22 @@ export function Shell({ children }: { children: ReactNode }) {
     [router],
   );
 
+  const apiState = connectionState({
+    isLoading: health.isLoading,
+    isError: health.isError,
+    isFetching: health.isFetching,
+    dataUpdatedAt: health.dataUpdatedAt,
+    error: health.error,
+    staleAfterMs: 60_000,
+  });
   const brokerTone =
-    health.data?.broker_status === "connected"
-      ? "ok"
-      : health.data?.broker_status === "error"
-        ? "err"
-        : "warn";
+    apiState === "loading" || apiState === "disconnected"
+      ? "info"
+      : health.data?.broker_status === "connected"
+        ? "ok"
+        : health.data?.broker_status === "error"
+          ? "err"
+          : "warn";
 
   const sidebar = (
     <aside
@@ -258,12 +269,17 @@ export function Shell({ children }: { children: ReactNode }) {
             <h1 className="truncate text-base font-semibold tracking-tight">{pageTitle(pathname)}</h1>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <Badge tone={health.isError ? "err" : "ok"}>
-              <StatusDot tone={health.isError ? "err" : "ok"} />
-              API {health.isError ? "down" : "ok"}
+            <Badge tone={connectionTone(apiState)}>
+              <StatusDot tone={connectionTone(apiState)} />
+              API {connectionLabel(apiState)}
             </Badge>
             <Badge tone={brokerTone}>
-              Broker {health.data?.broker_status ?? "…"}
+              Broker{" "}
+              {apiState === "loading"
+                ? "…"
+                : apiState === "disconnected"
+                  ? "unreachable"
+                  : (health.data?.broker_status ?? "unknown")}
             </Badge>
             <Badge tone="warn">Paper · no orders</Badge>
             {lastRefresh ? (

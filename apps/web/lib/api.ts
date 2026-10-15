@@ -757,6 +757,49 @@ export async function loadMarketBars(params: {
   return parseMarketBarPage(await readJson(`/api/market-data/bars?${query.toString()}`));
 }
 
+/** Page through the chart API until every bar in the window is loaded. */
+export async function loadAllMarketBars(params: {
+  symbol: string;
+  feed?: string;
+  start: string;
+  end: string;
+  pageSize?: number;
+}): Promise<MarketBarPage & { complete: boolean; pages: number }> {
+  const pageSize = params.pageSize ?? 5000;
+  const first = await loadMarketBars({
+    ...params,
+    limit: pageSize,
+    offset: 0,
+  });
+  const items = [...first.items];
+  let offset = first.items.length;
+  let pages = 1;
+  while (items.length < first.total) {
+    const page = await loadMarketBars({
+      ...params,
+      limit: pageSize,
+      offset,
+    });
+    if (page.items.length === 0) {
+      break;
+    }
+    items.push(...page.items);
+    offset += page.items.length;
+    pages += 1;
+    if (pages > 20) {
+      break;
+    }
+  }
+  return {
+    ...first,
+    items,
+    limit: items.length,
+    offset: 0,
+    complete: items.length === first.total,
+    pages,
+  };
+}
+
 export type ResearchVerifyCheck = {
   name: string;
   verdict: string;
@@ -820,8 +863,10 @@ export async function loadRun(id: number): Promise<AuditRun> {
   return parseRun(await readJson(`/api/observability/runs/${id}`));
 }
 
-export async function loadDecisions(): Promise<{ items: DecisionTrace[]; total: number }> {
-  return parseDecisionPage(await readJson("/api/observability/decision-traces"));
+export async function loadDecisions(
+  query = "",
+): Promise<{ items: DecisionTrace[]; total: number }> {
+  return parseDecisionPage(await readJson(`/api/observability/decision-traces${query}`));
 }
 
 export async function loadHealth(): Promise<SystemHealth> {
@@ -1311,12 +1356,31 @@ export async function loadResearchRunTrades(id: number): Promise<{
   return parseResearchTradesPage(await readJson(`/api/research/runs/${id}/trades`));
 }
 
-export async function loadResearchRunDecisions(id: number): Promise<{
+export async function loadResearchRunDecisions(
+  id: number,
+  opts?: { limit?: number; offset?: number; strategyId?: string; action?: string },
+): Promise<{
   items: ResearchSimulatedDecision[];
   total: number;
   note: string;
+  limit?: number;
+  offset?: number;
 }> {
-  return parseResearchDecisionsPage(await readJson(`/api/research/runs/${id}/decisions`));
+  const query = new URLSearchParams();
+  if (opts?.limit !== undefined) {
+    query.set("limit", String(opts.limit));
+  }
+  if (opts?.offset !== undefined) {
+    query.set("offset", String(opts.offset));
+  }
+  if (opts?.strategyId) {
+    query.set("strategy_id", opts.strategyId);
+  }
+  if (opts?.action) {
+    query.set("action", opts.action);
+  }
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return parseResearchDecisionsPage(await readJson(`/api/research/runs/${id}/decisions${suffix}`));
 }
 
 export async function loadResearchDecision(id: number): Promise<ResearchSimulatedDecision> {
@@ -1350,4 +1414,89 @@ export function configString(config: Record<string, unknown>, key: string): stri
     return String(raw);
   }
   return null;
+}
+
+export type AgentStatus = {
+  ollama: {
+    available: boolean;
+    base_url: string;
+    models: string[];
+    latency_ms?: number;
+    error?: string;
+  };
+  configured_model: string;
+  prompt_version: string;
+  tool_schema_version: string;
+  label: string;
+  tools: string[];
+  order_tools_available: false;
+  trading_mode: "paper";
+  run_count: number;
+};
+
+export type AgentRunSummary = {
+  id: number;
+  created_at: string;
+  finished_at: string | null;
+  status: string;
+  research_run_id: number;
+  model: string;
+  verdict: string;
+  summary: string;
+  label: string;
+  error_message_safe?: string;
+};
+
+export type AgentRunDetail = AgentRunSummary & {
+  stages: Array<Record<string, unknown>>;
+  tool_calls: Array<Record<string, unknown>>;
+  artifacts: Array<Record<string, unknown>>;
+  fingerprint?: string;
+  prompt_version?: string;
+  tool_schema_version?: string;
+  as_of?: string;
+  result?: Record<string, unknown>;
+  config?: Record<string, unknown>;
+};
+
+export async function loadAgentStatus(): Promise<AgentStatus> {
+  const value = await readJson("/api/agents/status");
+  if (
+    !isRecord(value) ||
+    !isRecord(value.ollama) ||
+    typeof value.ollama.available !== "boolean" ||
+    !Array.isArray(value.ollama.models)
+  ) {
+    throw new Error("Unexpected agent status");
+  }
+  if (value.order_tools_available !== false || value.trading_mode !== "paper") {
+    throw new Error("Agent status violates paper-only locks");
+  }
+  return value as AgentStatus;
+}
+
+export async function loadAgentRuns(
+  query = "?limit=50",
+): Promise<{ items: AgentRunSummary[]; total: number }> {
+  const value = await readJson(`/api/agents/runs${query}`);
+  if (!isRecord(value) || !Array.isArray(value.items) || typeof value.total !== "number") {
+    throw new Error("Unexpected agent runs page");
+  }
+  return {
+    total: value.total,
+    items: value.items.map((item) => {
+      if (!isRecord(item) || typeof item.id !== "number") {
+        throw new Error("Unexpected agent run");
+      }
+      return item as AgentRunSummary;
+    }),
+  };
+}
+
+export async function loadAgentRun(id: number): Promise<AgentRunDetail> {
+  const value = await readJson(`/api/agents/runs/${id}`);
+  if (!isRecord(value) || typeof value.id !== "number") {
+    throw new Error("Unexpected agent run detail");
+  }
+  return value as AgentRunDetail;
 }

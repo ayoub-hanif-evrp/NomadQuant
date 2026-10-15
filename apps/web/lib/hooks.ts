@@ -5,6 +5,7 @@ import {
   loadEventHistogram,
   loadEvents,
   loadHealth,
+  loadAllMarketBars,
   loadMarketBars,
   loadMarketData,
   loadObservability,
@@ -106,15 +107,23 @@ export function useRunsQuery(searchParams = "", enabled = true) {
 }
 
 export function useMarketBarsQuery(
-  params: { symbol: string; feed: string; start: string; end: string; limit?: number } | null,
+  params: { symbol: string; feed: string; start: string; end: string; fetchAll?: boolean } | null,
 ) {
   return useQuery({
     queryKey: ["market-bars", params],
-    queryFn: (): Promise<MarketBarPage> => {
+    queryFn: async (): Promise<MarketBarPage & { complete: boolean; pages: number }> => {
       if (!params) {
         throw new Error("Missing bar params");
       }
-      return loadMarketBars(params);
+      if (params.fetchAll) {
+        return loadAllMarketBars(params);
+      }
+      const page = await loadMarketBars({ ...params, limit: 5000, offset: 0 });
+      return {
+        ...page,
+        complete: page.items.length === page.total,
+        pages: 1,
+      };
     },
     enabled: params !== null,
     staleTime: 120_000,

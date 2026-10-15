@@ -21,6 +21,7 @@ import {
   VerificationBadge,
 } from "@/components/ui";
 import { formatUsd } from "@/lib/api";
+import { connectionState } from "@/lib/connection";
 import {
   useEventHistogramQuery,
   useMarketStatus,
@@ -37,6 +38,14 @@ export function Overview() {
   const activity = useObservabilityOverview();
   const researchRuns = useResearchRunsList();
   const histogram = useEventHistogramQuery("?bucket=day");
+  const apiState = connectionState({
+    isLoading: health.isLoading,
+    isError: health.isError,
+    isFetching: health.isFetching,
+    dataUpdatedAt: health.dataUpdatedAt,
+    error: health.error,
+    staleAfterMs: 60_000,
+  });
 
   const latestVerifyRun = researchRuns.data?.items.find((run) => run.status === "succeeded") ?? null;
 
@@ -84,11 +93,19 @@ export function Overview() {
       />
 
       <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-8">
-        <StatusChip label="API" ok={!health.isError} value={health.isError ? "down" : "ok"} />
+        <StatusChip
+          label="API"
+          ok={apiState === "ok"}
+          value={apiState === "ok" ? "ok · fresh" : apiState}
+        />
         <StatusChip
           label="Broker"
-          ok={status.broker_status === "connected"}
-          value={status.broker_status}
+          ok={status.broker_status === "connected" && apiState === "ok"}
+          value={
+            apiState === "disconnected" || apiState === "loading"
+              ? apiState
+              : status.broker_status
+          }
         />
         <StatusChip
           label="Market DB"

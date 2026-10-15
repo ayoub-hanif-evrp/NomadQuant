@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import {
   Badge,
   Drawer,
@@ -21,6 +21,8 @@ import {
 } from "@/lib/api";
 import { useQuery } from "@tanstack/react-query";
 
+const PAGE = 50;
+
 export function Decisions() {
   const runs = useQuery({
     queryKey: ["research-runs-for-decisions"],
@@ -34,32 +36,32 @@ export function Decisions() {
     null;
 
   const [runId, setRunId] = useState<number | null>(null);
+  const [actionFilter, setActionFilter] = useState("");
+  const [simOffset, setSimOffset] = useState(0);
+  const [auditOffset, setAuditOffset] = useState(0);
   const effectiveRunId = runId ?? succeededRunId;
 
   const simulated = useQuery({
-    queryKey: ["research-decisions", effectiveRunId],
+    queryKey: ["research-decisions", effectiveRunId, actionFilter, simOffset],
     enabled: effectiveRunId !== null,
-    queryFn: () => loadResearchRunDecisions(effectiveRunId as number),
+    queryFn: () =>
+      loadResearchRunDecisions(effectiveRunId as number, {
+        limit: PAGE,
+        offset: simOffset,
+        strategyId: undefined,
+        ...(actionFilter ? { action: actionFilter } : {}),
+      }),
   });
 
   const auditTraces = useQuery({
-    queryKey: ["audit-decision-traces"],
-    queryFn: () => loadDecisions(),
+    queryKey: ["audit-decision-traces", auditOffset],
+    queryFn: () => loadDecisions(`?limit=${PAGE}&offset=${auditOffset}`),
     staleTime: 30_000,
   });
 
-  const [actionFilter, setActionFilter] = useState("");
   const [selectedSim, setSelectedSim] = useState<ResearchSimulatedDecision | null>(null);
   const [selectedAudit, setSelectedAudit] = useState<DecisionTrace | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
-
-  const filtered = useMemo(() => {
-    const items = simulated.data?.items ?? [];
-    if (!actionFilter) {
-      return items;
-    }
-    return items.filter((item) => item.action === actionFilter);
-  }, [simulated.data, actionFilter]);
 
   async function openSimulated(id: number) {
     setDetailLoading(true);
@@ -75,19 +77,19 @@ export function Decisions() {
     <div className="flex flex-col gap-6">
       <PageIntro
         title="Decision Intelligence"
-        note="Inspect why the research engine proposed an action. Today these records are simulated backtest decisions. AI proposals, risk verdicts, and broker orders remain separate and absent."
+        note="Inspect why the research engine proposed an action. Today these records are simulated backtest decisions. AI proposals, risk verdicts, and broker orders remain separate."
       />
 
       <div className="grid gap-3 md:grid-cols-3">
         <Panel>
           <p className="kicker">Backtest decisions</p>
           <p className="mt-2 text-2xl font-semibold">{simulated.data?.total ?? "—"}</p>
-          <p className="mt-1 text-xs text-[var(--muted)]">Stored simulated history</p>
+          <p className="mt-1 text-xs text-[var(--muted)]">Filtered total for selected run</p>
         </Panel>
         <Panel>
           <p className="kicker">AI research proposals</p>
-          <p className="mt-2 text-2xl font-semibold text-[var(--muted)]">0</p>
-          <p className="mt-1 text-xs text-[var(--muted)]">Not configured</p>
+          <p className="mt-2 text-2xl font-semibold text-[var(--muted)]">see Agents</p>
+          <p className="mt-1 text-xs text-[var(--muted)]">Local Ollama research runs</p>
         </Panel>
         <Panel>
           <p className="kicker">Broker / risk orders</p>
@@ -101,7 +103,10 @@ export function Decisions() {
           Research run
           <select
             value={effectiveRunId ?? ""}
-            onChange={(event) => setRunId(Number(event.target.value))}
+            onChange={(event) => {
+              setSimOffset(0);
+              setRunId(Number(event.target.value));
+            }}
             className="mt-1 block rounded-xl border border-[var(--line)] bg-black/25 px-3 py-2 text-sm"
           >
             {(runs.data?.items ?? []).map((run) => (
@@ -112,10 +117,13 @@ export function Decisions() {
           </select>
         </label>
         <label className="text-xs text-[var(--muted)]">
-          Action
+          Action (server filter)
           <select
             value={actionFilter}
-            onChange={(event) => setActionFilter(event.target.value)}
+            onChange={(event) => {
+              setSimOffset(0);
+              setActionFilter(event.target.value);
+            }}
             className="mt-1 block rounded-xl border border-[var(--line)] bg-black/25 px-3 py-2 text-sm"
           >
             <option value="">all</option>
@@ -128,20 +136,45 @@ export function Decisions() {
       </Panel>
 
       {simulated.isError ? (
-        <ErrorState title="Simulated decisions unavailable" note="Select a research run with stored decisions." />
+        <ErrorState
+          title="Simulated decisions unavailable"
+          note="Select a research run with stored decisions."
+        />
       ) : null}
       {simulated.isLoading ? <Skeleton className="h-64 w-full" lines={8} /> : null}
 
       <Panel>
-        <h2 className="mb-3 text-sm font-semibold">Simulated backtest decisions</h2>
-        {filtered.length === 0 && !simulated.isLoading ? (
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-sm font-semibold">
+            Simulated decisions · {simulated.data?.total ?? 0} matching · page offset {simOffset}
+          </h2>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              disabled={simOffset === 0}
+              className="rounded-lg border border-[var(--line)] px-2 py-1 text-xs disabled:opacity-40"
+              onClick={() => setSimOffset(Math.max(0, simOffset - PAGE))}
+            >
+              Prev
+            </button>
+            <button
+              type="button"
+              disabled={!simulated.data || simOffset + PAGE >= simulated.data.total}
+              className="rounded-lg border border-[var(--line)] px-2 py-1 text-xs disabled:opacity-40"
+              onClick={() => setSimOffset(simOffset + PAGE)}
+            >
+              Next
+            </button>
+          </div>
+        </div>
+        {(simulated.data?.items.length ?? 0) === 0 && !simulated.isLoading ? (
           <EmptyState
             title="No simulated decisions"
-            note="Run a research backtest to populate decision history."
+            note="Run a research backtest or clear filters."
           />
         ) : (
           <ul className="divide-y divide-[var(--line)]">
-            {filtered.slice(0, 200).map((item) => (
+            {(simulated.data?.items ?? []).map((item) => (
               <li key={item.id}>
                 <button
                   type="button"
@@ -152,9 +185,6 @@ export function Decisions() {
                   <Badge tone="info">{item.action}</Badge>
                   <span className="font-mono text-xs text-[var(--cyan)]">{item.strategy_id}</span>
                   <span className="min-w-0 flex-1 truncate text-[var(--muted)]">{item.rationale}</span>
-                  <span className="font-mono text-[10px] text-[var(--muted)]">
-                    {item.evidence_hash.slice(0, 10)}…
-                  </span>
                 </button>
               </li>
             ))}
@@ -164,17 +194,36 @@ export function Decisions() {
       </Panel>
 
       <Panel>
-        <h2 className="mb-3 text-sm font-semibold">Audit decision traces</h2>
-        <p className="mb-3 text-xs text-[var(--muted)]">
-          Operational mirrors (sample). Complete history is in research.simulated_decisions.
-        </p>
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-sm font-semibold">
+            Audit decision traces · {auditTraces.data?.total ?? 0} total
+          </h2>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              disabled={auditOffset === 0}
+              className="rounded-lg border border-[var(--line)] px-2 py-1 text-xs disabled:opacity-40"
+              onClick={() => setAuditOffset(Math.max(0, auditOffset - PAGE))}
+            >
+              Prev
+            </button>
+            <button
+              type="button"
+              disabled={!auditTraces.data || auditOffset + PAGE >= auditTraces.data.total}
+              className="rounded-lg border border-[var(--line)] px-2 py-1 text-xs disabled:opacity-40"
+              onClick={() => setAuditOffset(auditOffset + PAGE)}
+            >
+              Next
+            </button>
+          </div>
+        </div>
         {auditTraces.isError ? (
-          <ErrorState title="Audit traces unavailable" note="Observability decision traces could not be read." />
+          <ErrorState title="Audit traces unavailable" note="Could not read decision traces." />
         ) : null}
         {(auditTraces.data?.items.length ?? 0) === 0 ? (
           <EmptyState
             title="No audit decision traces"
-            note="Future strategy, agent, or risk checks can record why an action was proposed. NomadQuant does not invent those records."
+            note="Operational mirrors may be empty while research.simulated_decisions still has history."
           />
         ) : (
           <ul className="divide-y divide-[var(--line)]">
@@ -231,9 +280,6 @@ export function Decisions() {
                 after: {JSON.stringify(selectedSim.portfolio_after, null, 2)}
               </pre>
             </div>
-            <pre className="overflow-auto rounded-xl border border-[var(--line)] bg-black/30 p-3 font-mono text-[11px] text-[var(--muted)]">
-              {JSON.stringify(selectedSim.feature_inputs, null, 2)}
-            </pre>
           </div>
         ) : null}
       </Drawer>

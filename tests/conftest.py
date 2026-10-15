@@ -21,6 +21,10 @@ _ENV_VARS = (
     "DATABASE_PATH",
     "MARKET_DATA_PATH",
     "RESEARCH_PATH",
+    "OLLAMA_BASE_URL",
+    "OLLAMA_MODEL",
+    "AGENTS_PATH",
+    "AGENT_MEMO_ROOT",
 )
 
 
@@ -36,6 +40,8 @@ def make_settings(tmp_path: Path, **overrides: object) -> Settings:
         "database_path": str(tmp_path / "nomadquant.db"),
         "market_data_path": str(tmp_path / "market.sqlite"),
         "research_path": str(tmp_path / "research.sqlite"),
+        "agents_path": str(tmp_path / "agents.sqlite"),
+        "agent_memo_root": str(tmp_path / "agent-memos"),
     }
     values.update(overrides)
     return Settings(_env_file=None, **values)

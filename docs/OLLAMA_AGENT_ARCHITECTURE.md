@@ -1,6 +1,6 @@
-# Future local Ollama research agents
+# Local Ollama research agents
 
-This is a design note. NomadQuant does not call Ollama in this phase. No agent run exists.
+Phase 4A implements a sequential, auditable research review. It does not trade.
 
 ## Machine
 
@@ -8,50 +8,57 @@ This is a design note. NomadQuant does not call Ollama in this phase. No agent r
 - GPU: NVIDIA RTX A2000 12 GB
 - RAM: 16 GB
 - OS: Windows
-- Inference: local Ollama only. No paid API.
+- Inference: local Ollama only (`http://127.0.0.1:11434`). No paid API.
 
-Loading three separate 9B–14B models at once is a poor fit for 16 GB of system RAM plus a 12 GB GPU. The workflow is one model, three sequential roles.
+One model, three sequential roles. Do not load multiple large models at once.
 
 ## Roles
 
-1. **Researcher** writes a falsifiable hypothesis, the data window, and the citations. It may call read-only tools.
-2. **Skeptic** challenges costs, look-ahead, dividends, and whether the locked test was touched. It uses the same model and the same tools.
-3. **Reviewer** calls `verify_backtest` and may only summarize tool results. It cannot override a FAIL.
+1. **Researcher** inspects one stored research run, reads tools, and emits structured claims with evidence refs.
+2. **Skeptic** challenges overfitting, significance, costs, dividends, and look-ahead / pretraining contamination.
+3. **Reviewer** must call `verify_backtest`, rejects unsupported claims via the deterministic claim checker, and emits a final verdict.
 
-A valid outcome is `insufficient_evidence`.
+Allowed verdicts: `evidence_supported`, `insufficient_evidence`, `verification_failed`, `research_incomplete`.
 
-## Candidate models
+A positive backtest return is never an investment recommendation.
 
-- `qwen3.5:9b`
-- `qwen3:14b`, only if a later measurement shows it fits GPU memory and leaves the API responsive
+## Default model selection
 
-Neither model is approved until memory, structured-output reliability, tool-call behavior, and latency are measured on this PC.
+On this workstation `qwen3.5:9b` is installed and is the preferred default for structured tool use. Other installed models may be passed with `--model`. Measure latency on each machine before treating a model as approved.
 
-## Controls when the loop is built
+## Controls
 
-- Structured inputs and outputs
-- SQLite checkpoints that record model id, prompt version, tool schema version, and dataset fingerprint
-- A maximum number of tool calls and iterations
-- Timeouts and cancellation
-- A context limit
-- An audit row for every prompt and tool call, with secrets redacted
-- Claims about returns must match deterministic metrics or be marked unverified
-- Historical LLM use must say that pretraining may have seen the same public prices
+- Structured JSON outputs validated with Pydantic
+- SQLite checkpoints (`data/agents.sqlite`) with model id, prompt version, tool schema version, dataset fingerprint
+- Tool call budgets, timeouts, cancellation via interrupt where supported
+- Audit rows for tool attempts (secrets redacted)
+- Runtime-enforced `as_of` cutoff
+- Claims about returns must match stored metrics or be marked failed
+- Historical LLM use is labeled **retrospective** — not evidence the model could have predicted the market
 
-## Tools the loop may receive
+## Tools
 
-The registry in `nomadquant.research.tools` exposes:
+Allowlisted only:
 
-- `read_market_data` (requires timezone-aware `as_of`; end cannot pass the cutoff)
+- `read_market_data`
 - `inspect_data_quality`
 - `read_experiment`
 - `read_run_card`
 - `verify_backtest`
 - `list_research_evidence`
-- `save_research_memo` (one markdown filename inside the memo workspace)
+- `save_research_memo`
 
-It does not expose a shell, a web browser, Alpaca credentials, or any order, cancel, or liquidate method. A risk rejection, once a risk engine exists, is not overridable by the model.
+No shell, web, Alpaca credentials, or order methods.
 
-## Evaluation
+## CLI
 
-The non-LLM baseline remains the pre-registered SPY time-series momentum rule and the buy-and-hold / cash benchmarks. An agent is not promoted because a backtest, or a memo, looks persuasive.
+```powershell
+uv run nomadquant-agent status
+uv run nomadquant-agent run --research-run-id 2 --model qwen3.5:9b
+uv run nomadquant-agent inspect --run-id 1
+uv run nomadquant-agent resume --run-id 1
+```
+
+## Dashboard
+
+`/agents` is a read-only monitoring console. Runs are started from the CLI in this phase.

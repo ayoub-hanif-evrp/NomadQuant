@@ -149,9 +149,20 @@ data/              Local SQLite files (gitignored)
 - [docs/DECISIONS/0001-initial-architecture.md](docs/DECISIONS/0001-initial-architecture.md)
 - [docs/DECISIONS/0002-proprietary-license.md](docs/DECISIONS/0002-proprietary-license.md)
 
+## Local AI research review
+
+Requires Ollama on `127.0.0.1:11434` and an installed model (preferred on this machine: `qwen3.5:9b`).
+
+```powershell
+uv run --no-sync python -c "from nomadquant.agents.cli import main; main(['status'])"
+uv run --no-sync python -c "from nomadquant.agents.cli import main; main(['run','--research-run-id','2','--model','qwen3.5:9b'])"
+```
+
+After `uv sync` (stop the API first if Windows locks the scripts), the same commands work as `uv run nomadquant-agent ...`. Inspect results at `http://127.0.0.1:3000/agents`. Reviews are retrospective and never place orders.
+
 ## Suggested next milestone
 
-Local Ollama research agents with a read-only tool registry (design docs exist). Do not grant broker order tools. A risk engine must exist before any paper order path.
+Risk engine before any paper order path. Do not grant broker order tools to agents.
 
 ## License
 

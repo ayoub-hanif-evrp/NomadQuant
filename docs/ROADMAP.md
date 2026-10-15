@@ -48,9 +48,13 @@ One event-driven daily backtest engine, a pre-registered SPY time-series momentu
 
 Cost accounting charges spread and slippage once. Open timestamps use America/New_York. Replay recomputes from the stored bars. Experiment ids are immutable. `nomadquant-research verify` reports PASS, FAIL, NOT_EVALUABLE, or INVALID_ARTIFACT. Statistical significance stays NOT_EVALUABLE.
 
-## Phase 3.2 — premium research terminal UI (current)
+## Phase 3.2 — premium research terminal UI
 
-Cohesive dark trading workstation: Command Center, Market Explorer (real SIP daily candles via TradingView Lightweight Charts), Research Lab (date-aligned Recharts equity/drawdown), Decision Intelligence, searchable Activity with histograms, and controlled TanStack Query refresh. Read-only chart API `GET /api/market-data/bars`. Agents and risk/execution remain explicit empty states.
+Cohesive dark trading workstation: Command Center, Market Explorer (real SIP daily candles via TradingView Lightweight Charts), Research Lab (date-aligned Recharts equity/drawdown), Decision Intelligence, searchable Activity with histograms, and controlled TanStack Query refresh. Read-only chart API `GET /api/market-data/bars`.
+
+## Phase 4A — local AI research agents (current)
+
+Sequential Researcher → Skeptic → Reviewer on one local Ollama model with read-only tools, claim verification, SQLite agent-run history, CLI (`nomadquant-agent`), and an Agents monitoring page. Retrospective reviews only. No broker tools. No autonomous scheduling.
 
 ## Phase 4 — risk engine before any paper order
 

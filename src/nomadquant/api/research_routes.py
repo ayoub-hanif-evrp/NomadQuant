@@ -110,12 +110,18 @@ def run_decisions(
     run_id: int,
     request: Request,
     strategy_id: str | None = None,
+    action: str | None = None,
     limit: int = Query(default=200, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
 ) -> dict[str, Any]:
     if _store(request).get_run(run_id) is None:
         raise HTTPException(status_code=404, detail="Research run not found.")
     items = _store(request).decisions(run_id, strategy_id)
+    if action:
+        allowed = {"buy", "sell", "hold", "no_trade", "reject"}
+        if action not in allowed:
+            raise HTTPException(status_code=400, detail="Unsupported decision action filter.")
+        items = [item for item in items if item.get("action") == action]
     page = items[offset : offset + limit]
     return {
         "items": page,

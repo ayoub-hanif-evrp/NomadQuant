@@ -23,6 +23,7 @@ const MarketCandleChart = dynamic(
 );
 
 type RangeKey = "3M" | "6M" | "1Y" | "ALL";
+type FeedKey = "sip" | "iex";
 
 function shiftMonths(iso: string, months: number): string {
   const date = new Date(`${iso}T12:00:00Z`);
@@ -35,29 +36,55 @@ export function MarketData() {
   const [symbol, setSymbol] = useState<"SPY" | "QQQ">("SPY");
   const [range, setRange] = useState<RangeKey>("1Y");
   const [mode, setMode] = useState<"candle" | "line">("candle");
-  const [feed] = useState("sip");
+  const [feed, setFeed] = useState<FeedKey>("sip");
+
+  const availableFeeds = useMemo(() => {
+    const rows = statusQuery.data?.coverage.filter((item) => item.symbol === symbol) ?? [];
+    const feeds = [...new Set(rows.map((row) => row.feed))].filter(
+      (item): item is FeedKey => item === "sip" || item === "iex",
+    );
+    return feeds;
+  }, [statusQuery.data, symbol]);
+
+  const activeFeed: FeedKey | null =
+    availableFeeds.length === 0
+      ? null
+      : availableFeeds.includes(feed)
+        ? feed
+        : availableFeeds[0];
 
   const coverage = statusQuery.data?.coverage.find(
-    (item) => item.symbol === symbol && item.feed === feed,
+    (item) => item.symbol === symbol && item.feed === activeFeed,
   );
 
   const window = useMemo(() => {
-    const latest = coverage?.latest_session ?? statusQuery.data?.latest_session;
-    const earliest = coverage?.earliest_session ?? statusQuery.data?.earliest_session;
+    // Chart window comes only from the selected symbol/feed coverage — never a cross-feed span.
+    const latest = coverage?.latest_session ?? null;
+    const earliest = coverage?.earliest_session ?? null;
     if (!latest || !earliest) {
       return null;
     }
     if (range === "ALL") {
-      return { start: earliest, end: latest };
+      return { start: earliest, end: latest, fetchAll: true as const };
     }
     const months = range === "3M" ? -3 : range === "6M" ? -6 : -12;
     const start = shiftMonths(latest, months);
-    return { start: start < earliest ? earliest : start, end: latest };
-  }, [coverage, statusQuery.data, range]);
+    return {
+      start: start < earliest ? earliest : start,
+      end: latest,
+      fetchAll: (coverage?.bar_count ?? 0) > 5000,
+    };
+  }, [coverage, range]);
 
   const barsQuery = useMarketBarsQuery(
-    window
-      ? { symbol, feed, start: window.start, end: window.end, limit: 5000 }
+    window && activeFeed
+      ? {
+          symbol,
+          feed: activeFeed,
+          start: window.start,
+          end: window.end,
+          fetchAll: window.fetchAll || range === "ALL",
+        }
       : null,
   );
 
@@ -65,7 +92,7 @@ export function MarketData() {
     <div className="flex flex-col gap-6">
       <PageIntro
         title="Market Explorer"
-        note="Interactive historical daily OHLCV from the local Alpaca store. Delayed research data — not a live quote stream. Feed and adjustment are explicit."
+        note="Interactive historical daily OHLCV from the local Alpaca store. Delayed research data — not a live quote stream. Feeds are never mixed."
       />
 
       {statusQuery.isLoading ? <Skeleton className="h-24 w-full" /> : null}
@@ -79,7 +106,7 @@ export function MarketData() {
       {statusQuery.data ? (
         <div className="flex flex-wrap gap-2">
           <ProvenanceChip source={`provider=${barsQuery.data?.provider ?? "alpaca"}`} />
-          <ProvenanceChip source={`feed=${feed}`} />
+          <ProvenanceChip source={`feed=${activeFeed ?? "none"}`} />
           <ProvenanceChip source={`adjustment=${barsQuery.data?.adjustment ?? "raw"}`} />
           <ProvenanceChip source="timeframe=1Day" />
           <Badge tone="warn">Historical / delayed</Badge>
@@ -88,10 +115,15 @@ export function MarketData() {
               {coverage.bar_count} bars · gaps {coverage.gap_count}
             </Badge>
           ) : (
-            <Badge tone="warn">No coverage for {symbol}/{feed}</Badge>
+            <Badge tone="warn">
+              No coverage for {symbol}/{activeFeed ?? "—"}
+            </Badge>
           )}
           {coverage?.latest_session ? (
             <Badge tone="info">Latest session {coverage.latest_session}</Badge>
+          ) : null}
+          {barsQuery.data && !barsQuery.data.complete ? (
+            <Badge tone="err">Incomplete page — not full history</Badge>
           ) : null}
         </div>
       ) : null}
@@ -106,6 +138,19 @@ export function MarketData() {
               { value: "QQQ", label: "QQQ" },
             ]}
           />
+          {availableFeeds.length > 0 && activeFeed ? (
+            <SegmentedControl
+              value={activeFeed}
+              onChange={(value) => setFeed(value as FeedKey)}
+              options={availableFeeds.map((item) => ({
+                value: item,
+                label: item.toUpperCase(),
+              }))}
+              aria-label="Market feed"
+            />
+          ) : (
+            <Badge tone="warn">No stored feed for {symbol}</Badge>
+          )}
           <SegmentedControl
             value={range}
             onChange={(value) => setRange(value as RangeKey)}
@@ -126,10 +171,10 @@ export function MarketData() {
           />
         </div>
 
-        {!window ? (
+        {!window || !activeFeed ? (
           <EmptyState
             title="No local bars for charting"
-            note="Download SIP daily bars with nomadquant-data before opening Market Explorer charts."
+            note={`No ${symbol}/${activeFeed ?? "feed"} coverage in the local store. Feeds are never substituted.`}
           />
         ) : barsQuery.isLoading ? (
           <Skeleton className="h-[420px] w-full" />
@@ -141,14 +186,18 @@ export function MarketData() {
         ) : barsQuery.data && barsQuery.data.items.length === 0 ? (
           <EmptyState
             title="Empty window"
-            note={`No ${symbol} ${feed} bars between ${window.start} and ${window.end}.`}
+            note={`No ${symbol} ${activeFeed} bars between ${window.start} and ${window.end}.`}
           />
         ) : barsQuery.data ? (
           <>
             <MarketCandleChart bars={barsQuery.data.items} mode={mode} />
             <p className="text-xs leading-5 text-[var(--muted)]">
               {barsQuery.data.caveat} Charting by TradingView Lightweight Charts (Apache-2.0).
-              Showing {barsQuery.data.items.length} of {barsQuery.data.total} sessions.
+              Showing {barsQuery.data.items.length} of {barsQuery.data.total} sessions
+              {barsQuery.data.complete
+                ? " (complete window)."
+                : " — incomplete; not labeled as full history."}
+              {barsQuery.data.pages > 1 ? ` Loaded across ${barsQuery.data.pages} pages.` : null}
             </p>
           </>
         ) : null}

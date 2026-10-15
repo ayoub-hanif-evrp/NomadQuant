@@ -8,6 +8,38 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 PAPER_API_URL = "https://paper-api.alpaca.markets"
 PAPER_API_HOST = "paper-api.alpaca.markets"
+DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434"
+LOCAL_OLLAMA_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+
+
+def validate_ollama_base_url(value: str) -> str:
+    """Return a normalized loopback-only Ollama URL or raise ValueError."""
+    candidate = value.strip()
+    if not candidate:
+        raise ValueError("OLLAMA_BASE_URL must not be empty.")
+    if "://" not in candidate:
+        candidate = f"http://{candidate}"
+    parsed = urlparse(candidate)
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError(f"OLLAMA_BASE_URL has an invalid port: {value!r}.") from exc
+    host = (parsed.hostname or "").lower()
+    if (
+        parsed.scheme != "http"
+        or host not in LOCAL_OLLAMA_HOSTS
+        or parsed.path not in ("", "/")
+        or parsed.query
+        or parsed.fragment
+        or parsed.username
+        or parsed.password
+    ):
+        raise ValueError(
+            "OLLAMA_BASE_URL must be a plain http URL on localhost "
+            f"(127.0.0.1, localhost or ::1). Received {value!r}."
+        )
+    rendered = f"[{host}]" if ":" in host else host
+    return f"http://{rendered}:{port or 11434}"
 
 
 class Settings(BaseSettings):
@@ -30,6 +62,20 @@ class Settings(BaseSettings):
     database_path: str = "data/nomadquant.db"
     market_data_path: str = "data/market.sqlite"
     research_path: str = "data/research.sqlite"
+    ollama_base_url: str = DEFAULT_OLLAMA_URL
+    ollama_model: str = ""
+    agents_path: str = "data/agents.sqlite"
+    agent_memo_root: str = "data/agent-memos"
+
+    @field_validator("ollama_base_url")
+    @classmethod
+    def ollama_must_be_local(cls, value: str) -> str:
+        return validate_ollama_base_url(value)
+
+    @field_validator("ollama_model")
+    @classmethod
+    def ollama_model_is_trimmed(cls, value: str) -> str:
+        return value.strip()
 
     @field_validator("trading_mode")
     @classmethod

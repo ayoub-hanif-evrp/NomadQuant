@@ -164,6 +164,13 @@ export function ResearchDrawdownChart({
             tick={{ fill: "#8ea3ab", fontSize: 11 }}
             width={48}
             tickFormatter={(value: number) => `${value.toFixed(0)}%`}
+            label={{
+              value: "Drawdown % (negative = underwater)",
+              angle: -90,
+              position: "insideLeft",
+              fill: "#8ea3ab",
+              fontSize: 10,
+            }}
           />
           <Tooltip
             contentStyle={{
@@ -171,6 +178,7 @@ export function ResearchDrawdownChart({
               border: "1px solid rgba(94,214,201,0.2)",
               borderRadius: 12,
             }}
+            formatter={(value) => [`${Number(value).toFixed(2)}%`, "Drawdown"]}
           />
           <Legend />
           {strategies.map((id, index) => (
@@ -188,6 +196,10 @@ export function ResearchDrawdownChart({
           ))}
         </AreaChart>
       </ResponsiveContainer>
+      <p className="mt-1 text-[11px] text-[var(--muted)]">
+        Drawdown is stored as a non-positive fraction of peak equity; chart shows percent (e.g. −20 =
+        20% underwater).
+      </p>
     </div>
   );
 }
@@ -203,11 +215,14 @@ export function ResearchExposureChart({
 }) {
   const data = useMemo(
     () =>
-      alignEquity(points, windowFilter, [strategyId]).map((row) => ({
-        session_date: row.session_date,
-        cash: row[`${strategyId}__cash`] ?? null,
-        exposure: row[`${strategyId}__exposure`] ?? null,
-      })),
+      alignEquity(points, windowFilter, [strategyId]).map((row) => {
+        const exposure = row[`${strategyId}__exposure`];
+        return {
+          session_date: row.session_date,
+          cash_usd: row[`${strategyId}__cash`] ?? null,
+          exposure_pct: typeof exposure === "number" ? exposure * 100 : null,
+        };
+      }),
     [points, windowFilter, strategyId],
   );
 
@@ -216,40 +231,70 @@ export function ResearchExposureChart({
   }
 
   return (
-    <div className="h-[240px] w-full" role="img" aria-label="Cash and exposure chart">
-      <ResponsiveContainer width="100%" height="100%">
-        <AreaChart data={data} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
-          <CartesianGrid stroke="rgba(94,214,201,0.08)" />
-          <XAxis dataKey="session_date" tick={{ fill: "#8ea3ab", fontSize: 11 }} minTickGap={40} />
-          <YAxis tick={{ fill: "#8ea3ab", fontSize: 11 }} width={56} />
-          <Tooltip
-            contentStyle={{
-              background: "#0d151c",
-              border: "1px solid rgba(94,214,201,0.2)",
-              borderRadius: 12,
-            }}
-          />
-          <Legend />
-          <Area
-            type="monotone"
-            dataKey="cash"
-            name="Cash"
-            stroke="#8ea3ab"
-            fill="#8ea3ab"
-            fillOpacity={0.2}
-            isAnimationActive={false}
-          />
-          <Area
-            type="monotone"
-            dataKey="exposure"
-            name="Exposure"
-            stroke="#67f0e0"
-            fill="#67f0e0"
-            fillOpacity={0.2}
-            isAnimationActive={false}
-          />
-        </AreaChart>
-      </ResponsiveContainer>
+    <div className="grid gap-4 md:grid-cols-2">
+      <div className="h-[240px] w-full" role="img" aria-label="Simulated cash USD">
+        <p className="mb-1 text-[11px] text-[var(--muted)]">Cash (USD)</p>
+        <ResponsiveContainer width="100%" height="90%">
+          <AreaChart data={data} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
+            <CartesianGrid stroke="rgba(94,214,201,0.08)" />
+            <XAxis dataKey="session_date" tick={{ fill: "#8ea3ab", fontSize: 11 }} minTickGap={40} />
+            <YAxis
+              tick={{ fill: "#8ea3ab", fontSize: 11 }}
+              width={56}
+              tickFormatter={(value: number) => `$${value.toFixed(0)}`}
+            />
+            <Tooltip
+              contentStyle={{
+                background: "#0d151c",
+                border: "1px solid rgba(94,214,201,0.2)",
+                borderRadius: 12,
+              }}
+              formatter={(value) => [`$${Number(value).toFixed(2)}`, "Cash (USD)"]}
+            />
+            <Area
+              type="monotone"
+              dataKey="cash_usd"
+              name="Cash (USD)"
+              stroke="#8ea3ab"
+              fill="#8ea3ab"
+              fillOpacity={0.2}
+              isAnimationActive={false}
+            />
+          </AreaChart>
+        </ResponsiveContainer>
+      </div>
+      <div className="h-[240px] w-full" role="img" aria-label="Simulated exposure percent">
+        <p className="mb-1 text-[11px] text-[var(--muted)]">Exposure (% of equity, 0–100)</p>
+        <ResponsiveContainer width="100%" height="90%">
+          <AreaChart data={data} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
+            <CartesianGrid stroke="rgba(94,214,201,0.08)" />
+            <XAxis dataKey="session_date" tick={{ fill: "#8ea3ab", fontSize: 11 }} minTickGap={40} />
+            <YAxis
+              tick={{ fill: "#8ea3ab", fontSize: 11 }}
+              width={48}
+              domain={[0, 100]}
+              tickFormatter={(value: number) => `${value}%`}
+            />
+            <Tooltip
+              contentStyle={{
+                background: "#0d151c",
+                border: "1px solid rgba(94,214,201,0.2)",
+                borderRadius: 12,
+              }}
+              formatter={(value) => [`${Number(value).toFixed(1)}%`, "Exposure"]}
+            />
+            <Area
+              type="monotone"
+              dataKey="exposure_pct"
+              name="Exposure %"
+              stroke="#67f0e0"
+              fill="#67f0e0"
+              fillOpacity={0.2}
+              isAnimationActive={false}
+            />
+          </AreaChart>
+        </ResponsiveContainer>
+      </div>
     </div>
   );
 }
