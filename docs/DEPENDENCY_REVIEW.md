@@ -16,7 +16,7 @@ Phase 1 installs only the Alpaca SDK and the small API stack (FastAPI, Pydantic,
 
 The official SDK is the supported way to read a paper account. NomadQuant calls `TradingClient.get_account` and `TradingClient.get_all_positions` only, with `paper=True` and the paper URL. Order helpers that exist inside the SDK are not wrapped and are not exposed over HTTP.
 
-Apache-2.0 allows use in an MIT project. NomadQuant does not redistribute alpaca-py source. The NOTICE obligations apply if a binary distribution later vendors it.
+Apache-2.0 permits use inside a proprietary program. NomadQuant does not redistribute alpaca-py source, and that license does not grant rights in the NomadQuant code. The NOTICE obligations apply if a binary distribution later vendors alpaca-py.
 
 ## Defer
 
@@ -28,7 +28,7 @@ Apache-2.0 allows use in an MIT project. NomadQuant does not redistribute alpaca
 - OSI open source: yes.
 - Decision: **defer**.
 
-MIT is compatible with this project's MIT license. Qlib is a reasonable later home for a narrow machine-learning experiment. It pulls a heavy research stack, including deep-learning libraries, which does not fit a 16 GB machine as a default install and is not needed before there is point-in-time data. If it is added, it should sit behind a research job, and its results still have to beat a simple baseline under [RESEARCH_STANDARDS.md](RESEARCH_STANDARDS.md).
+Qlib's MIT license permits use inside a proprietary program. It does not grant rights in the NomadQuant code. Qlib is a reasonable later home for a narrow machine-learning experiment. It pulls a heavy research stack, including deep-learning libraries, which does not fit a 16 GB machine as a default install and is not needed before there is point-in-time data. If it is added, it should sit behind a research job, and its results still have to beat a simple baseline under [RESEARCH_STANDARDS.md](RESEARCH_STANDARDS.md).
 
 ### TradingAgents
 
@@ -70,7 +70,7 @@ The license would allow use. The project is a large C# / .NET trading engine wit
 - OSI open source: **no.** The Commons Clause is an additional restriction. OSI does not treat that combination as open source. It is source-available.
 - Decision: **do not depend on it.**
 
-A backtest in NomadQuant has to be small, reproducible, and honestly labeled. Using a non-OSI library as the engine would conflict with the preference for genuinely open-source tools and would add a sales restriction that is easy to misunderstand. A later backtest engine should be written against `BacktestEngine` or chosen from an OSI-licensed project after a fresh license check.
+A backtest in NomadQuant has to be small, reproducible, and honestly labeled. vectorbt's Commons Clause is an extra restriction on a dependency, and it is not an OSI license. A later backtest engine should be written against `BacktestEngine` or chosen from an OSI-licensed project after a fresh license check. Using such a dependency would not make NomadQuant itself open source.
 
 vectorbt.pro, if encountered separately, is a commercial product and is out of scope.
 

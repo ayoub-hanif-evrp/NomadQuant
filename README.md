@@ -108,6 +108,7 @@ data/              Local SQLite database (gitignored)
 - [docs/DEPENDENCY_REVIEW.md](docs/DEPENDENCY_REVIEW.md)
 - [docs/ROADMAP.md](docs/ROADMAP.md)
 - [docs/DECISIONS/0001-initial-architecture.md](docs/DECISIONS/0001-initial-architecture.md)
+- [docs/DECISIONS/0002-proprietary-license.md](docs/DECISIONS/0002-proprietary-license.md)
 
 ## Suggested Phase 2 prompt
 
@@ -115,4 +116,4 @@ Add a local point-in-time daily-bar store for a small long-only US ETF universe.
 
 ## License
 
-NomadQuant is released under the MIT License. Third-party licenses are reviewed in `docs/DEPENDENCY_REVIEW.md`.
+NomadQuant is proprietary. All rights are reserved. See [LICENSE](LICENSE). Third-party packages keep their own licenses, reviewed in `docs/DEPENDENCY_REVIEW.md`. Those licenses do not give anyone rights in the NomadQuant code.

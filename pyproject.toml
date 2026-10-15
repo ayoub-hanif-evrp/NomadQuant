@@ -3,7 +3,7 @@ name = "nomadquant"
 version = "0.1.0"
 description = "Locally hosted, paper-only research foundation for algorithmic trading."
 readme = "README.md"
-license = "MIT"
+license = "LicenseRef-Proprietary"
 requires-python = ">=3.12"
 authors = [{ name = "NomadQuant contributors" }]
 dependencies = [
