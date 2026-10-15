@@ -344,6 +344,50 @@ class MarketStore:
             for row in rows
         ]
 
+    def bars_for_chart(
+        self,
+        symbol: str,
+        feed: str,
+        start: date,
+        end: date,
+        *,
+        provider: str = PROVIDER,
+        adjustment: str = ADJUSTMENT,
+        timeframe: str = TIMEFRAME,
+        limit: int = 2000,
+        offset: int = 0,
+    ) -> tuple[list[StoredBar], int]:
+        """Read stored OHLCV for charts by session_date (not point-in-time)."""
+        bounded_limit = min(max(limit, 1), 5000)
+        bounded_offset = max(offset, 0)
+        where = """
+            symbol = ? AND feed = ? AND provider = ? AND adjustment = ? AND timeframe = ?
+            AND session_date >= ? AND session_date <= ?
+        """
+        params: list[object] = [
+            symbol,
+            feed,
+            provider,
+            adjustment,
+            timeframe,
+            start.isoformat(),
+            end.isoformat(),
+        ]
+        with self._connect() as connection:
+            total = int(
+                connection.execute(f"SELECT COUNT(*) FROM bars WHERE {where}", params).fetchone()[0]
+            )
+            rows = connection.execute(
+                f"""
+                SELECT * FROM bars
+                WHERE {where}
+                ORDER BY session_date ASC
+                LIMIT ? OFFSET ?
+                """,
+                [*params, bounded_limit, bounded_offset],
+            ).fetchall()
+        return [_stored(row) for row in rows], total
+
     def revision_count(self, symbol: str, feed: str, start: date, end: date) -> int:
         with self._connect() as connection:
             row = connection.execute(

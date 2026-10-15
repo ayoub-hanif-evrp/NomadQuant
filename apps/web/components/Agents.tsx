@@ -1,32 +1,35 @@
 "use client";
 
-import { Empty, PageIntro, Panel } from "@/components/ui";
+import { EmptyState, PageIntro, Panel } from "@/components/ui";
 
 export function Agents() {
   return (
-    <div className="mx-auto flex max-w-6xl flex-col gap-6">
+    <div className="flex flex-col gap-6">
       <PageIntro
         title="Agents"
-        note="This page is the monitoring shell for a future research agent. No agent runtime is installed."
+        note="Local research agents are not configured in this build. No LLM loops are running and no agent activity is fabricated."
       />
-      <Empty
-        title="Not implemented yet"
-        note="No agent runs yet. There is no model provider, no last run, and no task state because agents are not connected."
+      <EmptyState
+        title="Not configured"
+        note="A later phase may add restricted Ollama research agents with read-only tools. They will not receive broker order credentials."
       />
       <Panel>
-        <h2 className="kicker">Provider</h2>
-        <dl className="mt-4 space-y-2 text-sm">
-          <div className="flex justify-between gap-4">
-            <dt className="text-[var(--muted)]">Model</dt>
-            <dd>Not configured</dd>
+        <dl className="grid gap-2 text-sm md:grid-cols-2">
+          <div className="flex justify-between border-b border-[var(--line)] py-2">
+            <dt className="text-[var(--muted)]">Provider</dt>
+            <dd>none</dd>
           </div>
-          <div className="flex justify-between gap-4">
-            <dt className="text-[var(--muted)]">Last run</dt>
-            <dd>No runs yet</dd>
+          <div className="flex justify-between border-b border-[var(--line)] py-2">
+            <dt className="text-[var(--muted)]">Models measured</dt>
+            <dd>0</dd>
           </div>
-          <div className="flex justify-between gap-4">
-            <dt className="text-[var(--muted)]">Latest notes</dt>
-            <dd>None</dd>
+          <div className="flex justify-between border-b border-[var(--line)] py-2">
+            <dt className="text-[var(--muted)]">Active runs</dt>
+            <dd>0</dd>
+          </div>
+          <div className="flex justify-between border-b border-[var(--line)] py-2">
+            <dt className="text-[var(--muted)]">Order tools</dt>
+            <dd>absent</dd>
           </div>
         </dl>
       </Panel>

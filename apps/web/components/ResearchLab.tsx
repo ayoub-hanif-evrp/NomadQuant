@@ -1,762 +1,427 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import dynamic from "next/dynamic";
+import { useMemo, useState } from "react";
 import {
-  API_URL,
+  Badge,
+  Drawer,
+  EmptyState,
+  ErrorState,
+  MetricCard,
+  PageIntro,
+  Panel,
+  ProvenanceChip,
+  SegmentedControl,
+  Skeleton,
+  Tabs,
+  VerificationBadge,
+  toneFor,
+} from "@/components/ui";
+import {
   configString,
   formatReturn,
   formatUsd,
-  loadResearchDecision,
-  loadResearchExperiment,
-  loadResearchExperiments,
-  loadResearchRun,
-  loadResearchRunDecisions,
-  loadResearchRunEquity,
-  loadResearchRunReplay,
-  loadResearchRunTrades,
-  loadResearchRuns,
-  type ResearchEquityPoint,
-  type ResearchExperiment,
   type ResearchMetric,
-  type ResearchReplay,
-  type ResearchRun,
-  type ResearchRunDetail,
   type ResearchSimulatedDecision,
-  type ResearchSimulatedTrade,
 } from "@/lib/api";
-import { Badge, Empty, PageIntro, Panel, Stat, toneFor } from "@/components/ui";
+import {
+  useResearchExperimentsList,
+  useResearchRunBundle,
+  useResearchRunsList,
+} from "@/lib/hooks";
 
-const STRATEGY_COLORS = ["#67f0e0", "#f0c36c", "#7dde9e", "#93a1b5", "#f0a3a3"];
-
-type RunBundle = {
-  detail: ResearchRunDetail;
-  equity: ResearchEquityPoint[];
-  trades: ResearchSimulatedTrade[];
-  tradesNote: string;
-  decisions: ResearchSimulatedDecision[];
-  decisionsNote: string;
-  replay: ResearchReplay | null;
-  replayError: string | null;
-};
+const ResearchEquityChart = dynamic(
+  () =>
+    import("@/components/charts/ResearchEquityCharts").then((mod) => mod.ResearchEquityChart),
+  { ssr: false, loading: () => <Skeleton className="h-[360px] w-full" /> },
+);
+const ResearchDrawdownChart = dynamic(
+  () =>
+    import("@/components/charts/ResearchEquityCharts").then((mod) => mod.ResearchDrawdownChart),
+  { ssr: false, loading: () => <Skeleton className="h-[260px] w-full" /> },
+);
+const ResearchExposureChart = dynamic(
+  () =>
+    import("@/components/charts/ResearchEquityCharts").then((mod) => mod.ResearchExposureChart),
+  { ssr: false, loading: () => <Skeleton className="h-[240px] w-full" /> },
+);
 
 export function ResearchLab() {
-  const [experiments, setExperiments] = useState<ResearchExperiment[] | null>(null);
-  const [runs, setRuns] = useState<ResearchRun[] | null>(null);
-  const [selectedExperimentId, setSelectedExperimentId] = useState<string | null>(null);
-  const [experimentDetail, setExperimentDetail] = useState<(ResearchExperiment & { runs: ResearchRun[] }) | null>(
-    null,
-  );
+  const experiments = useResearchExperimentsList();
+  const runs = useResearchRunsList();
   const [selectedRunId, setSelectedRunId] = useState<number | null>(null);
-  const [runBundle, setRunBundle] = useState<RunBundle | null>(null);
-  const [runLoading, setRunLoading] = useState(false);
-  const [selectedDecisionId, setSelectedDecisionId] = useState<number | null>(null);
-  const [decisionDetail, setDecisionDetail] = useState<ResearchSimulatedDecision | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [windowFilter, setWindowFilter] = useState<"all" | "train" | "validation" | "test">("test");
+  const [verifyOpen, setVerifyOpen] = useState(false);
+  const [decision, setDecision] = useState<ResearchSimulatedDecision | null>(null);
+  const [advancedTab, setAdvancedTab] = useState("overview");
 
-  useEffect(() => {
-    let cancelled = false;
-    void Promise.all([loadResearchExperiments(), loadResearchRuns()])
-      .then(([experimentPage, runPage]) => {
-        if (!cancelled) {
-          setExperiments(experimentPage.items);
-          setRuns(runPage.items);
-        }
-      })
-      .catch((caught: unknown) => {
-        if (!cancelled) {
-          setError(
-            caught instanceof TypeError
-              ? `API unreachable at ${API_URL}`
-              : caught instanceof Error
-                ? caught.message
-                : "Research data could not be read.",
-          );
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const effectiveRunId =
+    selectedRunId ??
+    runs.data?.items.find((run) => run.status === "succeeded")?.id ??
+    runs.data?.items[0]?.id ??
+    null;
 
-  useEffect(() => {
-    if (!selectedExperimentId) {
-      return;
+  const bundle = useResearchRunBundle(effectiveRunId);
+
+  const strategies = useMemo(() => {
+    if (!bundle.data) {
+      return [] as string[];
     }
-    let cancelled = false;
-    void loadResearchExperiment(selectedExperimentId)
-      .then((detail) => {
-        if (!cancelled) {
-          setExperimentDetail(detail);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setExperimentDetail(null);
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedExperimentId]);
+    return [...new Set(bundle.data.equity.map((point) => point.strategy_id))];
+  }, [bundle.data]);
 
-  useEffect(() => {
-    if (selectedRunId === null) {
-      return;
-    }
-    let cancelled = false;
+  const [visibleStrategies, setVisibleStrategies] = useState<string[] | null>(null);
+  const shownStrategies = visibleStrategies ?? strategies;
+  const primaryStrategy =
+    configString(bundle.data?.detail.config ?? {}, "strategy_id") ??
+    strategies.find((id) => id.includes("tsmom_12")) ??
+    strategies[0] ??
+    "spy_tsmom_12_1";
 
-    void (async () => {
-      try {
-        const [detail, equityPage, tradesPage, decisionsPage] = await Promise.all([
-          loadResearchRun(selectedRunId),
-          loadResearchRunEquity(selectedRunId),
-          loadResearchRunTrades(selectedRunId),
-          loadResearchRunDecisions(selectedRunId),
-        ]);
-        let replay: ResearchReplay | null = null;
-        let replayError: string | null = null;
-        try {
-          replay = await loadResearchRunReplay(selectedRunId);
-        } catch (replayCaught: unknown) {
-          replayError =
-            replayCaught instanceof Error ? replayCaught.message : "Replay check could not be completed.";
-        }
-        if (!cancelled) {
-          setRunBundle({
-            detail,
-            equity: equityPage.items,
-            trades: tradesPage.items,
-            tradesNote: tradesPage.note,
-            decisions: decisionsPage.items,
-            decisionsNote: decisionsPage.note,
-            replay,
-            replayError,
-          });
-          setRunLoading(false);
-        }
-      } catch (caught: unknown) {
-        if (!cancelled) {
-          setRunBundle(null);
-          setError(caught instanceof Error ? caught.message : "Selected run could not be loaded.");
-          setRunLoading(false);
-        }
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedRunId]);
-
-  useEffect(() => {
-    if (selectedDecisionId === null) {
-      return;
-    }
-    let cancelled = false;
-    void loadResearchDecision(selectedDecisionId)
-      .then((detail) => {
-        if (!cancelled) {
-          setDecisionDetail(detail);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setDecisionDetail(null);
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedDecisionId]);
-
-  const visibleRuns = useMemo(() => {
-    if (!runs) {
-      return null;
-    }
-    if (!selectedExperimentId) {
-      return runs;
-    }
-    return runs.filter((run) => run.experiment_id === selectedExperimentId);
-  }, [runs, selectedExperimentId]);
-
-  const failedRuns = useMemo(() => (runs ? runs.filter((run) => run.status === "failed") : []), [runs]);
-
-  const activeExperiment = experimentDetail ?? experiments?.find((item) => item.experiment_id === selectedExperimentId);
+  const testMetrics = (bundle.data?.detail.metrics ?? []).filter(
+    (metric) => metric.window === (windowFilter === "all" ? metric.window : windowFilter),
+  );
 
   return (
-    <div className="mx-auto flex max-w-6xl flex-col gap-6">
-      <header className="flex flex-wrap items-start justify-between gap-4">
-        <PageIntro
-          title="Research Lab"
-          note="Offline backtests and simulated decisions from the local research store. Nothing on this page submits broker or paper orders."
-        />
-        <Badge tone="info">BACKTEST (offline)</Badge>
-      </header>
+    <div className="flex flex-col gap-6">
+      <PageIntro
+        title="Research Lab"
+        note="Offline simulated backtests only. Date-aligned equity curves, drawdowns, and verifier verdicts from stored research artifacts — not broker P&L."
+      />
 
-      {error ? <Empty title="Research Lab unavailable" note={error} /> : null}
-
-      {experiments && experiments.length === 0 ? (
-        <Empty
-          title="No experiments yet"
-          note="Run nomadquant-research with an experiment config to register a hypothesis and backtest. The dashboard will not invent experiments or returns."
+      {experiments.isError || runs.isError ? (
+        <ErrorState
+          title="Research Lab unavailable"
+          note="Could not load experiments or runs from the API."
         />
       ) : null}
 
-      {experiments && experiments.length > 0 ? (
-        <div className="grid gap-6 lg:grid-cols-2">
-          <Panel>
-            <h2 className="kicker">Experiments</h2>
-            <ul className="mt-4 divide-y divide-[var(--line)]">
-              {experiments.map((experiment) => {
-                const active = selectedExperimentId === experiment.experiment_id;
-                return (
-                  <li key={experiment.experiment_id}>
-                    <button
-                      type="button"
-                      className={`flex w-full flex-col gap-1 py-3 text-left text-sm ${active ? "text-[var(--cyan)]" : ""}`}
-                      onClick={() => {
-                        setSelectedExperimentId(experiment.experiment_id);
-                        setSelectedRunId(null);
-                        setRunBundle(null);
-                        setSelectedDecisionId(null);
-                        setDecisionDetail(null);
-                      }}
-                    >
-                      <span className="font-medium">{experiment.title}</span>
-                      <span className="text-[var(--muted)]">
-                        {experiment.experiment_id} · {experiment.hypothesis_id}
-                      </span>
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          </Panel>
-
-          <Panel>
-            <h2 className="kicker">Backtest runs</h2>
-            {visibleRuns && visibleRuns.length === 0 ? (
-              <p className="mt-4 text-sm text-[var(--muted)]">
-                No runs for this selection. Finished and failed backtests appear here when recorded.
-              </p>
-            ) : null}
-            {visibleRuns && visibleRuns.length > 0 ? (
-              <ul className="mt-4 divide-y divide-[var(--line)]">
-                {visibleRuns.map((run) => {
-                  const active = selectedRunId === run.id;
-                  return (
-                    <li key={run.id}>
-                      <button
-                        type="button"
-                        className="flex w-full flex-wrap items-start justify-between gap-3 py-3 text-left text-sm"
-                        onClick={() => {
-                          setSelectedRunId(run.id);
-                          setRunBundle(null);
-                          setRunLoading(true);
-                          setSelectedDecisionId(null);
-                          setDecisionDetail(null);
-                        }}
-                      >
-                        <span className={active ? "text-[var(--cyan)]" : ""}>
-                          <span className="block font-medium">
-                            Run {run.id} · {run.experiment_id}
-                          </span>
-                          <span className="block text-[var(--muted)]">
-                            {run.created_at}
-                            {run.finished_at ? ` · finished ${run.finished_at}` : ""}
-                          </span>
-                          <span className="mt-1 block">{run.outcome_summary || "No outcome summary yet."}</span>
-                        </span>
-                        <Badge tone={toneFor(run.status)}>{run.status}</Badge>
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
-            ) : null}
-          </Panel>
-        </div>
-      ) : null}
-
-      {activeExperiment ? (
-        <Panel>
-          <h2 className="kicker">Hypothesis & citations</h2>
-          <p className="mt-3 text-sm">
-            <span className="text-[var(--muted)]">Hypothesis ID · </span>
-            {activeExperiment.hypothesis_id}
-          </p>
-          <p className="mt-3 text-sm leading-6">{activeExperiment.description}</p>
-          {activeExperiment.citations.length > 0 ? (
-            <ul className="mt-4 list-disc space-y-1 pl-5 text-sm text-[var(--muted)]">
-              {activeExperiment.citations.map((citation) => (
-                <li key={citation}>{citation}</li>
-              ))}
-            </ul>
-          ) : (
-            <p className="mt-4 text-sm text-[var(--muted)]">No citations recorded for this experiment.</p>
-          )}
-        </Panel>
-      ) : null}
-
-      {runLoading ? <p className="text-sm text-[var(--muted)]">Loading run artifacts…</p> : null}
-
-      {runBundle ? <RunDetail bundle={runBundle} /> : null}
-
-      {runBundle ? (
-        <DecisionTimeline
-          decisions={runBundle.decisions}
-          note={runBundle.decisionsNote}
-          selectedId={selectedDecisionId}
-          onSelect={(id) => {
-            setSelectedDecisionId(id);
-            setDecisionDetail(null);
-          }}
-        />
-      ) : null}
-
-      {runBundle && selectedDecisionId !== null ? (
-        <DecisionInspect detail={decisionDetail} decisionId={selectedDecisionId} />
-      ) : null}
-
-      <Panel>
-        <h2 className="kicker">Future research agents</h2>
-        <p className="mt-3 text-sm text-[var(--muted)]">
-          No agent runs yet. A later local Ollama workflow can use the read-only research tools. It will
-          not receive broker credentials or an order method.
-        </p>
-        <dl className="mt-4 space-y-2 text-sm">
-          <div className="flex justify-between gap-4"><dt className="text-[var(--muted)]">Role</dt><dd>Not configured</dd></div>
-          <div className="flex justify-between gap-4"><dt className="text-[var(--muted)]">Ollama model</dt><dd>Not measured</dd></div>
-          <div className="flex justify-between gap-4"><dt className="text-[var(--muted)]">Tool calls</dt><dd>None</dd></div>
-          <div className="flex justify-between gap-4"><dt className="text-[var(--muted)]">Skeptic objections</dt><dd>None</dd></div>
-        </dl>
-      </Panel>
-
-      {failedRuns.length > 0 ? (
-        <Panel>
-          <h2 className="kicker">Failed runs history</h2>
-          <ul className="mt-4 divide-y divide-[var(--line)] text-sm">
-            {failedRuns.map((run) => (
-              <li key={run.id} className="py-3">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <span>
-                    Run {run.id} · {run.experiment_id}
-                    <span className="mt-1 block text-[var(--muted)]">{run.error_message_safe || run.outcome_summary}</span>
-                  </span>
-                  <Badge tone="err">{run.status}</Badge>
-                </div>
+      <div className="grid gap-4 xl:grid-cols-[280px_1fr]">
+        <Panel className="h-fit space-y-3">
+          <h2 className="text-sm font-semibold">Experiments</h2>
+          {experiments.isLoading ? <Skeleton lines={3} /> : null}
+          {experiments.data?.items.map((experiment) => (
+            <div key={experiment.experiment_id} className="rounded-xl border border-[var(--line)] p-3">
+              <p className="text-sm font-medium">{experiment.title}</p>
+              <p className="mt-1 font-mono text-[11px] text-[var(--cyan)]">{experiment.experiment_id}</p>
+              <p className="mt-2 text-xs text-[var(--muted)]">{experiment.hypothesis_id}</p>
+            </div>
+          ))}
+          <h2 className="pt-2 text-sm font-semibold">Runs</h2>
+          {runs.isLoading ? <Skeleton lines={4} /> : null}
+          <ul className="space-y-2">
+            {(runs.data?.items ?? []).map((run) => (
+              <li key={run.id}>
+                <button
+                  type="button"
+                  onClick={() => setSelectedRunId(run.id)}
+                  className={`w-full rounded-xl border px-3 py-2 text-left text-sm transition-colors ${
+                    effectiveRunId === run.id
+                      ? "border-[rgba(103,240,224,0.35)] bg-[rgba(103,240,224,0.08)]"
+                      : "border-[var(--line)] hover:bg-[rgba(255,255,255,0.03)]"
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-mono text-xs">#{run.id}</span>
+                    <Badge tone={toneFor(run.status)}>{run.status}</Badge>
+                  </div>
+                  <p className="mt-1 truncate text-xs text-[var(--muted)]">{run.outcome_summary}</p>
+                </button>
               </li>
             ))}
           </ul>
+          {(runs.data?.items.length ?? 0) === 0 && !runs.isLoading ? (
+            <EmptyState
+              title="No runs yet"
+              note="Execute nomadquant-research run against the pre-registered experiment."
+            />
+          ) : null}
         </Panel>
-      ) : null}
+
+        <div className="space-y-4">
+          {bundle.isLoading ? <Skeleton className="h-40 w-full" lines={5} /> : null}
+          {bundle.isError ? (
+            <ErrorState title="Run failed to load" note="Select another run or refresh." />
+          ) : null}
+          {bundle.data ? (
+            <>
+              <Panel>
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <p className="kicker">SIMULATED BACKTEST</p>
+                    <h2 className="mt-1 text-lg font-semibold">
+                      Run #{bundle.data.detail.id} · {bundle.data.detail.experiment_id}
+                    </h2>
+                    <p className="mt-1 text-sm text-[var(--muted)]">{bundle.data.detail.label}</p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {bundle.data.verify ? (
+                      <button type="button" onClick={() => setVerifyOpen(true)}>
+                        <VerificationBadge result={bundle.data.verify.verdict} />
+                      </button>
+                    ) : (
+                      <Badge tone="warn">verify unavailable</Badge>
+                    )}
+                    {bundle.data.replay ? (
+                      <VerificationBadge result={bundle.data.replay.verdict} />
+                    ) : null}
+                    <Badge tone="warn">is_broker_execution=false</Badge>
+                  </div>
+                </div>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <ProvenanceChip source={`engine=${bundle.data.detail.engine_version}`} />
+                  <ProvenanceChip
+                    source={`git=${bundle.data.detail.git_commit?.slice(0, 8) ?? "n/a"}`}
+                  />
+                  <ProvenanceChip
+                    source={`fp=${bundle.data.detail.dataset_fingerprint.slice(0, 12)}…`}
+                    detail={bundle.data.detail.dataset_fingerprint}
+                  />
+                  <ProvenanceChip source="capital=$100" />
+                  <ProvenanceChip source="price_only / raw" />
+                </div>
+              </Panel>
+
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <SegmentedControl
+                  value={windowFilter}
+                  onChange={(value) =>
+                    setWindowFilter(value as "all" | "train" | "validation" | "test")
+                  }
+                  options={[
+                    { value: "test", label: "Locked test" },
+                    { value: "validation", label: "Validation" },
+                    { value: "train", label: "Train" },
+                    { value: "all", label: "All windows" },
+                  ]}
+                />
+                <div className="flex flex-wrap gap-2">
+                  {strategies.map((id) => {
+                    const on = shownStrategies.includes(id);
+                    return (
+                      <button
+                        key={id}
+                        type="button"
+                        onClick={() => {
+                          setVisibleStrategies((current) => {
+                            const base = current ?? strategies;
+                            if (on && base.length === 1) {
+                              return base;
+                            }
+                            return on ? base.filter((item) => item !== id) : [...base, id];
+                          });
+                        }}
+                        className={`rounded-full border px-2.5 py-1 text-[11px] ${
+                          on
+                            ? "border-[rgba(103,240,224,0.35)] text-[var(--cyan)]"
+                            : "border-[var(--line)] text-[var(--muted)]"
+                        }`}
+                      >
+                        {id}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <Panel>
+                <h3 className="mb-3 text-sm font-semibold">Equity comparison (date-aligned)</h3>
+                <ResearchEquityChart
+                  points={bundle.data.equity}
+                  windowFilter={windowFilter}
+                  visibleStrategies={shownStrategies}
+                  trades={bundle.data.trades}
+                  primaryStrategy={primaryStrategy}
+                />
+              </Panel>
+
+              <div className="grid gap-4 xl:grid-cols-2">
+                <Panel>
+                  <h3 className="mb-3 text-sm font-semibold">Drawdown</h3>
+                  <ResearchDrawdownChart
+                    points={bundle.data.equity}
+                    windowFilter={windowFilter}
+                    strategies={shownStrategies}
+                  />
+                </Panel>
+                <Panel>
+                  <h3 className="mb-3 text-sm font-semibold">Cash / exposure · {primaryStrategy}</h3>
+                  <ResearchExposureChart
+                    points={bundle.data.equity}
+                    windowFilter={windowFilter}
+                    strategyId={primaryStrategy}
+                  />
+                </Panel>
+              </div>
+
+              <Panel>
+                <h3 className="mb-3 text-sm font-semibold">Window metrics</h3>
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                  {testMetrics.slice(0, 8).map((metric) => (
+                    <MetricCard
+                      key={`${metric.strategy_id}-${metric.window}`}
+                      label={`${metric.strategy_id} · ${metric.window}`}
+                      value={formatReturn(metric.net_return)}
+                      hint={`trades ${metric.trade_count} · DD ${formatReturn(metric.max_drawdown)}`}
+                    />
+                  ))}
+                </div>
+                {testMetrics.length === 0 ? (
+                  <p className="text-sm text-[var(--muted)]">No metrics for this window filter.</p>
+                ) : null}
+              </Panel>
+
+              <Tabs
+                active={advancedTab}
+                onChange={setAdvancedTab}
+                tabs={[
+                  {
+                    id: "overview",
+                    label: "Trades & decisions",
+                    panel: (
+                      <div className="grid gap-4 xl:grid-cols-2">
+                        <TradeTable trades={bundle.data.trades} note={bundle.data.tradesNote} />
+                        <DecisionList
+                          decisions={bundle.data.decisions}
+                          note={bundle.data.decisionsNote}
+                          onSelect={setDecision}
+                        />
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "provenance",
+                    label: "Provenance",
+                    panel: <ProvenancePanel detail={bundle.data.detail} metrics={testMetrics} />,
+                  },
+                  {
+                    id: "advanced",
+                    label: "Advanced JSON",
+                    panel: (
+                      <pre className="max-h-96 overflow-auto rounded-xl border border-[var(--line)] bg-black/30 p-3 font-mono text-[11px] text-[var(--muted)]">
+                        {JSON.stringify(bundle.data.detail.config, null, 2)}
+                      </pre>
+                    ),
+                  },
+                ]}
+              />
+
+              <Panel>
+                <h3 className="text-sm font-semibold">Future research agents</h3>
+                <p className="mt-2 text-sm text-[var(--muted)]">
+                  Not configured · not measured · none running. Ollama agent loops are design-only.
+                </p>
+              </Panel>
+            </>
+          ) : null}
+        </div>
+      </div>
+
+      <Drawer
+        open={verifyOpen && Boolean(bundle.data?.verify)}
+        onClose={() => setVerifyOpen(false)}
+        title="Scientific verification"
+      >
+        {bundle.data?.verify ? (
+          <div className="space-y-3">
+            <VerificationBadge result={bundle.data.verify.verdict} />
+            <p className="text-xs text-[var(--muted)]">
+              A PASS means internal consistency of the artifact, not statistical significance or
+              profitability. is_broker_execution=false.
+            </p>
+            <ul className="space-y-2">
+              {bundle.data.verify.checks.map((check) => (
+                <li key={check.name} className="rounded-xl border border-[var(--line)] p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-mono text-xs">{check.name}</span>
+                    <VerificationBadge result={check.verdict} />
+                  </div>
+                  <p className="mt-2 text-sm text-[var(--muted)]">{check.detail}</p>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+      </Drawer>
+
+      <Drawer
+        open={decision !== null}
+        onClose={() => setDecision(null)}
+        title={decision ? `Decision #${decision.id}` : "Decision"}
+      >
+        {decision ? <DecisionDetail decision={decision} /> : null}
+      </Drawer>
     </div>
   );
 }
 
-function RunDetail({ bundle }: { bundle: RunBundle }) {
-  const { detail, equity, trades, tradesNote, replay, replayError } = bundle;
-  const feed = configString(detail.config, "feed");
-  const dataStart = configString(detail.config, "data_start");
-  const dataEnd = configString(detail.config, "data_end");
-  const symbols = detail.config.symbols;
-  const symbolLabel = Array.isArray(symbols) && symbols.every((item) => typeof item === "string")
-    ? symbols.join(", ")
-    : null;
-
-  const metricsByWindow = groupMetrics(detail.metrics);
-  const maxDrawdowns = maxDrawdownByStrategy(equity);
-
+function TradeTable({
+  trades,
+  note,
+}: {
+  trades: import("@/lib/api").ResearchSimulatedTrade[];
+  note: string;
+}) {
   return (
-    <>
-      <div className="flex flex-wrap items-center gap-2">
-        <Badge tone={toneFor(detail.status)}>{detail.status}</Badge>
-        <Badge tone="info">{detail.label.toUpperCase()}</Badge>
-        <Badge tone="warn">Simulated · not broker</Badge>
-      </div>
-
-      <div className="grid gap-4 md:grid-cols-3">
-        <Stat label="Feed" value={feed ?? "n/a"} />
-        <Stat label="Data window" value={dataStart && dataEnd ? `${dataStart} → ${dataEnd}` : "n/a"} />
-        <Stat label="Symbols" value={symbolLabel ?? "n/a"} />
-      </div>
-
-      <Panel>
-        <h2 className="kicker">Outcome</h2>
-        <p className="mt-3 text-sm leading-6">{detail.outcome_summary || "No outcome summary recorded."}</p>
-        {detail.error_message_safe ? (
-          <p className="mt-2 text-sm text-[var(--err)]">{detail.error_message_safe}</p>
-        ) : null}
-      </Panel>
-
-      <MetricsTable metrics={detail.metrics} />
-
-      {equity.length > 0 ? (
-        <Panel>
-          <h2 className="kicker">Equity curve (test window, by strategy)</h2>
-          <p className="mt-2 text-sm text-[var(--muted)]">
-            SVG from stored equity points only. Strategies with no test-window points are omitted.
-          </p>
-          <EquityChart points={equity.filter((point) => point.window === "test")} />
-          {Object.keys(maxDrawdowns).length > 0 ? (
-            <dl className="mt-4 grid gap-2 text-sm md:grid-cols-2">
-              {Object.entries(maxDrawdowns).map(([strategyId, drawdown]) => (
-                <div key={strategyId}>
-                  <dt className="text-[var(--muted)]">{strategyId} max drawdown (from equity)</dt>
-                  <dd>{formatReturn(drawdown)}</dd>
-                </div>
-              ))}
-            </dl>
-          ) : null}
-        </Panel>
-      ) : (
-        <Empty title="No equity series" note="This run has no stored equity points yet." />
-      )}
-
-      {(["train", "validation", "test"] as const).map((window) =>
-        metricsByWindow[window]?.length ? (
-          <WindowMetrics key={window} window={window} metrics={metricsByWindow[window]} />
-        ) : null,
-      )}
-
-      <TradeLedger trades={trades} note={tradesNote} />
-
-      <Panel>
-        <h2 className="kicker">Warnings & caveats</h2>
-        <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-[var(--muted)]">
-          {detail.caveats.map((item) => (
-            <li key={item}>{item}</li>
-          ))}
-          {detail.research_mode === "price_only" ? (
-            <li>Research mode is price-only; dividends and total return are excluded.</li>
-          ) : null}
-        </ul>
-      </Panel>
-
-      <Panel>
-        <h2 className="kicker">Reproduction</h2>
-        <dl className="mt-3 grid gap-3 text-sm md:grid-cols-2">
-          <div>
-            <dt className="text-[var(--muted)]">Git commit</dt>
-            <dd className="font-mono text-xs">{detail.git_commit ?? "n/a"}</dd>
-          </div>
-          <div>
-            <dt className="text-[var(--muted)]">Engine version</dt>
-            <dd>{detail.engine_version}</dd>
-          </div>
-          <div className="md:col-span-2">
-            <dt className="text-[var(--muted)]">Dataset fingerprint</dt>
-            <dd className="break-all font-mono text-xs">{detail.dataset_fingerprint}</dd>
-          </div>
-        </dl>
-      </Panel>
-
-      <Panel>
-        <h2 className="kicker">Decision replay check</h2>
-        {replay ? (
-          <>
-            <div className="mt-3 flex flex-wrap gap-2">
-              <Badge tone={replay.verdict === "PASS" ? "ok" : replay.verdict === "FAIL" ? "err" : "info"}>
-                {replay.verdict}
-              </Badge>
-              <Badge tone="info">{replay.label}</Badge>
-            </div>
-            <p className="mt-3 text-sm text-[var(--muted)]">
-              Checked {replay.checked_decisions} simulated rebalance decisions · {replay.mismatch_count} mismatches
-            </p>
-            {replay.mismatches.length > 0 ? (
-              <pre className="mt-4 overflow-x-auto text-xs text-[var(--muted)]">
-                {JSON.stringify(replay.mismatches, null, 2)}
-              </pre>
-            ) : null}
-          </>
-        ) : (
-          <p className="mt-3 text-sm text-[var(--muted)]">{replayError ?? "Replay not available for this run."}</p>
-        )}
-      </Panel>
-    </>
-  );
-}
-
-function MetricsTable({ metrics }: { metrics: ResearchMetric[] }) {
-  if (metrics.length === 0) {
-    return <Empty title="No performance metrics" note="Metrics are recorded when a backtest completes successfully." />;
-  }
-  return (
-    <Panel>
-      <h2 className="kicker">Performance metrics</h2>
-      <div className="mt-4 overflow-x-auto">
-        <table className="w-full min-w-[640px] text-left text-sm">
-          <thead className="text-[var(--muted)]">
+    <div>
+      <h4 className="mb-2 text-sm font-semibold">Simulated trades</h4>
+      <p className="mb-2 text-xs text-[var(--muted)]">{note}</p>
+      <div className="max-h-80 overflow-auto">
+        <table className="min-w-full text-left text-xs">
+          <thead className="sticky top-0 bg-[var(--bg-2)] text-[var(--muted)]">
             <tr>
-              <th className="pb-2 pr-3 font-medium">Strategy</th>
-              <th className="pb-2 pr-3 font-medium">Window</th>
-              <th className="pb-2 pr-3 font-medium">Net return</th>
-              <th className="pb-2 pr-3 font-medium">Gross return</th>
-              <th className="pb-2 pr-3 font-medium">Max DD</th>
-              <th className="pb-2 pr-3 font-medium">Sharpe</th>
-              <th className="pb-2 pr-3 font-medium">Trades</th>
-              <th className="pb-2 font-medium">Costs</th>
-            </tr>
-          </thead>
-          <tbody>
-            {metrics.map((metric) => (
-              <tr key={`${metric.strategy_id}-${metric.window}`} className="border-t border-[var(--line)]">
-                <td className="py-2 pr-3">{metric.strategy_id}</td>
-                <td className="py-2 pr-3">{metric.window}</td>
-                <td className="py-2 pr-3">{formatReturn(metric.net_return)}</td>
-                <td className="py-2 pr-3">{formatReturn(metric.gross_return)}</td>
-                <td className="py-2 pr-3">{formatReturn(metric.max_drawdown)}</td>
-                <td className="py-2 pr-3">{metric.sharpe ?? "n/a"}</td>
-                <td className="py-2 pr-3">{metric.trade_count}</td>
-                <td className="py-2">{formatUsd(metric.total_costs)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </Panel>
-  );
-}
-
-function WindowMetrics({ window, metrics }: { window: string; metrics: ResearchMetric[] }) {
-  return (
-    <Panel>
-      <h2 className="kicker">{window} window</h2>
-      <ul className="mt-3 divide-y divide-[var(--line)] text-sm">
-        {metrics.map((metric) => (
-          <li key={metric.strategy_id} className="py-2">
-            <span className="font-medium">{metric.strategy_id}</span>
-            <span className="mt-1 block text-[var(--muted)]">
-              Net {formatReturn(metric.net_return)} · samples {metric.sample_sessions} · turnover{" "}
-              {metric.turnover ?? "n/a"}
-            </span>
-            {metric.unavailable.length > 0 ? (
-              <span className="mt-1 block text-xs text-[var(--warn)]">Unavailable: {metric.unavailable.join(", ")}</span>
-            ) : null}
-          </li>
-        ))}
-      </ul>
-    </Panel>
-  );
-}
-
-function TradeLedger({ trades, note }: { trades: ResearchSimulatedTrade[]; note: string }) {
-  if (trades.length === 0) {
-    return (
-      <Empty title="No simulated trades" note="Trades appear when the backtest engine records fills. None are broker orders." />
-    );
-  }
-  return (
-    <Panel>
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="kicker">Simulated trade ledger</h2>
-        <Badge tone="warn">Simulated fill</Badge>
-      </div>
-      <p className="mt-2 text-sm text-[var(--muted)]">{note}</p>
-      <div className="mt-4 overflow-x-auto">
-        <table className="w-full min-w-[720px] text-left text-sm">
-          <thead className="text-[var(--muted)]">
-            <tr>
-              <th className="pb-2 pr-3 font-medium">Date</th>
-              <th className="pb-2 pr-3 font-medium">Strategy</th>
-              <th className="pb-2 pr-3 font-medium">Symbol</th>
-              <th className="pb-2 pr-3 font-medium">Side</th>
-              <th className="pb-2 pr-3 font-medium">Qty</th>
-              <th className="pb-2 pr-3 font-medium">Notional</th>
-              <th className="pb-2 pr-3 font-medium">Commission</th>
-              <th className="pb-2 font-medium">Spread + slip</th>
+              <th className="py-2 pr-2">Date</th>
+              <th className="py-2 pr-2">Side</th>
+              <th className="py-2 pr-2">Qty</th>
+              <th className="py-2 pr-2">Price</th>
             </tr>
           </thead>
           <tbody>
             {trades.map((trade) => (
               <tr key={trade.id} className="border-t border-[var(--line)]">
-                <td className="py-2 pr-3">{trade.session_date}</td>
-                <td className="py-2 pr-3">{trade.strategy_id}</td>
-                <td className="py-2 pr-3">{trade.symbol}</td>
-                <td className="py-2 pr-3">{trade.side}</td>
-                <td className="py-2 pr-3">{trade.quantity}</td>
-                <td className="py-2 pr-3">{formatUsd(trade.notional)}</td>
-                <td className="py-2 pr-3">{formatUsd(trade.commission)}</td>
-                <td className="py-2">
-                  {formatUsd(Number(trade.spread_cost) + Number(trade.slippage_cost))}
-                </td>
+                <td className="py-1.5 pr-2 font-mono">{trade.session_date}</td>
+                <td className="py-1.5 pr-2">{trade.side}</td>
+                <td className="py-1.5 pr-2">{trade.quantity}</td>
+                <td className="py-1.5 pr-2">{trade.price}</td>
               </tr>
             ))}
           </tbody>
         </table>
+        {trades.length === 0 ? (
+          <p className="py-4 text-sm text-[var(--muted)]">No simulated trades in this run.</p>
+        ) : null}
       </div>
-    </Panel>
+    </div>
   );
 }
 
-function DecisionTimeline({
+function DecisionList({
   decisions,
   note,
-  selectedId,
   onSelect,
 }: {
   decisions: ResearchSimulatedDecision[];
   note: string;
-  selectedId: number | null;
-  onSelect: (id: number | null) => void;
-}) {
-  if (decisions.length === 0) {
-    return (
-      <Empty
-        title="No simulated decisions"
-        note="Backtest decisions are stored separately from observability decision traces."
-      />
-    );
-  }
-  return (
-    <Panel>
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="kicker">Simulated decision timeline</h2>
-        <Badge tone="warn">Simulated · not Alpaca</Badge>
-      </div>
-      <p className="mt-2 text-sm text-[var(--muted)]">{note}</p>
-      <ul className="mt-4 divide-y divide-[var(--line)]">
-        {decisions.map((decision) => {
-          const active = selectedId === decision.id;
-          return (
-            <li key={decision.id}>
-              <button
-                type="button"
-                className={`flex w-full flex-wrap items-start justify-between gap-3 py-3 text-left text-sm ${active ? "text-[var(--cyan)]" : ""}`}
-                onClick={() => onSelect(active ? null : decision.id)}
-              >
-                <span>
-                  <span className="font-medium">
-                    {decision.action} · {decision.symbol} · {decision.strategy_id}
-                  </span>
-                  <span className="mt-1 block text-[var(--muted)]">
-                    {decision.session_date} · {decision.signal}
-                  </span>
-                  <span className="mt-1 block">{decision.rationale}</span>
-                </span>
-                <Badge tone="info">simulated</Badge>
-              </button>
-            </li>
-          );
-        })}
-      </ul>
-    </Panel>
-  );
-}
-
-function DecisionInspect({
-  detail,
-  decisionId,
-}: {
-  detail: ResearchSimulatedDecision | null;
-  decisionId: number;
+  onSelect: (decision: ResearchSimulatedDecision) => void;
 }) {
   return (
-    <Panel>
-      <h2 className="kicker">Decision inspect · #{decisionId}</h2>
-      {!detail ? <p className="mt-3 text-sm text-[var(--muted)]">Loading decision detail…</p> : null}
-      {detail ? (
-        <>
-          <div className="mt-3 flex flex-wrap gap-2">
-            <Badge tone="warn">Simulated backtest decision</Badge>
-            <Badge tone="info">{detail.action}</Badge>
-          </div>
-          <p className="mt-3 text-sm">{detail.rationale}</p>
-          {detail.warnings.length > 0 ? (
-            <ul className="mt-3 list-disc pl-5 text-sm text-[var(--warn)]">
-              {detail.warnings.map((warning) => (
-                <li key={warning}>{warning}</li>
-              ))}
-            </ul>
-          ) : null}
-          <pre className="mt-4 overflow-x-auto text-xs text-[var(--muted)]">
-            {JSON.stringify(
-              {
-                feature_inputs: detail.feature_inputs,
-                portfolio_before: detail.portfolio_before,
-                portfolio_after: detail.portfolio_after,
-                evidence_hash: detail.evidence_hash,
-                is_simulated: detail.is_simulated,
-                is_broker_order: detail.is_broker_order,
-              },
-              null,
-              2,
-            )}
-          </pre>
-        </>
-      ) : null}
-    </Panel>
-  );
-}
-
-function EquityChart({ points }: { points: ResearchEquityPoint[] }) {
-  const series = useMemo(() => {
-    const byStrategy = new Map<string, ResearchEquityPoint[]>();
-    for (const point of points) {
-      const bucket = byStrategy.get(point.strategy_id) ?? [];
-      bucket.push(point);
-      byStrategy.set(point.strategy_id, bucket);
-    }
-    for (const bucket of byStrategy.values()) {
-      bucket.sort((a, b) => a.session_date.localeCompare(b.session_date));
-    }
-    return [...byStrategy.entries()];
-  }, [points]);
-
-  if (series.length === 0) {
-    return <p className="mt-4 text-sm text-[var(--muted)]">No test-window equity points to chart.</p>;
-  }
-
-  const width = 640;
-  const height = 200;
-  const padding = 16;
-  const values = points.map((point) => Number(point.equity)).filter((value) => Number.isFinite(value));
-  if (values.length < 2) {
-    return <p className="mt-4 text-sm text-[var(--muted)]">Not enough equity points to draw a curve.</p>;
-  }
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const span = max - min || 1;
-
-  return (
-    <div className="mt-4">
-      <svg viewBox={`0 0 ${width} ${height}`} className="h-auto w-full" role="img" aria-label="Equity curves">
-        <rect x={0} y={0} width={width} height={height} fill="rgba(0,0,0,0.2)" rx={8} />
-        {series.map(([strategyId, strategyPoints], index) => {
-          if (strategyPoints.length < 2) {
-            return null;
-          }
-          const color = STRATEGY_COLORS[index % STRATEGY_COLORS.length];
-          const coords = strategyPoints
-            .map((point, pointIndex) => {
-              const x =
-                padding + (pointIndex / (strategyPoints.length - 1)) * (width - padding * 2);
-              const y =
-                padding +
-                (1 - (Number(point.equity) - min) / span) * (height - padding * 2);
-              return `${x},${y}`;
-            })
-            .join(" ");
-          return (
-            <polyline
-              key={strategyId}
-              fill="none"
-              stroke={color}
-              strokeWidth={2}
-              points={coords}
-            />
-          );
-        })}
-      </svg>
-      <ul className="mt-3 flex flex-wrap gap-3 text-xs text-[var(--muted)]">
-        {series.map(([strategyId], index) => (
-          <li key={strategyId} className="inline-flex items-center gap-2">
-            <span
-              className="inline-block h-2 w-2 rounded-full"
-              style={{ backgroundColor: STRATEGY_COLORS[index % STRATEGY_COLORS.length] }}
-            />
-            {strategyId}
+    <div>
+      <h4 className="mb-2 text-sm font-semibold">Simulated decisions</h4>
+      <p className="mb-2 text-xs text-[var(--muted)]">{note}</p>
+      <ul className="max-h-80 space-y-2 overflow-auto">
+        {decisions.slice(0, 80).map((item) => (
+          <li key={item.id}>
+            <button
+              type="button"
+              onClick={() => onSelect(item)}
+              className="w-full rounded-xl border border-[var(--line)] px-3 py-2 text-left text-xs hover:bg-[rgba(255,255,255,0.03)]"
+            >
+              <div className="flex justify-between gap-2">
+                <span className="font-mono">{item.session_date}</span>
+                <Badge tone="info">{item.action}</Badge>
+              </div>
+              <p className="mt-1 truncate text-[var(--muted)]">{item.rationale}</p>
+            </button>
           </li>
         ))}
       </ul>
@@ -764,27 +429,89 @@ function EquityChart({ points }: { points: ResearchEquityPoint[] }) {
   );
 }
 
-function groupMetrics(metrics: ResearchMetric[]): Record<string, ResearchMetric[]> {
-  const grouped: Record<string, ResearchMetric[]> = {};
-  for (const metric of metrics) {
-    const bucket = grouped[metric.window] ?? [];
-    bucket.push(metric);
-    grouped[metric.window] = bucket;
-  }
-  return grouped;
+function DecisionDetail({ decision }: { decision: ResearchSimulatedDecision }) {
+  const beforeW = Number(decision.portfolio_before.target_weight ?? decision.portfolio_before.weight ?? 0);
+  const afterW = Number(decision.portfolio_after.target_weight ?? decision.portfolio_after.weight ?? 0);
+  const target = Number(decision.proposed_target_weight);
+  return (
+    <div className="space-y-4 text-sm">
+      <Badge tone="warn">SIMULATED · not a broker order</Badge>
+      <dl className="grid grid-cols-2 gap-2 text-xs">
+        <dt className="text-[var(--muted)]">Action</dt>
+        <dd>{decision.action}</dd>
+        <dt className="text-[var(--muted)]">Signal</dt>
+        <dd>{decision.signal}</dd>
+        <dt className="text-[var(--muted)]">Data cutoff</dt>
+        <dd className="font-mono">{decision.data_cutoff}</dd>
+        <dt className="text-[var(--muted)]">Evidence</dt>
+        <dd className="truncate font-mono">{decision.evidence_hash}</dd>
+        <dt className="text-[var(--muted)]">Fill</dt>
+        <dd>
+          {decision.fill_session ?? "—"} @ {decision.fill_price ?? "—"}
+        </dd>
+      </dl>
+      <div>
+        <p className="mb-2 text-xs text-[var(--muted)]">Target vs realized exposure (if present)</p>
+        <div className="space-y-2">
+          <Bar label="Target" value={target} />
+          <Bar label="Before" value={beforeW} />
+          <Bar label="After" value={afterW} />
+        </div>
+      </div>
+      <p className="text-xs leading-5 text-[var(--muted)]">{decision.rationale}</p>
+    </div>
+  );
 }
 
-function maxDrawdownByStrategy(points: ResearchEquityPoint[]): Record<string, string> {
-  const result: Record<string, string> = {};
-  for (const point of points) {
-    const current = Number(point.drawdown);
-    if (!Number.isFinite(current)) {
-      continue;
-    }
-    const prior = result[point.strategy_id];
-    if (prior === undefined || current > Number(prior)) {
-      result[point.strategy_id] = point.drawdown;
-    }
-  }
-  return result;
+function Bar({ label, value }: { label: string; value: number }) {
+  const width = Number.isFinite(value) ? Math.max(0, Math.min(100, Math.abs(value) * 100)) : 0;
+  return (
+    <div>
+      <div className="mb-1 flex justify-between text-[11px] text-[var(--muted)]">
+        <span>{label}</span>
+        <span>{Number.isFinite(value) ? value.toFixed(3) : "n/a"}</span>
+      </div>
+      <div className="h-2 rounded-full bg-[rgba(255,255,255,0.06)]">
+        <div className="h-2 rounded-full bg-[var(--cyan)]" style={{ width: `${width}%` }} />
+      </div>
+    </div>
+  );
+}
+
+function ProvenancePanel({
+  detail,
+  metrics,
+}: {
+  detail: import("@/lib/api").ResearchRunDetail;
+  metrics: ResearchMetric[];
+}) {
+  return (
+    <div className="space-y-3 text-sm">
+      <p>
+        <span className="text-[var(--muted)]">Hypothesis / experiment: </span>
+        {detail.experiment_id}
+      </p>
+      <p>
+        <span className="text-[var(--muted)]">Fingerprint: </span>
+        <span className="font-mono text-xs">{detail.dataset_fingerprint}</span>
+      </p>
+      <p>
+        <span className="text-[var(--muted)]">Engine: </span>
+        {detail.engine_version}
+      </p>
+      <p>
+        <span className="text-[var(--muted)]">Git: </span>
+        {detail.git_commit ?? "n/a"}
+      </p>
+      <p>
+        <span className="text-[var(--muted)]">Start capital sample: </span>
+        {metrics[0] ? formatUsd(metrics[0].start_capital) : "$100"}
+      </p>
+      <ul className="list-disc space-y-1 pl-5 text-[var(--muted)]">
+        {detail.caveats.map((caveat) => (
+          <li key={caveat}>{caveat}</li>
+        ))}
+      </ul>
+    </div>
+  );
 }

@@ -44,9 +44,13 @@ An operational audit log records startup, broker reads, and market-data jobs. De
 
 One event-driven daily backtest engine, a pre-registered SPY time-series momentum hypothesis (price-only), three benchmarks, chronological train/validation/test reporting, decision replay, research CLI/API, and a Research Lab dashboard. Results are labeled backtests. They are not paper fills and not statistical claims.
 
-## Phase 3.1 — scientific trust layer (current)
+## Phase 3.1 — scientific trust layer
 
 Cost accounting charges spread and slippage once. Open timestamps use America/New_York. Replay recomputes from the stored bars. Experiment ids are immutable. `nomadquant-research verify` reports PASS, FAIL, NOT_EVALUABLE, or INVALID_ARTIFACT. Statistical significance stays NOT_EVALUABLE.
+
+## Phase 3.2 — premium research terminal UI (current)
+
+Cohesive dark trading workstation: Command Center, Market Explorer (real SIP daily candles via TradingView Lightweight Charts), Research Lab (date-aligned Recharts equity/drawdown), Decision Intelligence, searchable Activity with histograms, and controlled TanStack Query refresh. Read-only chart API `GET /api/market-data/bars`. Agents and risk/execution remain explicit empty states.
 
 ## Phase 4 — risk engine before any paper order
 

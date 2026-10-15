@@ -87,4 +87,17 @@ vectorbt.pro, if encountered separately, is a commercial product and is out of s
 
 `exchange-calendars` 4.13.2 declares `License-Expression: Apache-2.0` in the installed package metadata. It is used only to decide which New York sessions exist. Apache-2.0 permits use inside a proprietary program and does not grant rights in the NomadQuant code.
 
+## Dashboard chart and UI dependencies (apps/web)
+
+Reviewed for Prompt 07 (premium terminal). No Fincept/TradingView proprietary widgets.
+
+| Package | Role | License |
+| --- | --- | --- |
+| lightweight-charts | Market Explorer daily candlesticks / volume | Apache-2.0 (TradingView). Attribution required; see Market Explorer footer and upstream NOTICE. |
+| recharts | Research equity, drawdown, exposure, activity histograms | MIT |
+| @tanstack/react-query | Client caching and controlled refresh | MIT |
+| lucide-react | Navigation and action icons | ISC |
+| clsx | Class name composition | MIT |
+| next / react / react-dom / tailwindcss | App framework and styling | MIT |
+
 Lockfiles: `uv.lock` for Python and `apps/web/package-lock.json` for the dashboard. Exact transitive license texts are the ones shipped with those locked versions.

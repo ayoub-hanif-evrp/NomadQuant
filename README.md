@@ -1,8 +1,8 @@
 # NomadQuant
 
-NomadQuant is a locally hosted, paper-only foundation for algorithmic trading research. It provides configuration locks, a read-only Alpaca paper adapter, a small operational database, a local daily-bar store, and a local status dashboard.
+NomadQuant is a locally hosted, paper-only foundation for algorithmic trading research. It provides configuration locks, a read-only Alpaca paper adapter, a local daily-bar store, an offline Quant Research Lab with verification, and a premium monitoring/research terminal dashboard.
 
-It does not place orders, and it does not contain a trading strategy. Nothing in this repository is evidence of profit.
+It does not place orders. Offline backtests are labeled as simulated research, not broker trading. Nothing in this repository is evidence of profit.
 
 ## Operating limits
 
@@ -51,7 +51,7 @@ npm install
 npm run dev
 ```
 
-The dashboard listens on `http://127.0.0.1:3000`.
+The dashboard listens on `http://127.0.0.1:3000` (Command Center, Market Explorer with daily charts, Research Lab, Decision Intelligence, Activity, Runs).
 
 Equivalent scripts: `.\scripts\dev-api.ps1` and `.\scripts\dev-web.ps1`.
 
@@ -61,10 +61,11 @@ Requires a complete local market-data window for the symbols and feed in the exp
 
 ```powershell
 uv run nomadquant-research run --experiment experiments/spy_tsmom_v1.json
-uv run nomadquant-research replay --run-id 1
+uv run nomadquant-research replay --run-id 2
+uv run nomadquant-research verify --run-id 2
 ```
 
-Inspect the Research Lab page at `http://127.0.0.1:3000/research` while the API is running.
+Inspect the Research Lab at `http://127.0.0.1:3000/research` and Market Explorer charts at `http://127.0.0.1:3000/market-data` while the API is running.
 
 ## Verify the paper account
 
@@ -108,20 +109,21 @@ Pytest warns that Starlette wants `httpx2` and that `websockets.legacy` is depre
 - Paper-only settings that reject live mode, live Alpaca URLs, non-local binds, and order submission
 - Startup without Alpaca credentials, in disconnected mode
 - Read-only account and position retrieval, with rate limits and connection errors returned as data
-- `GET /health`, `GET /api/system/status`, `GET /api/broker/account`, `GET /api/broker/positions`, `GET /api/market-data/status`
-- SQLite startup log in `data/nomadquant.db`
+- `GET /health`, broker status, `GET /api/market-data/status`, `GET /api/market-data/bars`, observability, and research verify/replay routes (all GET-only)
+- SQLite operational, market, and research databases under `data/` (gitignored)
 - Raw daily SPY/QQQ bars in `data/market.sqlite`, with a 16:30 New York availability model
+- One pre-registered SPY time-series momentum backtest with independent replay and verification
 - Structured logs that redact configured secrets
-- Typed extension protocols for later data, research, strategy, backtest, risk, and paper-broker work
-- A dark monitoring console for health, broker status, market data, activity, runs, and empty decision/agent states
+- A premium dark research terminal: interactive SIP daily charts, date-aligned equity/drawdown charts, decision drill-down, activity search/histogram
+- Empty, honest placeholders for agents and risk/execution (not configured)
 
 ## What is not included
 
 - Order placement, cancellation, or liquidation
 - Live trading
-- A strategy, backtest, equity curve, or performance number
-- Dividend-adjusted total-return series, Qlib, DuckDB, Ollama, or an agent runtime
-- Start, pause, or stop controls for trading
+- Dividend-adjusted total-return series, Qlib, DuckDB, Ollama, or a running agent runtime
+- Autonomous execution or start/pause/stop trading controls
+- Claims of statistical significance or profitability from backtests
 
 ## Layout
 
@@ -149,7 +151,7 @@ data/              Local SQLite files (gitignored)
 
 ## Suggested next milestone
 
-One pre-registered backtest on the stored raw daily bars, with costs and the benchmarks in the research standards. Label it as a backtest. Do not adjust for dividends unless that adjustment is a separate, explicit series. Do not submit orders.
+Local Ollama research agents with a read-only tool registry (design docs exist). Do not grant broker order tools. A risk engine must exist before any paper order path.
 
 ## License
 

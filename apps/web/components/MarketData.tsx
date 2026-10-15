@@ -1,131 +1,198 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { API_URL, loadMarketData, type MarketDataStatus } from "@/lib/api";
-import { PageIntro } from "@/components/ui";
+import dynamic from "next/dynamic";
+import { useMemo, useState } from "react";
+import {
+  Badge,
+  EmptyState,
+  ErrorState,
+  PageIntro,
+  Panel,
+  ProvenanceChip,
+  SegmentedControl,
+  Skeleton,
+} from "@/components/ui";
+import { useMarketBarsQuery, useMarketStatus } from "@/lib/hooks";
 
-type View =
-  | { kind: "loading" }
-  | { kind: "unreachable" }
-  | { kind: "invalid"; message: string }
-  | { kind: "ready"; status: MarketDataStatus };
+const MarketCandleChart = dynamic(
+  () => import("@/components/charts/MarketCandleChart").then((mod) => mod.MarketCandleChart),
+  {
+    ssr: false,
+    loading: () => <Skeleton className="h-[420px] w-full" />,
+  },
+);
 
-export function MarketData() {
-  const [view, setView] = useState<View>({ kind: "loading" });
+type RangeKey = "3M" | "6M" | "1Y" | "ALL";
 
-  useEffect(() => {
-    let cancelled = false;
-
-    async function load() {
-      try {
-        const status = await loadMarketData();
-        if (!cancelled) {
-          setView({ kind: "ready", status });
-        }
-      } catch (error) {
-        if (cancelled) {
-          return;
-        }
-        if (error instanceof TypeError) {
-          setView({ kind: "unreachable" });
-          return;
-        }
-        const message = error instanceof Error ? error.message : "Unknown error";
-        setView({ kind: "invalid", message });
-      }
-    }
-
-    void load();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  return (
-    <div className="mx-auto flex max-w-5xl flex-col gap-6">
-      <PageIntro
-        title="Market data"
-        note="Local daily bars for research. This page does not chart prices and does not submit orders."
-      />
-
-      {view.kind === "loading" ? <p className="text-sm text-[#93a1b5]">Loading market data status…</p> : null}
-
-      {view.kind === "unreachable" ? (
-        <section className="rounded-xl border border-[#5c3b3b] bg-[#23181b] p-5">
-          <h2 className="text-base font-semibold text-[#f0a3a3]">API unreachable</h2>
-          <p className="mt-2 text-sm leading-6 text-[#e7edf5]">
-            The dashboard could not reach {API_URL}. Start the backend with{" "}
-            <code className="font-mono text-[#f5c16c]">uv run nomadquant-api</code>.
-          </p>
-        </section>
-      ) : null}
-
-      {view.kind === "invalid" ? (
-        <section className="rounded-xl border border-[#5c3b3b] bg-[#23181b] p-5">
-          <h2 className="text-base font-semibold text-[#f0a3a3]">Unexpected API response</h2>
-          <p className="mt-2 text-sm text-[#e7edf5]">{view.message}</p>
-        </section>
-      ) : null}
-
-      {view.kind === "ready" ? <Ready status={view.status} /> : null}
-    </div>
-  );
+function shiftMonths(iso: string, months: number): string {
+  const date = new Date(`${iso}T12:00:00Z`);
+  date.setUTCMonth(date.getUTCMonth() + months);
+  return date.toISOString().slice(0, 10);
 }
 
-function Ready({ status }: { status: MarketDataStatus }) {
+export function MarketData() {
+  const statusQuery = useMarketStatus();
+  const [symbol, setSymbol] = useState<"SPY" | "QQQ">("SPY");
+  const [range, setRange] = useState<RangeKey>("1Y");
+  const [mode, setMode] = useState<"candle" | "line">("candle");
+  const [feed] = useState("sip");
+
+  const coverage = statusQuery.data?.coverage.find(
+    (item) => item.symbol === symbol && item.feed === feed,
+  );
+
+  const window = useMemo(() => {
+    const latest = coverage?.latest_session ?? statusQuery.data?.latest_session;
+    const earliest = coverage?.earliest_session ?? statusQuery.data?.earliest_session;
+    if (!latest || !earliest) {
+      return null;
+    }
+    if (range === "ALL") {
+      return { start: earliest, end: latest };
+    }
+    const months = range === "3M" ? -3 : range === "6M" ? -6 : -12;
+    const start = shiftMonths(latest, months);
+    return { start: start < earliest ? earliest : start, end: latest };
+  }, [coverage, statusQuery.data, range]);
+
+  const barsQuery = useMarketBarsQuery(
+    window
+      ? { symbol, feed, start: window.start, end: window.end, limit: 5000 }
+      : null,
+  );
+
   return (
-    <>
-      <section className="grid gap-4 md:grid-cols-3">
-        <article className="panel p-5">
-          <h2 className="text-xs font-semibold tracking-wide text-[#93a1b5]">BARS</h2>
-          <p className="mt-3 text-lg font-semibold">{status.bar_count}</p>
-        </article>
-        <article className="panel p-5">
-          <h2 className="text-xs font-semibold tracking-wide text-[#93a1b5]">SESSIONS</h2>
-          <p className="mt-3 text-lg font-semibold">
-            {status.earliest_session ?? "none"} – {status.latest_session ?? "none"}
-          </p>
-        </article>
-        <article className="panel p-5">
-          <h2 className="text-xs font-semibold tracking-wide text-[#93a1b5]">RESEARCH USE</h2>
-          <p className="mt-3 text-lg font-semibold">
-            {status.suitable_for_research ? "Requested window is complete" : "Not ready"}
-          </p>
-        </article>
-      </section>
+    <div className="flex flex-col gap-6">
+      <PageIntro
+        title="Market Explorer"
+        note="Interactive historical daily OHLCV from the local Alpaca store. Delayed research data — not a live quote stream. Feed and adjustment are explicit."
+      />
 
-      <section className="panel p-5">
-        <h2 className="text-xs font-semibold tracking-wide text-[#93a1b5]">COVERAGE</h2>
-        {status.coverage.length === 0 ? (
-          <p className="mt-3 text-sm text-[#e7edf5]">No local bars yet.</p>
-        ) : (
-          <ul className="mt-3 space-y-2 text-sm">
-            {status.coverage.map((item) => (
-              <li key={`${item.symbol}-${item.feed}`}>
-                {item.symbol} {item.feed}: {item.bar_count} bars, {item.earliest_session ?? "none"}{" "}
-                to {item.latest_session ?? "none"}. Missing start {item.missing_start}, middle{" "}
-                {item.missing_middle}, end {item.missing_end}.
-              </li>
-            ))}
-          </ul>
-        )}
-        <p className="mt-4 text-sm text-[#93a1b5]">
-          Requested window: {status.requested_start ?? "none"} to {status.requested_end ?? "none"} (
-          {status.requested_feed ?? "no feed"}). Last successful ingestion:{" "}
-          {status.last_successful_ingestion ?? "none"}.
-        </p>
-      </section>
+      {statusQuery.isLoading ? <Skeleton className="h-24 w-full" /> : null}
+      {statusQuery.isError ? (
+        <ErrorState
+          title="Market status unavailable"
+          note={statusQuery.error instanceof Error ? statusQuery.error.message : "Request failed."}
+        />
+      ) : null}
 
-      <section className="panel p-5">
-        <h2 className="text-xs font-semibold tracking-wide text-[#93a1b5]">WARNINGS</h2>
-        <ul className="mt-3 space-y-2 text-sm leading-6 text-[#e7edf5]">
-          {status.warnings.length === 0 ? <li>None.</li> : null}
-          {status.warnings.map((warning) => (
-            <li key={warning}>{warning}</li>
-          ))}
-        </ul>
-        <p className="mt-4 text-sm leading-6 text-[#93a1b5]">{status.caveat}</p>
-      </section>
-    </>
+      {statusQuery.data ? (
+        <div className="flex flex-wrap gap-2">
+          <ProvenanceChip source={`provider=${barsQuery.data?.provider ?? "alpaca"}`} />
+          <ProvenanceChip source={`feed=${feed}`} />
+          <ProvenanceChip source={`adjustment=${barsQuery.data?.adjustment ?? "raw"}`} />
+          <ProvenanceChip source="timeframe=1Day" />
+          <Badge tone="warn">Historical / delayed</Badge>
+          {coverage ? (
+            <Badge tone={coverage.gap_count === 0 ? "ok" : "warn"}>
+              {coverage.bar_count} bars · gaps {coverage.gap_count}
+            </Badge>
+          ) : (
+            <Badge tone="warn">No coverage for {symbol}/{feed}</Badge>
+          )}
+          {coverage?.latest_session ? (
+            <Badge tone="info">Latest session {coverage.latest_session}</Badge>
+          ) : null}
+        </div>
+      ) : null}
+
+      <Panel className="space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <SegmentedControl
+            value={symbol}
+            onChange={(value) => setSymbol(value as "SPY" | "QQQ")}
+            options={[
+              { value: "SPY", label: "SPY" },
+              { value: "QQQ", label: "QQQ" },
+            ]}
+          />
+          <SegmentedControl
+            value={range}
+            onChange={(value) => setRange(value as RangeKey)}
+            options={[
+              { value: "3M", label: "3M" },
+              { value: "6M", label: "6M" },
+              { value: "1Y", label: "1Y" },
+              { value: "ALL", label: "ALL" },
+            ]}
+          />
+          <SegmentedControl
+            value={mode}
+            onChange={(value) => setMode(value as "candle" | "line")}
+            options={[
+              { value: "candle", label: "Candles" },
+              { value: "line", label: "Line" },
+            ]}
+          />
+        </div>
+
+        {!window ? (
+          <EmptyState
+            title="No local bars for charting"
+            note="Download SIP daily bars with nomadquant-data before opening Market Explorer charts."
+          />
+        ) : barsQuery.isLoading ? (
+          <Skeleton className="h-[420px] w-full" />
+        ) : barsQuery.isError ? (
+          <ErrorState
+            title="Bars could not be loaded"
+            note={barsQuery.error instanceof Error ? barsQuery.error.message : "Request failed."}
+          />
+        ) : barsQuery.data && barsQuery.data.items.length === 0 ? (
+          <EmptyState
+            title="Empty window"
+            note={`No ${symbol} ${feed} bars between ${window.start} and ${window.end}.`}
+          />
+        ) : barsQuery.data ? (
+          <>
+            <MarketCandleChart bars={barsQuery.data.items} mode={mode} />
+            <p className="text-xs leading-5 text-[var(--muted)]">
+              {barsQuery.data.caveat} Charting by TradingView Lightweight Charts (Apache-2.0).
+              Showing {barsQuery.data.items.length} of {barsQuery.data.total} sessions.
+            </p>
+          </>
+        ) : null}
+      </Panel>
+
+      {statusQuery.data ? (
+        <Panel>
+          <h2 className="text-sm font-semibold">Dataset coverage</h2>
+          <div className="mt-3 overflow-x-auto">
+            <table className="min-w-full text-left text-sm">
+              <thead className="text-[11px] uppercase tracking-wide text-[var(--muted)]">
+                <tr>
+                  <th className="py-2 pr-4">Symbol</th>
+                  <th className="py-2 pr-4">Feed</th>
+                  <th className="py-2 pr-4">Bars</th>
+                  <th className="py-2 pr-4">Range</th>
+                  <th className="py-2 pr-4">Gaps</th>
+                </tr>
+              </thead>
+              <tbody>
+                {statusQuery.data.coverage.map((row) => (
+                  <tr key={`${row.symbol}-${row.feed}`} className="border-t border-[var(--line)]">
+                    <td className="py-2 pr-4 font-mono">{row.symbol}</td>
+                    <td className="py-2 pr-4">{row.feed}</td>
+                    <td className="py-2 pr-4">{row.bar_count}</td>
+                    <td className="py-2 pr-4 text-[var(--muted)]">
+                      {row.earliest_session ?? "—"} → {row.latest_session ?? "—"}
+                    </td>
+                    <td className="py-2 pr-4">{row.gap_count}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {statusQuery.data.warnings.length > 0 ? (
+            <ul className="mt-4 space-y-1 text-sm text-[var(--warn)]">
+              {statusQuery.data.warnings.map((warning) => (
+                <li key={warning}>{warning}</li>
+              ))}
+            </ul>
+          ) : null}
+          <p className="mt-3 text-xs text-[var(--muted)]">{statusQuery.data.caveat}</p>
+        </Panel>
+      ) : null}
+    </div>
   );
 }

@@ -2,41 +2,117 @@
 
 :root {
   color-scheme: dark;
-  --bg: #070b10;
-  --bg-2: #0d151c;
-  --ink: #e8f3f2;
-  --muted: #8ea3ab;
-  --card: rgba(14, 28, 34, 0.82);
-  --line: rgba(94, 214, 201, 0.16);
-  --cyan: #67f0e0;
-  --purple: #9b87ff;
-  --ok: #7ddea2;
-  --warn: #f0c36c;
-  --err: #f0a0a0;
+  --bg: #04060b;
+  --bg-2: #0a0f16;
+  --bg-3: #121a24;
+  --ink: #e2eaee;
+  --muted: #7b8f9c;
+  --card: rgba(14, 20, 30, 0.92);
+  --line: rgba(68, 168, 158, 0.14);
+  --line-strong: rgba(68, 168, 158, 0.28);
+  --cyan: #5ce4d4;
+  --teal: #2fa89a;
+  --violet: #9a8cff;
+  --ok: #6bc992;
+  --warn: #ddb56a;
+  --err: #dc9494;
+  --info: #7eb8d4;
+  --radius: 12px;
   --background: var(--bg);
   --foreground: var(--ink);
+  --purple: var(--violet);
 }
 
 body {
   background:
-    radial-gradient(900px 420px at 0% -10%, rgba(103, 240, 224, 0.08), transparent 55%),
-    radial-gradient(700px 380px at 100% 0%, rgba(155, 135, 255, 0.1), transparent 50%),
-    var(--bg);
+    radial-gradient(820px 360px at 0% -8%, rgba(92, 228, 212, 0.06), transparent 58%),
+    radial-gradient(560px 320px at 100% 0%, rgba(154, 140, 255, 0.05), transparent 52%),
+    linear-gradient(180deg, var(--bg-2) 0%, var(--bg) 42%);
   color: var(--ink);
-  font-family: "Segoe UI", sans-serif;
+  font-family: var(--font-plex-sans), ui-sans-serif, system-ui, sans-serif;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.font-mono,
+code,
+pre,
+kbd {
+  font-family: var(--font-plex-mono), ui-monospace, monospace;
 }
 
 .panel {
   border: 1px solid var(--line);
-  background: linear-gradient(180deg, rgba(20, 40, 48, 0.72), var(--card));
-  border-radius: 18px;
-  box-shadow: 0 0 0 1px rgba(103, 240, 224, 0.03), 0 16px 40px rgba(0, 0, 0, 0.25);
+  background: linear-gradient(180deg, rgba(18, 26, 36, 0.78), var(--card));
+  border-radius: var(--radius);
+  box-shadow:
+    0 0 0 1px rgba(92, 228, 212, 0.02),
+    0 10px 28px rgba(0, 0, 0, 0.28);
 }
 
 .kicker {
   color: var(--muted);
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 650;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.16em;
   text-transform: uppercase;
+}
+
+@keyframes skeleton-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+.skeleton {
+  border-radius: 6px;
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.04) 0%,
+    rgba(255, 255, 255, 0.1) 45%,
+    rgba(255, 255, 255, 0.04) 100%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.35s ease-in-out infinite;
+}
+
+.drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: rgba(2, 4, 8, 0.62);
+  backdrop-filter: blur(2px);
+}
+
+.drawer-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  width: min(100%, 28rem);
+  height: 100%;
+  border-left: 1px solid var(--line-strong);
+  background: linear-gradient(180deg, rgba(14, 20, 30, 0.98), rgba(8, 12, 18, 0.98));
+  box-shadow: -12px 0 40px rgba(0, 0, 0, 0.45);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton {
+    animation: none;
+    background: rgba(255, 255, 255, 0.06);
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

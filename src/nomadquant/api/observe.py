@@ -70,6 +70,18 @@ class EventPage(BaseModel):
     offset: int
 
 
+class EventHistogramBucket(BaseModel):
+    t: str
+    count: int
+    errors: int
+    warnings: int
+
+
+class EventHistogram(BaseModel):
+    bucket: str
+    buckets: list[EventHistogramBucket]
+
+
 class RunPage(BaseModel):
     items: list[RunModel]
     total: int
@@ -139,22 +151,20 @@ def overview(request: Request) -> ObservabilityOverview:
     )
 
 
-@router.get("/events", response_model=EventPage)
-def events(
-    request: Request,
-    component: str | None = None,
-    status: str | None = None,
-    level: str | None = Query(default=None),
-    event_type: str | None = None,
-    start: str | None = None,
-    end: str | None = None,
-    limit: int = 50,
-    offset: int = 0,
-) -> EventPage:
+def _event_filters(
+    *,
+    component: str | None,
+    status: str | None,
+    level: str | None,
+    event_type: str | None,
+    start: str | None,
+    end: str | None,
+    q: str | None,
+    run_id: int | None,
+) -> dict[str, str]:
     _check(component, COMPONENTS, "component")
     _check(status, STATUSES, "status")
     _check(level, LEVELS, "level")
-    bounded_limit, bounded_offset = _bounds(limit, offset)
     filters = {
         key: value
         for key, value in {
@@ -164,15 +174,77 @@ def events(
             "event_type": event_type or "",
             "start": start or "",
             "end": end or "",
+            "q": (q or "").strip()[:200],
+            "run_id": "" if run_id is None else str(run_id),
         }.items()
         if value
     }
+    return filters
+
+
+@router.get("/events", response_model=EventPage)
+def events(
+    request: Request,
+    component: str | None = None,
+    status: str | None = None,
+    level: str | None = Query(default=None),
+    event_type: str | None = None,
+    start: str | None = None,
+    end: str | None = None,
+    q: str | None = None,
+    run_id: int | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> EventPage:
+    bounded_limit, bounded_offset = _bounds(limit, offset)
+    filters = _event_filters(
+        component=component,
+        status=status,
+        level=level,
+        event_type=event_type,
+        start=start,
+        end=end,
+        q=q,
+        run_id=run_id,
+    )
     items, total = _audit(request).list_events(filters, bounded_limit, bounded_offset)
     return EventPage(
         items=[AuditEventModel.model_validate(item) for item in items],
         total=total,
         limit=bounded_limit,
         offset=bounded_offset,
+    )
+
+
+@router.get("/events/histogram", response_model=EventHistogram)
+def events_histogram(
+    request: Request,
+    component: str | None = None,
+    status: str | None = None,
+    level: str | None = Query(default=None),
+    event_type: str | None = None,
+    start: str | None = None,
+    end: str | None = None,
+    q: str | None = None,
+    run_id: int | None = None,
+    bucket: str = Query(default="day"),
+) -> EventHistogram:
+    if bucket not in {"hour", "day"}:
+        raise HTTPException(status_code=400, detail="Unsupported bucket. Use hour or day.")
+    filters = _event_filters(
+        component=component,
+        status=status,
+        level=level,
+        event_type=event_type,
+        start=start,
+        end=end,
+        q=q,
+        run_id=run_id,
+    )
+    buckets = _audit(request).event_histogram(filters, bucket)
+    return EventHistogram(
+        bucket=bucket,
+        buckets=[EventHistogramBucket.model_validate(item) for item in buckets],
     )
 
 

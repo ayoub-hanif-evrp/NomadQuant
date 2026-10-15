@@ -593,12 +593,227 @@ export async function loadEvents(query: string): Promise<{ items: AuditEvent[]; 
   return parseEventPage(await readJson(`/api/observability/events${query}`));
 }
 
+export type EventHistogramBucket = {
+  t: string;
+  count: number;
+  errors: number;
+  warnings: number;
+};
+
+export type EventHistogram = {
+  bucket: string;
+  buckets: EventHistogramBucket[];
+};
+
+export function parseEventHistogram(value: unknown): EventHistogram {
+  if (!isRecord(value) || typeof value.bucket !== "string" || !Array.isArray(value.buckets)) {
+    throw new Error("Unexpected event histogram");
+  }
+  return {
+    bucket: value.bucket,
+    buckets: value.buckets.map((item) => {
+      if (
+        !isRecord(item) ||
+        typeof item.t !== "string" ||
+        typeof item.count !== "number" ||
+        typeof item.errors !== "number" ||
+        typeof item.warnings !== "number"
+      ) {
+        throw new Error("Unexpected histogram bucket");
+      }
+      return {
+        t: item.t,
+        count: item.count,
+        errors: item.errors,
+        warnings: item.warnings,
+      };
+    }),
+  };
+}
+
+export async function loadEventHistogram(query: string): Promise<EventHistogram> {
+  return parseEventHistogram(await readJson(`/api/observability/events/histogram${query}`));
+}
+
+export type MarketBar = {
+  symbol: string;
+  session_date: string;
+  bar_timestamp: string;
+  open: string;
+  high: string;
+  low: string;
+  close: string;
+  volume: string;
+  provider: string;
+  feed: string;
+  adjustment: string;
+  timeframe: string;
+  currency: string;
+  available_at: string;
+  first_retrieved_at: string;
+  content_hash: string;
+};
+
+export type MarketBarPage = {
+  items: MarketBar[];
+  total: number;
+  limit: number;
+  offset: number;
+  symbol: string;
+  feed: string;
+  provider: string;
+  adjustment: string;
+  timeframe: string;
+  start: string;
+  end: string;
+  caveat: string;
+};
+
+export function parseMarketBarPage(value: unknown): MarketBarPage {
+  if (!isRecord(value) || !Array.isArray(value.items) || typeof value.total !== "number") {
+    throw new Error("Unexpected market bars page");
+  }
+  if (
+    typeof value.symbol !== "string" ||
+    typeof value.feed !== "string" ||
+    typeof value.provider !== "string" ||
+    typeof value.adjustment !== "string" ||
+    typeof value.timeframe !== "string" ||
+    typeof value.start !== "string" ||
+    typeof value.end !== "string" ||
+    typeof value.caveat !== "string" ||
+    typeof value.limit !== "number" ||
+    typeof value.offset !== "number"
+  ) {
+    throw new Error("Unexpected market bars metadata");
+  }
+  const items = value.items.map((item) => {
+    if (!isRecord(item)) {
+      throw new Error("Unexpected market bar");
+    }
+    const fields = [
+      "symbol",
+      "session_date",
+      "bar_timestamp",
+      "open",
+      "high",
+      "low",
+      "close",
+      "volume",
+      "provider",
+      "feed",
+      "adjustment",
+      "timeframe",
+      "currency",
+      "available_at",
+      "first_retrieved_at",
+      "content_hash",
+    ] as const;
+    const bar = {} as MarketBar;
+    for (const field of fields) {
+      if (typeof item[field] !== "string") {
+        throw new Error(`Unexpected market bar field ${field}`);
+      }
+      bar[field] = item[field];
+    }
+    return bar;
+  });
+  return {
+    items,
+    total: value.total,
+    limit: value.limit,
+    offset: value.offset,
+    symbol: value.symbol,
+    feed: value.feed,
+    provider: value.provider,
+    adjustment: value.adjustment,
+    timeframe: value.timeframe,
+    start: value.start,
+    end: value.end,
+    caveat: value.caveat,
+  };
+}
+
+export async function loadMarketBars(params: {
+  symbol: string;
+  feed?: string;
+  start: string;
+  end: string;
+  limit?: number;
+  offset?: number;
+}): Promise<MarketBarPage> {
+  const query = new URLSearchParams({
+    symbol: params.symbol,
+    feed: params.feed ?? "sip",
+    start: params.start,
+    end: params.end,
+  });
+  if (params.limit !== undefined) {
+    query.set("limit", String(params.limit));
+  }
+  if (params.offset !== undefined) {
+    query.set("offset", String(params.offset));
+  }
+  return parseMarketBarPage(await readJson(`/api/market-data/bars?${query.toString()}`));
+}
+
+export type ResearchVerifyCheck = {
+  name: string;
+  verdict: string;
+  detail: string;
+};
+
+export type ResearchVerify = {
+  run_id: number;
+  verdict: string;
+  checks: ResearchVerifyCheck[];
+  label: string;
+  is_statistical_claim: false;
+  is_broker_execution: false;
+};
+
+export function parseResearchVerify(value: unknown): ResearchVerify {
+  if (!isRecord(value) || typeof value.run_id !== "number" || typeof value.verdict !== "string") {
+    throw new Error("Unexpected verify payload");
+  }
+  if (
+    typeof value.label !== "string" ||
+    value.is_statistical_claim !== false ||
+    value.is_broker_execution !== false ||
+    !Array.isArray(value.checks)
+  ) {
+    throw new Error("Unexpected verify fields");
+  }
+  return {
+    run_id: value.run_id,
+    verdict: value.verdict,
+    label: value.label,
+    is_statistical_claim: false,
+    is_broker_execution: false,
+    checks: value.checks.map((item) => {
+      if (
+        !isRecord(item) ||
+        typeof item.name !== "string" ||
+        typeof item.verdict !== "string" ||
+        typeof item.detail !== "string"
+      ) {
+        throw new Error("Unexpected verify check");
+      }
+      return { name: item.name, verdict: item.verdict, detail: item.detail };
+    }),
+  };
+}
+
+export async function loadResearchRunVerify(id: number): Promise<ResearchVerify> {
+  return parseResearchVerify(await readJson(`/api/research/runs/${id}/verify`));
+}
+
 export async function loadEvent(id: number): Promise<AuditEvent> {
   return parseEvent(await readJson(`/api/observability/events/${id}`));
 }
 
-export async function loadRuns(): Promise<{ items: AuditRun[]; total: number }> {
-  return parseRunPage(await readJson("/api/observability/runs"));
+export async function loadRuns(query = ""): Promise<{ items: AuditRun[]; total: number }> {
+  return parseRunPage(await readJson(`/api/observability/runs${query}`));
 }
 
 export async function loadRun(id: number): Promise<AuditRun> {

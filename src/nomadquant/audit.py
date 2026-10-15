@@ -370,6 +370,38 @@ class AuditLog:
         items, _total = self.list_events({}, limit, 0)
         return items
 
+    def event_histogram(self, filters: dict[str, str], bucket: str = "day") -> list[dict[str, Any]]:
+        if bucket not in {"hour", "day"}:
+            raise ValueError("Unsupported histogram bucket.")
+        where, params = _where(filters)
+        # SQLite ISO timestamps: YYYY-MM-DDTHH:MM:SS...
+        length = 10 if bucket == "day" else 13
+        query = f"""
+            SELECT substr(created_at, 1, {length}) AS bucket,
+                   COUNT(*) AS count,
+                   SUM(
+                     CASE WHEN event_level = 'error' OR status = 'failed' THEN 1 ELSE 0 END
+                   ) AS errors,
+                   SUM(
+                     CASE WHEN event_level = 'warning' OR status = 'warning' THEN 1 ELSE 0 END
+                   ) AS warnings
+            FROM audit_events
+            {where}
+            GROUP BY bucket
+            ORDER BY bucket ASC
+        """
+        with self._connect() as connection:
+            rows = connection.execute(query, params).fetchall()
+        return [
+            {
+                "t": str(row["bucket"]),
+                "count": int(row["count"]),
+                "errors": int(row["errors"] or 0),
+                "warnings": int(row["warnings"] or 0),
+            }
+            for row in rows
+        ]
+
     def mirror_market_imports(self, market_path: str) -> None:
         path = Path(market_path)
         if not path.exists():
@@ -540,6 +572,15 @@ def _where(filters: dict[str, str]) -> tuple[str, list[str]]:
         if value:
             clauses.append(f"{column} = ?")
             params.append(value)
+    run_id = filters.get("run_id")
+    if run_id:
+        clauses.append("run_id = ?")
+        params.append(run_id)
+    query = filters.get("q")
+    if query:
+        pattern = f"%{query}%"
+        clauses.append("(title LIKE ? OR summary LIKE ?)")
+        params.extend([pattern, pattern])
     if filters.get("start"):
         clauses.append("created_at >= ?")
         params.append(filters["start"])

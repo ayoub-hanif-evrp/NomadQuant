@@ -1,291 +1,359 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import Link from "next/link";
 import {
-  API_URL,
-  formatUsd,
-  loadMarketData,
-  loadObservability,
-  loadOverview,
-  type BrokerAccount,
-  type BrokerPositions,
-  type BrokerStatus,
-  type MarketDataStatus,
-  type ObservabilityOverview,
-  type SystemStatus,
-} from "@/lib/api";
-import { Badge, PageIntro, Panel, toneFor } from "@/components/ui";
-
-type View =
-  | { kind: "loading" }
-  | { kind: "unreachable" }
-  | { kind: "invalid"; message: string }
-  | {
-      kind: "ready";
-      status: SystemStatus;
-      account: BrokerAccount;
-      positions: BrokerPositions;
-      market: MarketDataStatus | null;
-      activity: ObservabilityOverview | null;
-    };
-
-const STATUS_LABEL: Record<BrokerStatus, string> = {
-  connected: "Connected",
-  disconnected: "Disconnected",
-  error: "Error",
-  rate_limited: "Rate limited",
-};
-
-function statusClass(status: BrokerStatus): string {
-  if (status === "connected") {
-    return "text-[#8fd6a5]";
-  }
-  if (status === "error") {
-    return "text-[#f0a3a3]";
-  }
-  return "text-[#f5c16c]";
-}
+  Bar,
+  BarChart,
+  CartesianGrid,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
+import {
+  Badge,
+  EmptyState,
+  ErrorState,
+  MetricCard,
+  PageIntro,
+  Panel,
+  Skeleton,
+  VerificationBadge,
+} from "@/components/ui";
+import { formatUsd } from "@/lib/api";
+import {
+  useEventHistogramQuery,
+  useMarketStatus,
+  useObservabilityOverview,
+  useOverviewBundle,
+  useResearchRunsList,
+  useSystemHealth,
+} from "@/lib/hooks";
 
 export function Overview() {
-  const [view, setView] = useState<View>({ kind: "loading" });
+  const overview = useOverviewBundle();
+  const health = useSystemHealth();
+  const market = useMarketStatus();
+  const activity = useObservabilityOverview();
+  const researchRuns = useResearchRunsList();
+  const histogram = useEventHistogramQuery("?bucket=day");
 
-  useEffect(() => {
-    let cancelled = false;
+  const latestVerifyRun = researchRuns.data?.items.find((run) => run.status === "succeeded") ?? null;
 
-    async function load() {
-      try {
-        const payload = await loadOverview();
-        const [marketResult, activityResult] = await Promise.allSettled([
-          loadMarketData(),
-          loadObservability(),
-        ]);
-        if (!cancelled) {
-          setView({
-            kind: "ready",
-            ...payload,
-            market: marketResult.status === "fulfilled" ? marketResult.value : null,
-            activity: activityResult.status === "fulfilled" ? activityResult.value : null,
-          });
-        }
-      } catch (error) {
-        if (cancelled) {
-          return;
-        }
-        if (error instanceof TypeError) {
-          setView({ kind: "unreachable" });
-          return;
-        }
-        const message = error instanceof Error ? error.message : "Unknown error";
-        setView({ kind: "invalid", message });
-      }
-    }
+  if (overview.isLoading && !overview.data) {
+    return (
+      <div className="space-y-4">
+        <Skeleton className="h-16 w-full" />
+        <Skeleton className="h-32 w-full" lines={4} />
+      </div>
+    );
+  }
 
-    void load();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  if (overview.isError) {
+    const unreachable = overview.error instanceof TypeError;
+    return (
+      <ErrorState
+        title={unreachable ? "API unreachable" : "Unexpected API response"}
+        note={
+          unreachable
+            ? "Start the backend with uv run nomadquant-api from the repo root."
+            : overview.error instanceof Error
+              ? overview.error.message
+              : "Request failed."
+        }
+      />
+    );
+  }
+
+  if (!overview.data) {
+    return null;
+  }
+
+  const { status, account, positions } = overview.data;
+  const histData = (histogram.data?.buckets ?? []).slice(-14).map((bucket) => ({
+    t: bucket.t.slice(5),
+    count: bucket.count,
+    errors: bucket.errors,
+  }));
 
   return (
-    <div className="mx-auto flex max-w-6xl flex-col gap-6">
+    <div className="flex flex-col gap-6">
       <PageIntro
-        title="Overview"
-        note="Local paper-only monitoring. Configured virtual capital is $100, which is an internal limit and not Alpaca paper equity. This screen does not submit orders."
+        title="Command Center"
+        note="Operational status for local paper research. Alpaca paper equity and the $100 NomadQuant research allocation are separate — never summed."
       />
 
-      {view.kind === "loading" ? <p className="text-sm text-[#93a1b5]">Loading system status…</p> : null}
-
-      {view.kind === "unreachable" ? (
-        <section className="rounded-xl border border-[#5c3b3b] bg-[#23181b] p-5">
-          <h2 className="text-base font-semibold text-[#f0a3a3]">API unreachable</h2>
-          <p className="mt-2 text-sm leading-6 text-[#e7edf5]">
-            The dashboard could not reach {API_URL}. Start the backend from the repository root
-            with <code className="font-mono text-[#f5c16c]">uv run nomadquant-api</code>. Broker
-            equity and positions are unavailable until it is running.
-          </p>
-        </section>
-      ) : null}
-
-      {view.kind === "invalid" ? (
-        <section className="rounded-xl border border-[#5c3b3b] bg-[#23181b] p-5">
-          <h2 className="text-base font-semibold text-[#f0a3a3]">Unexpected API response</h2>
-          <p className="mt-2 text-sm text-[#e7edf5]">{view.message}</p>
-        </section>
-      ) : null}
-
-      {view.kind === "ready" ? (
-        <Ready
-          status={view.status}
-          account={view.account}
-          positions={view.positions}
-          market={view.market}
-          activity={view.activity}
+      <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-8">
+        <StatusChip label="API" ok={!health.isError} value={health.isError ? "down" : "ok"} />
+        <StatusChip
+          label="Broker"
+          ok={status.broker_status === "connected"}
+          value={status.broker_status}
         />
-      ) : null}
-    </div>
-  );
-}
+        <StatusChip
+          label="Market DB"
+          ok={Boolean(market.data?.bar_count)}
+          value={market.data ? `${market.data.bar_count} bars` : "…"}
+        />
+        <StatusChip
+          label="Ops DB"
+          ok={status.database_ok}
+          value={status.database_ok ? "ok" : "unavailable"}
+        />
+        <StatusChip
+          label="Last sync"
+          ok={Boolean(market.data?.last_successful_ingestion)}
+          value={market.data?.last_successful_ingestion?.slice(0, 19) ?? "none"}
+        />
+        <StatusChip
+          label="Last activity"
+          ok={Boolean(health.data?.last_event_at)}
+          value={health.data?.last_event_at?.slice(0, 19) ?? "none"}
+        />
+        <StatusChip label="Paper lock" ok value="orders off" />
+        <StatusChip
+          label="Research capital"
+          ok
+          value={formatUsd(status.initial_virtual_capital_usd)}
+        />
+      </div>
 
-function Ready({
-  status,
-  account,
-  positions,
-  market,
-  activity,
-}: {
-  status: SystemStatus;
-  account: BrokerAccount;
-  positions: BrokerPositions;
-  market: MarketDataStatus | null;
-  activity: ObservabilityOverview | null;
-}) {
-  return (
-    <>
-      <section className="grid gap-4 md:grid-cols-3">
-        <article className="panel p-5">
-          <h2 className="text-xs font-semibold tracking-wide text-[#93a1b5]">SYSTEM</h2>
-          <p className={`mt-3 text-lg font-semibold ${statusClass(status.broker_status)}`}>
-            {STATUS_LABEL[status.broker_status]}
-          </p>
-          <dl className="mt-4 space-y-2 text-sm">
-            <Row label="Trading mode" value="paper" />
-            <Row label="Order submission" value="disabled" />
-            <Row label="Credentials" value={status.credentials_configured ? "configured" : "absent"} />
-            <Row label="Operational database" value={status.database_ok ? "ok" : "unavailable"} />
-            <Row label="API host" value={status.api_host} />
-            <Row label="Alpaca host" value="paper-api.alpaca.markets" />
-          </dl>
-          {status.broker_message ? (
-            <p className="mt-4 text-sm leading-6 text-[#c5d0de]">{status.broker_message}</p>
-          ) : null}
-        </article>
-
-        <article className="panel p-5">
-          <h2 className="text-xs font-semibold tracking-wide text-[#93a1b5]">VIRTUAL CAPITAL</h2>
-          <p className="mt-3 text-2xl font-semibold">{formatUsd(account.virtual_capital_usd)}</p>
-          <p className="mt-4 text-sm leading-6 text-[#c5d0de]">{account.broker_equity_note}</p>
-        </article>
-
-        <article className="panel p-5">
-          <h2 className="text-xs font-semibold tracking-wide text-[#93a1b5]">ALPACA PAPER ACCOUNT</h2>
-          {account.account ? (
-            <dl className="mt-4 space-y-2 text-sm">
-              <Row label="Equity" value={formatUsd(account.account.equity)} />
-              <Row label="Buying power" value={formatUsd(account.account.buying_power)} />
-              <Row label="Cash" value={formatUsd(account.account.cash)} />
-              <Row label="Account status" value={account.account.status} />
-            </dl>
-          ) : (
-            <p className="mt-4 text-sm leading-6 text-[#c5d0de]">
-              {account.message ?? "Broker account figures are unavailable."}
-            </p>
-          )}
-        </article>
-      </section>
-
-      <section className="grid gap-4 md:grid-cols-4">
+      <div className="grid gap-4 xl:grid-cols-2">
         <Panel>
-          <p className="kicker">Events</p>
-          <p className="mt-3 text-2xl font-semibold">{activity ? activity.event_count : "—"}</p>
-        </Panel>
-        <Panel>
-          <p className="kicker">Warnings</p>
-          <p className="mt-3 text-2xl font-semibold">{activity ? activity.warning_count : "—"}</p>
-        </Panel>
-        <Panel>
-          <p className="kicker">Runs</p>
-          <p className="mt-3 text-2xl font-semibold">{activity ? activity.run_count : "—"}</p>
-        </Panel>
-        <Panel>
-          <p className="kicker">Decision traces</p>
-          <p className="mt-3 text-2xl font-semibold">
-            {activity ? activity.decision_trace_count : "—"}
-          </p>
-        </Panel>
-      </section>
-
-      <Panel>
-        <h2 className="kicker">Market data</h2>
-        {market ? (
-          <div className="mt-4 flex flex-wrap items-center gap-3 text-sm">
-            <Badge tone={market.suitable_for_research ? "ok" : "warn"}>
-              {market.suitable_for_research ? "Requested window complete" : "Not research-ready"}
-            </Badge>
-            <span>
-              {market.bar_count} bars · {market.requested_feed ?? "no feed"} ·{" "}
-              {market.requested_start ?? "none"} to {market.requested_end ?? "none"}
-            </span>
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <h2 className="text-sm font-semibold">Alpaca paper account</h2>
+            <Badge tone="warn">Broker simulation</Badge>
           </div>
-        ) : (
-          <p className="mt-3 text-sm text-[var(--muted)]">Market data status is unavailable.</p>
-        )}
-      </Panel>
+          {account.account ? (
+            <div className="grid gap-3 sm:grid-cols-3">
+              <MetricCard label="Equity" value={formatUsd(account.account.equity)} />
+              <MetricCard label="Cash" value={formatUsd(account.account.cash)} />
+              <MetricCard
+                label="Buying power"
+                value={formatUsd(account.account.buying_power)}
+                hint="Not NomadQuant research capital"
+              />
+            </div>
+          ) : (
+            <EmptyState
+              title="Broker figures unavailable"
+              note={account.message ?? "Paper account could not be read."}
+            />
+          )}
+        </Panel>
+
+        <Panel>
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <h2 className="text-sm font-semibold">NomadQuant research allocation</h2>
+            <Badge tone="info">Internal limit</Badge>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <MetricCard
+              label="Configured capital"
+              value={formatUsd(status.initial_virtual_capital_usd)}
+              hint="Used by offline backtests only"
+            />
+            <MetricCard
+              label="Order submission"
+              value={status.allow_order_submission ? "enabled" : "disabled"}
+              hint="Hard lock — paper mode"
+            />
+          </div>
+          <p className="mt-3 text-xs leading-5 text-[var(--muted)]">
+            This $100 figure is not Alpaca buying power and is not enforced by a live order gateway.
+          </p>
+        </Panel>
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-3">
+        <Panel className="xl:col-span-2">
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="text-sm font-semibold">Event activity (14 days)</h2>
+            <Link href="/activity" className="text-xs text-[var(--cyan)]">
+              Open Activity
+            </Link>
+          </div>
+          {histData.length === 0 ? (
+            <p className="text-sm text-[var(--muted)]">No histogram data yet.</p>
+          ) : (
+            <div className="h-48">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={histData}>
+                  <CartesianGrid stroke="rgba(94,214,201,0.08)" vertical={false} />
+                  <XAxis dataKey="t" tick={{ fill: "#8ea3ab", fontSize: 10 }} />
+                  <YAxis tick={{ fill: "#8ea3ab", fontSize: 10 }} width={28} />
+                  <Tooltip
+                    contentStyle={{
+                      background: "#0d151c",
+                      border: "1px solid rgba(94,214,201,0.2)",
+                      borderRadius: 12,
+                    }}
+                  />
+                  <Bar dataKey="count" fill="#67f0e0" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+          {activity.data ? (
+            <div className="mt-3 flex flex-wrap gap-3 text-xs text-[var(--muted)]">
+              <span>{activity.data.event_count} events</span>
+              <span className="text-[var(--warn)]">{activity.data.warning_count} warnings</span>
+              <span className="text-[var(--err)]">{activity.data.error_count} errors</span>
+              <span>{activity.data.run_count} runs</span>
+            </div>
+          ) : null}
+        </Panel>
+
+        <Panel>
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="text-sm font-semibold">Research runs</h2>
+            <Link href="/research" className="text-xs text-[var(--cyan)]">
+              Research Lab
+            </Link>
+          </div>
+          {researchRuns.data?.items.length ? (
+            <ul className="space-y-2">
+              {researchRuns.data.items.slice(0, 5).map((run) => (
+                <li
+                  key={run.id}
+                  className="rounded-xl border border-[var(--line)] px-3 py-2 text-sm"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-mono text-xs text-[var(--cyan)]">#{run.id}</span>
+                    <Badge tone={run.status === "succeeded" ? "ok" : "err"}>{run.status}</Badge>
+                  </div>
+                  <p className="mt-1 truncate text-[var(--muted)]">{run.experiment_id}</p>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <EmptyState
+              title="No research runs"
+              note="Run uv run nomadquant-research run --experiment experiments/spy_tsmom_v1.json"
+            />
+          )}
+          {latestVerifyRun ? (
+            <p className="mt-3 text-xs text-[var(--muted)]">
+              Latest succeeded run #{latestVerifyRun.id} — open Research Lab for verifier verdicts.
+            </p>
+          ) : null}
+        </Panel>
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-2">
+        <Panel>
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="text-sm font-semibold">Market data</h2>
+            <Link href="/market-data" className="text-xs text-[var(--cyan)]">
+              Market Explorer
+            </Link>
+          </div>
+          {market.data ? (
+            <>
+              <div className="grid gap-3 sm:grid-cols-3">
+                <MetricCard label="Bars" value={String(market.data.bar_count)} />
+                <MetricCard
+                  label="Range"
+                  value={`${market.data.earliest_session ?? "—"} → ${market.data.latest_session ?? "—"}`}
+                />
+                <MetricCard
+                  label="Research ready"
+                  value={market.data.suitable_for_research ? "yes" : "no"}
+                />
+              </div>
+              <ul className="mt-3 space-y-1 text-sm text-[var(--muted)]">
+                {market.data.coverage.map((row) => (
+                  <li key={`${row.symbol}-${row.feed}`}>
+                    {row.symbol}/{row.feed}: {row.bar_count} bars, gaps {row.gap_count}
+                  </li>
+                ))}
+              </ul>
+            </>
+          ) : (
+            <p className="text-sm text-[var(--muted)]">Market status unavailable.</p>
+          )}
+        </Panel>
+
+        <Panel>
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="text-sm font-semibold">Paper positions</h2>
+            <Badge tone="warn">Alpaca paper</Badge>
+          </div>
+          {positions.positions.length === 0 ? (
+            <EmptyState
+              title="No open paper positions"
+              note={positions.message ?? "The paper account currently holds no positions."}
+            />
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-left text-sm">
+                <thead className="text-[11px] uppercase tracking-wide text-[var(--muted)]">
+                  <tr>
+                    <th className="py-2 pr-3">Symbol</th>
+                    <th className="py-2 pr-3">Qty</th>
+                    <th className="py-2 pr-3">Value</th>
+                    <th className="py-2 pr-3">uP&amp;L</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {positions.positions.map((pos) => (
+                    <tr key={pos.symbol} className="border-t border-[var(--line)]">
+                      <td className="py-2 pr-3 font-mono">{pos.symbol}</td>
+                      <td className="py-2 pr-3">{pos.qty}</td>
+                      <td className="py-2 pr-3">{formatUsd(pos.market_value)}</td>
+                      <td className="py-2 pr-3">{formatUsd(pos.unrealized_pl)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Panel>
+      </div>
 
       <Panel>
-        <h2 className="kicker">Recent activity</h2>
-        {activity && activity.recent_events.length > 0 ? (
-          <ul className="mt-4 space-y-3">
-            {activity.recent_events.map((event) => (
-              <li key={event.id} className="flex flex-wrap items-start justify-between gap-3 text-sm">
-                <div>
-                  <p className="font-medium">{event.title}</p>
-                  <p className="text-[var(--muted)]">{event.summary}</p>
-                </div>
-                <Badge tone={toneFor(event.status)}>{event.status}</Badge>
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-sm font-semibold">Recent events</h2>
+          <Link href="/activity" className="text-xs text-[var(--cyan)]">
+            View all
+          </Link>
+        </div>
+        {activity.data?.recent_events.length ? (
+          <ul className="divide-y divide-[var(--line)]">
+            {activity.data.recent_events.map((event) => (
+              <li key={event.id} className="flex flex-wrap items-center gap-3 py-2 text-sm">
+                <span className="font-mono text-[11px] text-[var(--muted)]">
+                  {event.created_at.slice(0, 19)}
+                </span>
+                <Badge tone={event.event_level === "error" ? "err" : event.event_level === "warning" ? "warn" : "info"}>
+                  {event.component}
+                </Badge>
+                <span className="min-w-0 flex-1 truncate">{event.title}</span>
               </li>
             ))}
           </ul>
         ) : (
-          <p className="mt-3 text-sm text-[var(--muted)]">No activity recorded yet.</p>
+          <p className="text-sm text-[var(--muted)]">No recent events.</p>
         )}
-      </Panel>
-
-      <section className="panel p-5">
-        <h2 className="kicker">Paper positions</h2>
-        {positions.status !== "connected" ? (
-          <p className="mt-4 text-sm leading-6 text-[#c5d0de]">
-            {positions.message ?? "Positions are unavailable."}
-          </p>
-        ) : positions.positions.length === 0 ? (
-          <p className="mt-4 text-sm text-[#c5d0de]">No open paper positions.</p>
-        ) : (
-          <div className="mt-4 overflow-x-auto">
-            <table className="w-full min-w-[640px] text-left text-sm">
-              <thead className="text-[#93a1b5]">
-                <tr>
-                  <th className="py-2 font-medium">Symbol</th>
-                  <th className="py-2 font-medium">Qty</th>
-                  <th className="py-2 font-medium">Side</th>
-                  <th className="py-2 font-medium">Market value</th>
-                  <th className="py-2 font-medium">Avg entry</th>
-                  <th className="py-2 font-medium">Unrealized P/L</th>
-                </tr>
-              </thead>
-              <tbody>
-                {positions.positions.map((position) => (
-                  <tr key={position.symbol} className="border-t border-[#2a3646]">
-                    <td className="py-2">{position.symbol}</td>
-                    <td className="py-2">{position.qty}</td>
-                    <td className="py-2">{position.side}</td>
-                    <td className="py-2">{formatUsd(position.market_value)}</td>
-                    <td className="py-2">{formatUsd(position.avg_entry_price)}</td>
-                    <td className="py-2">{formatUsd(position.unrealized_pl)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+        {researchRuns.data?.items[0] ? (
+          <div className="mt-4 flex items-center gap-2 text-xs text-[var(--muted)]">
+            <span>Verification lives on Research Lab run cards.</span>
+            <VerificationBadge result="NOT_EVALUABLE" />
+            <span>shown until a run is opened and verified.</span>
           </div>
-        )}
-      </section>
-    </>
+        ) : null}
+      </Panel>
+    </div>
   );
 }
 
-function Row({ label, value }: { label: string; value: string }) {
+function StatusChip({ label, value, ok }: { label: string; value: string; ok: boolean }) {
   return (
-    <div className="flex items-baseline justify-between gap-4">
-      <dt className="text-[#93a1b5]">{label}</dt>
-      <dd className="font-medium">{value}</dd>
+    <div className="rounded-xl border border-[var(--line)] bg-[rgba(10,16,22,0.7)] px-3 py-2">
+      <p className="text-[10px] uppercase tracking-wide text-[var(--muted)]">{label}</p>
+      <p className={`mt-1 truncate text-xs font-semibold ${ok ? "text-[var(--ok)]" : "text-[var(--warn)]"}`}>
+        {value}
+      </p>
     </div>
   );
 }
