@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { API_URL, loadMarketData, type MarketDataStatus } from "@/lib/api";
+import { PageIntro } from "@/components/ui";
 
 type View =
   | { kind: "loading" }
@@ -42,12 +43,10 @@ export function MarketData() {
 
   return (
     <div className="mx-auto flex max-w-5xl flex-col gap-6">
-      <header>
-        <h1 className="text-2xl font-semibold tracking-tight">Market data</h1>
-        <p className="mt-2 max-w-2xl text-sm leading-6 text-[#93a1b5]">
-          Local daily bars for research. This page does not chart prices and does not submit orders.
-        </p>
-      </header>
+      <PageIntro
+        title="Market data"
+        note="Local daily bars for research. This page does not chart prices and does not submit orders."
+      />
 
       {view.kind === "loading" ? <p className="text-sm text-[#93a1b5]">Loading market data status…</p> : null}
 
@@ -77,17 +76,17 @@ function Ready({ status }: { status: MarketDataStatus }) {
   return (
     <>
       <section className="grid gap-4 md:grid-cols-3">
-        <article className="rounded-xl border border-[#2a3646] bg-[#151b23] p-5">
+        <article className="panel p-5">
           <h2 className="text-xs font-semibold tracking-wide text-[#93a1b5]">BARS</h2>
           <p className="mt-3 text-lg font-semibold">{status.bar_count}</p>
         </article>
-        <article className="rounded-xl border border-[#2a3646] bg-[#151b23] p-5">
+        <article className="panel p-5">
           <h2 className="text-xs font-semibold tracking-wide text-[#93a1b5]">SESSIONS</h2>
           <p className="mt-3 text-lg font-semibold">
             {status.earliest_session ?? "none"} – {status.latest_session ?? "none"}
           </p>
         </article>
-        <article className="rounded-xl border border-[#2a3646] bg-[#151b23] p-5">
+        <article className="panel p-5">
           <h2 className="text-xs font-semibold tracking-wide text-[#93a1b5]">RESEARCH USE</h2>
           <p className="mt-3 text-lg font-semibold">
             {status.suitable_for_research ? "Requested window is complete" : "Not ready"}
@@ -95,7 +94,7 @@ function Ready({ status }: { status: MarketDataStatus }) {
         </article>
       </section>
 
-      <section className="rounded-xl border border-[#2a3646] bg-[#151b23] p-5">
+      <section className="panel p-5">
         <h2 className="text-xs font-semibold tracking-wide text-[#93a1b5]">COVERAGE</h2>
         {status.coverage.length === 0 ? (
           <p className="mt-3 text-sm text-[#e7edf5]">No local bars yet.</p>
@@ -117,7 +116,7 @@ function Ready({ status }: { status: MarketDataStatus }) {
         </p>
       </section>
 
-      <section className="rounded-xl border border-[#2a3646] bg-[#151b23] p-5">
+      <section className="panel p-5">
         <h2 className="text-xs font-semibold tracking-wide text-[#93a1b5]">WARNINGS</h2>
         <ul className="mt-3 space-y-2 text-sm leading-6 text-[#e7edf5]">
           {status.warnings.length === 0 ? <li>None.</li> : null}

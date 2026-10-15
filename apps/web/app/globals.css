@@ -2,15 +2,41 @@
 
 :root {
   color-scheme: dark;
-  --background: #0c1117;
-  --foreground: #e7edf5;
-  --muted: #93a1b5;
-  --panel: #151b23;
-  --line: #2a3646;
+  --bg: #070b10;
+  --bg-2: #0d151c;
+  --ink: #e8f3f2;
+  --muted: #8ea3ab;
+  --card: rgba(14, 28, 34, 0.82);
+  --line: rgba(94, 214, 201, 0.16);
+  --cyan: #67f0e0;
+  --purple: #9b87ff;
+  --ok: #7ddea2;
+  --warn: #f0c36c;
+  --err: #f0a0a0;
+  --background: var(--bg);
+  --foreground: var(--ink);
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
+  background:
+    radial-gradient(900px 420px at 0% -10%, rgba(103, 240, 224, 0.08), transparent 55%),
+    radial-gradient(700px 380px at 100% 0%, rgba(155, 135, 255, 0.1), transparent 50%),
+    var(--bg);
+  color: var(--ink);
   font-family: "Segoe UI", sans-serif;
+}
+
+.panel {
+  border: 1px solid var(--line);
+  background: linear-gradient(180deg, rgba(20, 40, 48, 0.72), var(--card));
+  border-radius: 18px;
+  box-shadow: 0 0 0 1px rgba(103, 240, 224, 0.03), 0 16px 40px rgba(0, 0, 0, 0.25);
+}
+
+.kicker {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
 }

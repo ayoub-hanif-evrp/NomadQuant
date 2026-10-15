@@ -32,9 +32,13 @@ An LLM must not be able to skip the risk check or call broker order tools. The s
 - Research, security, and license documents
 - Typed protocols with no fake implementations
 
-## Phase 2 — daily market data (current)
+## Phase 2 — daily market data
 
 Local raw daily bars for SPY and QQQ, one feed at a time, with modeled availability at 16:30 America/New_York and a separate first-retrieved timestamp. Conflicting downloads are kept as revisions. This is not a verified point-in-time archive and not a dividend-adjusted total-return series. Still no orders and no strategy claim. See [MARKET_DATA.md](MARKET_DATA.md).
+
+## Phase 2B — observability (current)
+
+An operational audit log records startup, broker reads, and market-data jobs. Decision traces have a schema and an empty page until a later component records one. The dashboard shows those real records and truthful empty states. It does not show fabricated performance.
 
 ## Phase 3 — one reproducible backtest
 

@@ -3,15 +3,18 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
+from nomadquant.api.observe import router as observability_router
 from nomadquant.api.schemas import (
     BrokerAccountResponse,
     BrokerPositionsResponse,
     HealthResponse,
     SystemStatusResponse,
 )
+from nomadquant.audit import AuditLog
 from nomadquant.broker.alpaca import AlpacaReadOnlyBroker
 from nomadquant.config import Settings, get_settings
 from nomadquant.db import database_ok, init_db
@@ -34,6 +37,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         init_db(app.state.settings.database_path)
+        app.state.audit.record_event(
+            event_type="system.startup",
+            event_level="info",
+            component="system",
+            status="succeeded",
+            title="API started",
+            summary="NomadQuant API started in paper mode with order submission disabled.",
+        )
         logger.info(
             "nomadquant_started trading_mode=%s allow_order_submission=%s "
             "credentials_configured=%s",
@@ -42,6 +53,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             app.state.settings.credentials_configured,
         )
         yield
+        app.state.audit.record_event(
+            event_type="system.shutdown",
+            event_level="info",
+            component="system",
+            status="succeeded",
+            title="API stopped",
+            summary="NomadQuant API stopped.",
+        )
 
     app = FastAPI(
         title="NomadQuant",
@@ -57,7 +76,37 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_headers=["Accept"],
     )
     app.state.settings = active
-    app.state.broker = AlpacaReadOnlyBroker(active)
+    app.state.audit = AuditLog(active.database_path, active.secret_values)
+    app.state.broker = AlpacaReadOnlyBroker(active, audit=app.state.audit)
+    app.include_router(observability_router)
+
+    @app.exception_handler(Exception)
+    async def unhandled(request: object, exc: Exception) -> JSONResponse:
+        if isinstance(exc, HTTPException):
+            detail = exc.detail if isinstance(exc.detail, str) else "Request failed."
+            if exc.status_code >= 500:
+                app.state.audit.record_event(
+                    event_type="api.error",
+                    event_level="error",
+                    component="system",
+                    status="failed",
+                    title="API request failed",
+                    summary="An API request failed. Details were withheld.",
+                    error_code="http_error",
+                    error_message_safe="An API request failed. Details were withheld.",
+                )
+            return JSONResponse(status_code=exc.status_code, content={"detail": detail})
+        app.state.audit.record_event(
+            event_type="api.error",
+            event_level="error",
+            component="system",
+            status="failed",
+            title="API request failed",
+            summary="An API request failed. Details were withheld.",
+            error_code=type(exc).__name__,
+            error_message_safe="An API request failed. Details were withheld.",
+        )
+        return JSONResponse(status_code=500, content={"detail": "Request failed."})
 
     @app.get("/health", response_model=HealthResponse)
     def health() -> HealthResponse:

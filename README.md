@@ -102,7 +102,7 @@ Pytest warns that Starlette wants `httpx2` and that `websockets.legacy` is depre
 - Raw daily SPY/QQQ bars in `data/market.sqlite`, with a 16:30 New York availability model
 - Structured logs that redact configured secrets
 - Typed extension protocols for later data, research, strategy, backtest, risk, and paper-broker work
-- A dark local dashboard with honest "Not implemented yet" pages
+- A dark monitoring console for health, broker status, market data, activity, runs, and empty decision/agent states
 
 ## What is not included
 

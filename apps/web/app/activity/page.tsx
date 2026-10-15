@@ -1,10 +1,10 @@
-import { Placeholder } from "@/components/Placeholder";
+import { Suspense } from "react";
+import { Activity } from "@/components/Activity";
 
 export default function ActivityPage() {
   return (
-    <Placeholder
-      title="Activity"
-      note="Trade and audit activity is not implemented. This page will not invent fills."
-    />
+    <Suspense fallback={<p className="text-sm text-[var(--muted)]">Loading activity…</p>}>
+      <Activity />
+    </Suspense>
   );
 }

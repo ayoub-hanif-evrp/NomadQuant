@@ -27,6 +27,7 @@ The machine has 16 GB of RAM and a single developer. Separate services for data,
 | `nomadquant.config` | Fail-closed settings. Paper mode, paper URL, disabled orders, $100 virtual capital, local bind. |
 | `nomadquant.logging` | JSON logs. Configured secrets and assignment-style credentials are redacted. |
 | `nomadquant.db` | SQLite file for operational events such as process startup. Not a research store. |
+| `nomadquant.audit` | Structured events, runs, and future decision traces in that same operational file. |
 | `nomadquant.broker` | Read-only Alpaca paper account and positions. |
 | `nomadquant.marketdata` | Daily-bar download, validation, SQLite store, and cutoff reads. |
 | `nomadquant.api` | Typed GET routes. |

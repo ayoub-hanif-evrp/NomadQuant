@@ -4,12 +4,17 @@ import { useEffect, useState } from "react";
 import {
   API_URL,
   formatUsd,
+  loadMarketData,
+  loadObservability,
   loadOverview,
   type BrokerAccount,
   type BrokerPositions,
   type BrokerStatus,
+  type MarketDataStatus,
+  type ObservabilityOverview,
   type SystemStatus,
 } from "@/lib/api";
+import { Badge, PageIntro, Panel, toneFor } from "@/components/ui";
 
 type View =
   | { kind: "loading" }
@@ -20,6 +25,8 @@ type View =
       status: SystemStatus;
       account: BrokerAccount;
       positions: BrokerPositions;
+      market: MarketDataStatus | null;
+      activity: ObservabilityOverview | null;
     };
 
 const STATUS_LABEL: Record<BrokerStatus, string> = {
@@ -48,8 +55,17 @@ export function Overview() {
     async function load() {
       try {
         const payload = await loadOverview();
+        const [marketResult, activityResult] = await Promise.allSettled([
+          loadMarketData(),
+          loadObservability(),
+        ]);
         if (!cancelled) {
-          setView({ kind: "ready", ...payload });
+          setView({
+            kind: "ready",
+            ...payload,
+            market: marketResult.status === "fulfilled" ? marketResult.value : null,
+            activity: activityResult.status === "fulfilled" ? activityResult.value : null,
+          });
         }
       } catch (error) {
         if (cancelled) {
@@ -71,14 +87,11 @@ export function Overview() {
   }, []);
 
   return (
-    <div className="mx-auto flex max-w-5xl flex-col gap-6">
-      <header>
-        <h1 className="text-2xl font-semibold tracking-tight">Overview</h1>
-        <p className="mt-2 max-w-2xl text-sm leading-6 text-[#93a1b5]">
-          Local paper-trading status. Configured virtual capital is $100. That figure is an
-          internal limit, not Alpaca paper equity. No orders are submitted from this screen.
-        </p>
-      </header>
+    <div className="mx-auto flex max-w-6xl flex-col gap-6">
+      <PageIntro
+        title="Overview"
+        note="Local paper-only monitoring. Configured virtual capital is $100, which is an internal limit and not Alpaca paper equity. This screen does not submit orders."
+      />
 
       {view.kind === "loading" ? <p className="text-sm text-[#93a1b5]">Loading system status…</p> : null}
 
@@ -101,7 +114,13 @@ export function Overview() {
       ) : null}
 
       {view.kind === "ready" ? (
-        <Ready status={view.status} account={view.account} positions={view.positions} />
+        <Ready
+          status={view.status}
+          account={view.account}
+          positions={view.positions}
+          market={view.market}
+          activity={view.activity}
+        />
       ) : null}
     </div>
   );
@@ -111,15 +130,19 @@ function Ready({
   status,
   account,
   positions,
+  market,
+  activity,
 }: {
   status: SystemStatus;
   account: BrokerAccount;
   positions: BrokerPositions;
+  market: MarketDataStatus | null;
+  activity: ObservabilityOverview | null;
 }) {
   return (
     <>
       <section className="grid gap-4 md:grid-cols-3">
-        <article className="rounded-xl border border-[#2a3646] bg-[#151b23] p-5">
+        <article className="panel p-5">
           <h2 className="text-xs font-semibold tracking-wide text-[#93a1b5]">SYSTEM</h2>
           <p className={`mt-3 text-lg font-semibold ${statusClass(status.broker_status)}`}>
             {STATUS_LABEL[status.broker_status]}
@@ -137,13 +160,13 @@ function Ready({
           ) : null}
         </article>
 
-        <article className="rounded-xl border border-[#2a3646] bg-[#151b23] p-5">
+        <article className="panel p-5">
           <h2 className="text-xs font-semibold tracking-wide text-[#93a1b5]">VIRTUAL CAPITAL</h2>
           <p className="mt-3 text-2xl font-semibold">{formatUsd(account.virtual_capital_usd)}</p>
           <p className="mt-4 text-sm leading-6 text-[#c5d0de]">{account.broker_equity_note}</p>
         </article>
 
-        <article className="rounded-xl border border-[#2a3646] bg-[#151b23] p-5">
+        <article className="panel p-5">
           <h2 className="text-xs font-semibold tracking-wide text-[#93a1b5]">ALPACA PAPER ACCOUNT</h2>
           {account.account ? (
             <dl className="mt-4 space-y-2 text-sm">
@@ -160,8 +183,65 @@ function Ready({
         </article>
       </section>
 
-      <section className="rounded-xl border border-[#2a3646] bg-[#151b23] p-5">
-        <h2 className="text-xs font-semibold tracking-wide text-[#93a1b5]">PAPER POSITIONS</h2>
+      <section className="grid gap-4 md:grid-cols-4">
+        <Panel>
+          <p className="kicker">Events</p>
+          <p className="mt-3 text-2xl font-semibold">{activity ? activity.event_count : "—"}</p>
+        </Panel>
+        <Panel>
+          <p className="kicker">Warnings</p>
+          <p className="mt-3 text-2xl font-semibold">{activity ? activity.warning_count : "—"}</p>
+        </Panel>
+        <Panel>
+          <p className="kicker">Runs</p>
+          <p className="mt-3 text-2xl font-semibold">{activity ? activity.run_count : "—"}</p>
+        </Panel>
+        <Panel>
+          <p className="kicker">Decision traces</p>
+          <p className="mt-3 text-2xl font-semibold">
+            {activity ? activity.decision_trace_count : "—"}
+          </p>
+        </Panel>
+      </section>
+
+      <Panel>
+        <h2 className="kicker">Market data</h2>
+        {market ? (
+          <div className="mt-4 flex flex-wrap items-center gap-3 text-sm">
+            <Badge tone={market.suitable_for_research ? "ok" : "warn"}>
+              {market.suitable_for_research ? "Requested window complete" : "Not research-ready"}
+            </Badge>
+            <span>
+              {market.bar_count} bars · {market.requested_feed ?? "no feed"} ·{" "}
+              {market.requested_start ?? "none"} to {market.requested_end ?? "none"}
+            </span>
+          </div>
+        ) : (
+          <p className="mt-3 text-sm text-[var(--muted)]">Market data status is unavailable.</p>
+        )}
+      </Panel>
+
+      <Panel>
+        <h2 className="kicker">Recent activity</h2>
+        {activity && activity.recent_events.length > 0 ? (
+          <ul className="mt-4 space-y-3">
+            {activity.recent_events.map((event) => (
+              <li key={event.id} className="flex flex-wrap items-start justify-between gap-3 text-sm">
+                <div>
+                  <p className="font-medium">{event.title}</p>
+                  <p className="text-[var(--muted)]">{event.summary}</p>
+                </div>
+                <Badge tone={toneFor(event.status)}>{event.status}</Badge>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="mt-3 text-sm text-[var(--muted)]">No activity recorded yet.</p>
+        )}
+      </Panel>
+
+      <section className="panel p-5">
+        <h2 className="kicker">Paper positions</h2>
         {positions.status !== "connected" ? (
           <p className="mt-4 text-sm leading-6 text-[#c5d0de]">
             {positions.message ?? "Positions are unavailable."}

@@ -62,6 +62,83 @@ export type SymbolCoverage = {
   missing_end: number;
 };
 
+export type AuditEvent = {
+  id: number;
+  created_at: string;
+  event_type: string;
+  event_level: string;
+  component: string;
+  status: string;
+  title: string;
+  summary: string;
+  correlation_id: string;
+  run_id: number | null;
+  payload: Record<string, unknown>;
+  error_code: string | null;
+  error_message_safe: string | null;
+};
+
+export type AuditRun = {
+  id: number;
+  created_at: string;
+  finished_at: string | null;
+  run_type: string;
+  component: string;
+  status: string;
+  title: string;
+  summary: string;
+  correlation_id: string;
+  payload: Record<string, unknown>;
+  error_code: string | null;
+  error_message_safe: string | null;
+};
+
+export type DecisionTrace = {
+  id: number;
+  created_at: string;
+  source_type: string;
+  symbols: string[];
+  decision_action: string;
+  proposed_notional: string | null;
+  decision_status: string;
+  rationale_summary: string;
+  evidence_summary: string;
+  warnings: string;
+  market_data_snapshot: string;
+  research_note_ids: string;
+  backtest_id: string | null;
+  risk_decision_id: string | null;
+  broker_event_id: string | null;
+  model_provider: string | null;
+  confidence: string | null;
+  explanation: Record<string, unknown>;
+};
+
+export type ObservabilityOverview = {
+  event_count: number;
+  warning_count: number;
+  error_count: number;
+  run_count: number;
+  decision_trace_count: number;
+  recent_events: AuditEvent[];
+};
+
+export type SystemHealth = {
+  api_ok: boolean;
+  trading_mode: "paper";
+  allow_order_submission: false;
+  api_host: string;
+  alpaca_base_url: string;
+  operational_database_ok: boolean;
+  market_data_database_present: boolean;
+  broker_status: BrokerStatus;
+  broker_message: string | null;
+  last_event_at: string | null;
+  event_count: number;
+  run_count: number;
+  decision_trace_count: number;
+};
+
 export type MarketDataStatus = {
   symbols: string[];
   feeds: string[];
@@ -311,6 +388,229 @@ function isOptionalString(value: unknown): value is string | null {
 
 export async function loadMarketData(): Promise<MarketDataStatus> {
   return parseMarketDataStatus(await readJson("/api/market-data/status"));
+}
+
+function readOptionalString(value: unknown, label: string): string | null {
+  if (!isOptionalString(value)) {
+    throw new Error(`Unexpected ${label}`);
+  }
+  return value;
+}
+
+function readPayload(value: unknown): Record<string, unknown> {
+  if (!isRecord(value)) {
+    throw new Error("Unexpected payload");
+  }
+  return value;
+}
+
+function parseEvent(value: unknown): AuditEvent {
+  if (!isRecord(value) || typeof value.id !== "number" || typeof value.summary !== "string") {
+    throw new Error("Unexpected event");
+  }
+  if (
+    typeof value.created_at !== "string" ||
+    typeof value.event_type !== "string" ||
+    typeof value.event_level !== "string" ||
+    typeof value.component !== "string" ||
+    typeof value.status !== "string" ||
+    typeof value.title !== "string" ||
+    typeof value.correlation_id !== "string"
+  ) {
+    throw new Error("Unexpected event field");
+  }
+  return {
+    id: value.id,
+    created_at: value.created_at,
+    event_type: value.event_type,
+    event_level: value.event_level,
+    component: value.component,
+    status: value.status,
+    title: value.title,
+    summary: value.summary,
+    correlation_id: value.correlation_id,
+    run_id: typeof value.run_id === "number" ? value.run_id : null,
+    payload: readPayload(value.payload),
+    error_code: readOptionalString(value.error_code, "error code"),
+    error_message_safe: readOptionalString(value.error_message_safe, "safe error"),
+  };
+}
+
+function parseRun(value: unknown): AuditRun {
+  if (!isRecord(value) || typeof value.id !== "number" || typeof value.summary !== "string") {
+    throw new Error("Unexpected run");
+  }
+  if (
+    typeof value.created_at !== "string" ||
+    typeof value.run_type !== "string" ||
+    typeof value.component !== "string" ||
+    typeof value.status !== "string" ||
+    typeof value.title !== "string" ||
+    typeof value.correlation_id !== "string"
+  ) {
+    throw new Error("Unexpected run field");
+  }
+  return {
+    id: value.id,
+    created_at: value.created_at,
+    finished_at: readOptionalString(value.finished_at, "finished at"),
+    run_type: value.run_type,
+    component: value.component,
+    status: value.status,
+    title: value.title,
+    summary: value.summary,
+    correlation_id: value.correlation_id,
+    payload: readPayload(value.payload),
+    error_code: readOptionalString(value.error_code, "error code"),
+    error_message_safe: readOptionalString(value.error_message_safe, "safe error"),
+  };
+}
+
+export function parseObservabilityOverview(value: unknown): ObservabilityOverview {
+  if (!isRecord(value) || !Array.isArray(value.recent_events)) {
+    throw new Error("Unexpected observability overview");
+  }
+  return {
+    event_count: readCount(value.event_count),
+    warning_count: readCount(value.warning_count),
+    error_count: readCount(value.error_count),
+    run_count: readCount(value.run_count),
+    decision_trace_count: readCount(value.decision_trace_count),
+    recent_events: value.recent_events.map(parseEvent),
+  };
+}
+
+function readCount(value: unknown): number {
+  if (typeof value !== "number") {
+    throw new Error("Unexpected observability count");
+  }
+  return value;
+}
+
+export function parseEventPage(value: unknown): { items: AuditEvent[]; total: number } {
+  if (!isRecord(value) || !Array.isArray(value.items) || typeof value.total !== "number") {
+    throw new Error("Unexpected event page");
+  }
+  return { items: value.items.map(parseEvent), total: value.total };
+}
+
+export function parseRunPage(value: unknown): { items: AuditRun[]; total: number } {
+  if (!isRecord(value) || !Array.isArray(value.items) || typeof value.total !== "number") {
+    throw new Error("Unexpected run page");
+  }
+  return { items: value.items.map(parseRun), total: value.total };
+}
+
+function parseDecision(value: unknown): DecisionTrace {
+  if (!isRecord(value) || typeof value.id !== "number" || typeof value.rationale_summary !== "string") {
+    throw new Error("Unexpected decision trace");
+  }
+  if (
+    typeof value.created_at !== "string" ||
+    typeof value.source_type !== "string" ||
+    typeof value.decision_action !== "string" ||
+    typeof value.decision_status !== "string" ||
+    typeof value.evidence_summary !== "string" ||
+    typeof value.warnings !== "string" ||
+    typeof value.market_data_snapshot !== "string" ||
+    typeof value.research_note_ids !== "string" ||
+    !Array.isArray(value.symbols) ||
+    value.symbols.some((item) => typeof item !== "string")
+  ) {
+    throw new Error("Unexpected decision field");
+  }
+  const symbols = value.symbols.filter((item): item is string => typeof item === "string");
+  return {
+    id: value.id,
+    created_at: value.created_at,
+    source_type: value.source_type,
+    symbols,
+    decision_action: value.decision_action,
+    proposed_notional: readOptionalString(value.proposed_notional, "notional"),
+    decision_status: value.decision_status,
+    rationale_summary: value.rationale_summary,
+    evidence_summary: value.evidence_summary,
+    warnings: value.warnings,
+    market_data_snapshot: value.market_data_snapshot,
+    research_note_ids: value.research_note_ids,
+    backtest_id: readOptionalString(value.backtest_id, "backtest"),
+    risk_decision_id: readOptionalString(value.risk_decision_id, "risk decision"),
+    broker_event_id: readOptionalString(value.broker_event_id, "broker event"),
+    model_provider: readOptionalString(value.model_provider, "model"),
+    confidence: readOptionalString(value.confidence, "confidence"),
+    explanation: readPayload(value.explanation),
+  };
+}
+
+export function parseDecisionPage(value: unknown): { items: DecisionTrace[]; total: number } {
+  if (!isRecord(value) || !Array.isArray(value.items) || typeof value.total !== "number") {
+    throw new Error("Unexpected decision page");
+  }
+  return { items: value.items.map(parseDecision), total: value.total };
+}
+
+export function parseSystemHealth(value: unknown): SystemHealth {
+  if (!isRecord(value)) {
+    throw new Error("Unexpected health payload");
+  }
+  if (value.trading_mode !== "paper" || value.allow_order_submission !== false || value.api_ok !== true) {
+    throw new Error("API is not reporting a paper-only health check");
+  }
+  if (value.alpaca_base_url !== "https://paper-api.alpaca.markets" || value.api_host !== "127.0.0.1") {
+    throw new Error("API host lock is not intact");
+  }
+  if (
+    typeof value.operational_database_ok !== "boolean" ||
+    typeof value.market_data_database_present !== "boolean" ||
+    typeof value.event_count !== "number" ||
+    typeof value.run_count !== "number" ||
+    typeof value.decision_trace_count !== "number"
+  ) {
+    throw new Error("Unexpected health fields");
+  }
+  return {
+    api_ok: true,
+    trading_mode: "paper",
+    allow_order_submission: false,
+    api_host: value.api_host,
+    alpaca_base_url: value.alpaca_base_url,
+    operational_database_ok: value.operational_database_ok,
+    market_data_database_present: value.market_data_database_present,
+    broker_status: readStatus(value.broker_status),
+    broker_message: readMessage(value.broker_message),
+    last_event_at: readOptionalString(value.last_event_at, "last event"),
+    event_count: value.event_count,
+    run_count: value.run_count,
+    decision_trace_count: value.decision_trace_count,
+  };
+}
+
+export async function loadObservability(): Promise<ObservabilityOverview> {
+  return parseObservabilityOverview(await readJson("/api/observability/overview"));
+}
+
+export async function loadEvents(query: string): Promise<{ items: AuditEvent[]; total: number }> {
+  return parseEventPage(await readJson(`/api/observability/events${query}`));
+}
+
+export async function loadEvent(id: number): Promise<AuditEvent> {
+  return parseEvent(await readJson(`/api/observability/events/${id}`));
+}
+
+export async function loadRuns(): Promise<{ items: AuditRun[]; total: number }> {
+  return parseRunPage(await readJson("/api/observability/runs"));
+}
+
+export async function loadRun(id: number): Promise<AuditRun> {
+  return parseRun(await readJson(`/api/observability/runs/${id}`));
+}
+
+export async function loadDecisions(): Promise<{ items: DecisionTrace[]; total: number }> {
+  return parseDecisionPage(await readJson("/api/observability/decision-traces"));
+}
+
+export async function loadHealth(): Promise<SystemHealth> {
+  return parseSystemHealth(await readJson("/api/observability/system-health"));
 }
 
 export async function loadOverview(): Promise<{

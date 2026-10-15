@@ -4,6 +4,7 @@ This module never imports or calls order, cancel, or liquidation methods.
 """
 
 import time
+import uuid
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from typing import Any
@@ -16,6 +17,7 @@ from nomadquant.api.schemas import (
     FailureKind,
     PositionSnapshot,
 )
+from nomadquant.audit import AuditLog
 from nomadquant.config import Settings
 from nomadquant.logging import get_logger
 
@@ -91,9 +93,15 @@ class AlpacaReadOnlyBroker:
     does not take down the API. Order methods are not implemented.
     """
 
-    def __init__(self, settings: Settings, client: Any | None = None) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        client: Any | None = None,
+        audit: AuditLog | None = None,
+    ) -> None:
         self._settings = settings
         self._client = client
+        self._audit = audit
         self._cache: _CacheEntry | None = None
 
     def _trading_client(self) -> Any:
@@ -132,7 +140,22 @@ class AlpacaReadOnlyBroker:
     def _read_uncached(self) -> _CacheEntry:
         capital = self._settings.initial_virtual_capital_usd
         client = self._trading_client()
+        correlation = uuid.uuid4().hex
         if client is None:
+            self._note(
+                correlation,
+                "broker.account.read",
+                "skipped",
+                "warning",
+                "Paper account was not read because credentials are absent.",
+            )
+            self._note(
+                correlation,
+                "broker.positions.read",
+                "skipped",
+                "warning",
+                "Paper positions were not read because credentials are absent.",
+            )
             return _CacheEntry(
                 stored_at=time.monotonic(),
                 account=BrokerAccountResponse(
@@ -148,6 +171,12 @@ class AlpacaReadOnlyBroker:
             raw_positions = client.get_all_positions()
         except Exception as exc:
             status, failure_kind, message = _classify_failure(exc)
+            self._note(
+                correlation, "broker.account.read", "failed", "error", message, "broker_read"
+            )
+            self._note(
+                correlation, "broker.positions.read", "failed", "error", message, "broker_read"
+            )
             logger.warning(
                 "alpaca_read_failed error_type=%s status_code=%s failure_kind=%s",
                 type(exc).__name__,
@@ -189,6 +218,12 @@ class AlpacaReadOnlyBroker:
                 for position in raw_positions
             ]
         except (AttributeError, TypeError, ValueError):
+            self._note(
+                correlation, "broker.account.read", "failed", "error", _FAILED, "invalid_payload"
+            )
+            self._note(
+                correlation, "broker.positions.read", "failed", "error", _FAILED, "invalid_payload"
+            )
             logger.warning("alpaca_read_failed error_type=InvalidPayload status_code=None")
             return _CacheEntry(
                 stored_at=time.monotonic(),
@@ -205,6 +240,20 @@ class AlpacaReadOnlyBroker:
                     failure_kind="broker",
                 ),
             )
+        self._note(
+            correlation,
+            "broker.account.read",
+            "succeeded",
+            "info",
+            "Paper account read succeeded.",
+        )
+        self._note(
+            correlation,
+            "broker.positions.read",
+            "succeeded",
+            "info",
+            f"Paper positions read succeeded. Open positions: {len(positions)}.",
+        )
         return _CacheEntry(
             stored_at=time.monotonic(),
             account=BrokerAccountResponse(
@@ -215,3 +264,29 @@ class AlpacaReadOnlyBroker:
             ),
             positions=BrokerPositionsResponse(status="connected", positions=positions),
         )
+
+    def _note(
+        self,
+        correlation: str,
+        event_type: str,
+        status: str,
+        level: str,
+        summary: str,
+        error_code: str = "",
+    ) -> None:
+        if self._audit is None:
+            return
+        try:
+            self._audit.record_event(
+                event_type=event_type,
+                event_level=level,
+                component="broker",
+                status=status,
+                title=event_type,
+                summary=summary,
+                correlation_id=correlation,
+                error_code=error_code,
+                error_message_safe=summary if status == "failed" else "",
+            )
+        except Exception:
+            logger.warning("audit_write_failed")

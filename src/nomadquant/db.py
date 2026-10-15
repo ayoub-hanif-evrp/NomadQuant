@@ -4,10 +4,13 @@ import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
+from nomadquant.audit import AuditLog
+
 
 def init_db(database_path: str) -> None:
     path = Path(database_path)
     path.parent.mkdir(parents=True, exist_ok=True)
+    AuditLog(path).ensure()
     with sqlite3.connect(path) as connection:
         connection.execute(
             """

@@ -10,6 +10,7 @@ NomadQuant Phase 1 is a local research tool with a read-only view of an Alpaca p
 - Logs use a JSON formatter that replaces configured secret values and assignment-style `api_key`, `secret`, `authorization`, and `bearer` tokens with `[REDACTED]`.
 - Broker failures return a fixed message. Exception text is not copied into the HTTP body, because an upstream error can contain request headers or URL material.
 - Account numbers are not included in API responses.
+- The operational audit log runs the same redaction before a string or JSON payload is stored. Error messages written there are fixed safe text, not exception bodies.
 
 Set either both Alpaca variables or neither. One without the other is a configuration error and the process will not serve.
 
