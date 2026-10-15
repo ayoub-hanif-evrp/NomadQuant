@@ -1,11 +1,4 @@
-"""Pydantic contracts for the risk engine.
-
-A ``Proposal`` describes a hypothetical trade for ``RiskEngine.evaluate``. It
-is never a broker order: constructing or evaluating one does nothing to
-Alpaca and does nothing to the internal ledger. ``EvaluationResult`` records
-every rule outcome so a human can audit why a proposal was approved or
-rejected.
-"""
+"""Pydantic contracts for the risk engine. Hypothetical evaluation only."""
 
 from __future__ import annotations
 
@@ -21,13 +14,7 @@ RuleStatus = Literal["PASS", "REJECT", "INSUFFICIENT_DATA"]
 
 
 class Proposal(BaseModel):
-    """A hypothetical order for the risk engine to evaluate. Never executed.
-
-    ``id`` is the idempotency key used by ``RiskStore`` to refuse re-evaluating
-    the same proposal twice. ``source`` identifies the caller (for example
-    ``"cli"`` or ``"agent"``) for audit purposes only; it has no effect on the
-    verdict.
-    """
+    """A hypothetical order for the risk engine. Never executed."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -45,14 +32,16 @@ class Proposal(BaseModel):
     def _normalize_symbol(cls, value: str) -> str:
         return value.strip().upper()
 
+    @field_validator("as_of")
+    @classmethod
+    def _aware_as_of(cls, value: datetime) -> datetime:
+        if value.tzinfo is None:
+            raise ValueError("Proposal as_of must be timezone-aware.")
+        return value
+
 
 class PriceQuote(BaseModel):
-    """A single market data point supplied by the caller.
-
-    The risk engine never fetches prices itself; it only evaluates whatever
-    snapshot the caller passes in, so there is no network or broker call
-    hidden inside the engine.
-    """
+    """Caller-supplied market observation. The engine never fetches prices."""
 
     model_config = ConfigDict(extra="ignore")
 
@@ -60,10 +49,29 @@ class PriceQuote(BaseModel):
     as_of: datetime
     feed: str = ""
 
+    @field_validator("as_of")
+    @classmethod
+    def _aware_as_of(cls, value: datetime) -> datetime:
+        if value.tzinfo is None:
+            raise ValueError("Price as_of must be timezone-aware.")
+        return value
+
+
+class AccountMetrics(BaseModel):
+    """Optional day P&L / equity inputs for loss-limit rules.
+
+    Missing fields cause INSUFFICIENT_DATA for the corresponding rule rather
+    than silently treating loss as zero.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    realized_pnl_today_usd: Decimal | None = None
+    equity_usd: Decimal | None = None
+    peak_equity_usd: Decimal | None = None
+
 
 class RuleVerdict(BaseModel):
-    """Outcome of one rule check within an evaluation."""
-
     model_config = ConfigDict(extra="forbid")
 
     rule: str
@@ -72,12 +80,7 @@ class RuleVerdict(BaseModel):
 
 
 class EvaluationResult(BaseModel):
-    """Full result of one ``RiskEngine.evaluate`` call. Hypothetical only.
-
-    Evaluating a proposal never mutates the internal ledger and never calls a
-    broker. ``is_hypothetical``/``is_broker_order`` are fixed literals so a
-    downstream consumer cannot mistake this for an executed trade.
-    """
+    """Full result of one evaluate call. Never an executed broker order."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -90,5 +93,8 @@ class EvaluationResult(BaseModel):
     evaluated_at: datetime
     notional_usd: Decimal | None = None
     projected_cash_usd: Decimal | None = None
+    projected_holdings: dict[str, str] | None = None
+    projected_exposure_usd: Decimal | None = None
+    estimated_costs_usd: Decimal | None = None
     is_hypothetical: Literal[True] = True
     is_broker_order: Literal[False] = False

@@ -1,43 +1,37 @@
 """Deterministic, broker-independent risk engine.
 
-``RiskEngine.evaluate`` is a pure function of its inputs: the same proposal,
-ledger snapshot, prices, and policy always produce the same verdict. It never
-imports a broker client, never submits an order, and never mutates the
-``InternalLedger`` instance it is given (it reads a ``snapshot()`` copy
-instead). A verdict here is advice for a future order gateway; this module
-contains no gateway and cannot execute anything.
-
-Rule evaluation is sequential and fails closed: the first rule that does not
-PASS stops the pipeline and becomes the final verdict. REJECT and
-INSUFFICIENT_DATA both block a hypothetical trade; the distinction is only
-about *why* (a clear policy violation vs. data that cannot be trusted).
+``RiskEngine.evaluate`` never mutates the ledger, never calls a broker, and
+never treats APPROVE as an executed order. Fail closed on missing valuation
+or missing P&L inputs required by loss-limit rules.
 """
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Any, Protocol
 
-from nomadquant.risk.ledger import InternalLedger
+from nomadquant.risk.ledger import InternalLedger, LedgerInvalid
 from nomadquant.risk.policy import RiskPolicy
-from nomadquant.risk.schemas import EvaluationResult, Proposal, RuleStatus, RuleVerdict
+from nomadquant.risk.schemas import (
+    AccountMetrics,
+    EvaluationResult,
+    Proposal,
+    RuleStatus,
+    RuleVerdict,
+)
 
-# Centralized to avoid magic-string drift between the two "store" call sites.
-_RuleOutcome = tuple[str, RuleStatus, str]  # (rule, status, reason)
+_RuleOutcome = tuple[str, RuleStatus, str]
 
 
 class _SeenStore(Protocol):
-    """Structural type for the optional idempotency store (e.g. ``RiskStore``)."""
-
     def seen(self, proposal_id: str) -> bool: ...
 
 
 class RiskEngine:
-    """Evaluates one hypothetical proposal against a policy and a ledger snapshot."""
-
     def __init__(self, policy: RiskPolicy | None = None) -> None:
         self.policy = policy or RiskPolicy()
+        self.policy.validate()
 
     def evaluate(
         self,
@@ -46,20 +40,35 @@ class RiskEngine:
         prices: dict[str, Any],
         *,
         store: _SeenStore | None = None,
+        account: AccountMetrics | None = None,
+        now: datetime | None = None,
     ) -> EvaluationResult:
         """Return a verdict. Never mutates ``ledger``, never calls a broker."""
         policy = self.policy
-        working_ledger = ledger.snapshot()  # engine only ever reads this copy
+        working = ledger.snapshot()
         rule_verdicts: list[RuleVerdict] = []
+        clock = now or datetime.now(UTC)
 
         def run(outcome: _RuleOutcome) -> bool:
-            """Record one rule's outcome. Returns True if evaluation must stop."""
             rule, status, reason = outcome
             rule_verdicts.append(RuleVerdict(rule=rule, verdict=status, reason=reason))
             return status != "PASS"
 
-        def finalize(verdict: str, **extra: Decimal | None) -> EvaluationResult:
+        def finalize(
+            verdict: str,
+            *,
+            notional_usd: Decimal | None = None,
+            projected_cash_usd: Decimal | None = None,
+            projected_holdings: dict[str, Decimal] | None = None,
+            projected_exposure_usd: Decimal | None = None,
+            estimated_costs_usd: Decimal | None = None,
+        ) -> EvaluationResult:
             reasons = [rv.reason for rv in rule_verdicts if rv.verdict != "PASS"]
+            holdings_out = (
+                None
+                if projected_holdings is None
+                else {k: str(v) for k, v in projected_holdings.items() if v != 0}
+            )
             return EvaluationResult(
                 proposal_id=proposal.id,
                 verdict=verdict,  # type: ignore[arg-type]
@@ -67,85 +76,179 @@ class RiskEngine:
                 rule_verdicts=rule_verdicts,
                 policy_version=policy.version,
                 policy_hash=policy.policy_hash(),
-                evaluated_at=datetime.now(UTC),
-                notional_usd=extra.get("notional_usd"),
-                projected_cash_usd=extra.get("projected_cash_usd"),
+                evaluated_at=clock,
+                notional_usd=notional_usd,
+                projected_cash_usd=projected_cash_usd,
+                projected_holdings=holdings_out,
+                projected_exposure_usd=projected_exposure_usd,
+                estimated_costs_usd=estimated_costs_usd,
             )
 
-        # 1. Emergency halt is a manual kill switch and is checked first.
         if run(_emergency_halt(policy)):
             return finalize("REJECT")
 
-        # 2. Idempotency: a proposal id already recorded is never re-approved.
         if run(_duplicate_proposal(proposal, store)):
             return finalize("REJECT")
 
-        # 3. Domain check: only the allowed ETFs are in scope.
+        if run(_ledger_validity(working, policy)):
+            return finalize("REJECT")
+
         if run(_unsupported_symbol(proposal, policy)):
             return finalize("REJECT")
 
-        # 4. Quantity sanity: must be strictly positive.
         if run(_invalid_quantity(proposal)):
             return finalize("REJECT")
 
-        # 5. Precision: fractional shares beyond the policy limit are rejected.
         if run(_quantity_precision(proposal, policy)):
             return finalize("REJECT")
 
-        # 6. Price/as_of validity: no price, an unparsable price, or a price
-        #    stamped after the proposal's as_of (look-ahead) is not usable.
-        price_outcome, price, price_as_of = _extract_price(proposal, prices)
-        if run(price_outcome):
+        if run(_proposal_timestamp(proposal, clock)):
             return finalize("INSUFFICIENT_DATA")
 
-        # 7. Staleness: a technically valid price can still be too old to trust.
-        if run(_stale_price(proposal, price_as_of, policy)):
+        price_map, valuation = _price_map(prices)
+        if run(valuation):
             return finalize("INSUFFICIENT_DATA")
+
+        holdings_outcome = _holdings_priced(working, price_map)
+        if run(holdings_outcome):
+            return finalize("INSUFFICIENT_DATA")
+
+        trade_price_outcome, trade_price, trade_as_of = _trade_price(proposal, prices)
+        if run(trade_price_outcome):
+            return finalize("INSUFFICIENT_DATA")
+
+        if run(_stale_price(proposal, trade_as_of, policy)):
+            return finalize("INSUFFICIENT_DATA")
+
+        if run(_invalid_trade_price(trade_price)):
+            return finalize("INSUFFICIENT_DATA")
+
+        # Account / drawdown checks. Cash-only empty ledgers may omit account
+        # metrics; any nonzero holding without equity inputs is insufficient.
+        resolved_account = _resolve_account(account, working, price_map)
+        if run(_realized_daily_loss(resolved_account, policy)):
+            status = rule_verdicts[-1].verdict
+            return finalize("INSUFFICIENT_DATA" if status == "INSUFFICIENT_DATA" else "REJECT")
+
+        if run(_unrealized_drawdown(resolved_account, policy)):
+            status = rule_verdicts[-1].verdict
+            return finalize("INSUFFICIENT_DATA" if status == "INSUFFICIENT_DATA" else "REJECT")
+
+        notional = proposal.quantity * trade_price
+        spread_cost = notional * policy.spread_bps / Decimal(10000)
+        commission = policy.commission_usd
+        costs = spread_cost + commission
 
         if proposal.side == "sell":
-            # 8. A hypothetical sell can only be as large as modeled holdings.
-            if run(_sell_insufficient_holdings(proposal, working_ledger)):
-                return finalize("REJECT")
-            return finalize("APPROVE")
+            if run(_sell_insufficient_holdings(proposal, working)):
+                return finalize("REJECT", notional_usd=notional, estimated_costs_usd=costs)
+            proceeds = notional - costs
+            cash_after = working.cash_usd + proceeds
+            holdings_after = dict(working.holdings)
+            key = proposal.symbol.upper()
+            holdings_after[key] = working.holding(key) - proposal.quantity
+            if holdings_after[key] == 0:
+                holdings_after.pop(key, None)
+            try:
+                exposure_after = InternalLedger(
+                    cash_usd=cash_after,
+                    holdings=holdings_after,
+                    capital_usd=working.capital_usd,
+                    reserved_cash_usd=working.reserved_cash_usd,
+                ).total_exposure_usd(price_map | {key: trade_price})
+            except LedgerInvalid as exc:
+                run(("projected_exposure", "INSUFFICIENT_DATA", str(exc)))
+                return finalize(
+                    "INSUFFICIENT_DATA", notional_usd=notional, estimated_costs_usd=costs
+                )
+            if run(_min_cash_reserve(cash_after, policy)):
+                return finalize(
+                    "REJECT",
+                    notional_usd=notional,
+                    projected_cash_usd=cash_after,
+                    projected_holdings=holdings_after,
+                    projected_exposure_usd=exposure_after,
+                    estimated_costs_usd=costs,
+                )
+            if run(_transaction_cost_budget(costs, policy)):
+                return finalize(
+                    "REJECT",
+                    notional_usd=notional,
+                    projected_cash_usd=cash_after,
+                    projected_holdings=holdings_after,
+                    projected_exposure_usd=exposure_after,
+                    estimated_costs_usd=costs,
+                )
+            return finalize(
+                "APPROVE",
+                notional_usd=notional,
+                projected_cash_usd=cash_after,
+                projected_holdings=holdings_after,
+                projected_exposure_usd=exposure_after,
+                estimated_costs_usd=costs,
+            )
 
-        # --- buy-only economic checks -------------------------------------
-        notional_usd = proposal.quantity * price
-        spread_cost = notional_usd * policy.spread_bps / Decimal(10000)
-        total_cost = notional_usd + spread_cost + policy.commission_usd
+        # --- buy path ------------------------------------------------------
+        total_debit = notional + costs
+        if run(_capital_scale_sanity(notional, policy)):
+            return finalize("REJECT", notional_usd=notional, estimated_costs_usd=costs)
+        if run(_available_cash(total_debit, working)):
+            return finalize("REJECT", notional_usd=notional, estimated_costs_usd=costs)
+        if run(_max_single_transaction(notional, policy)):
+            return finalize("REJECT", notional_usd=notional, estimated_costs_usd=costs)
 
-        # 9. A proposal sized far beyond the internal $100 base is rejected
-        #    outright with a message that cannot be confused with Alpaca
-        #    paper buying power.
-        if run(_capital_scale_sanity(notional_usd, policy)):
-            return finalize("REJECT", notional_usd=notional_usd)
-
-        # 10. The hypothetical buy must be affordable out of internal cash.
-        if run(_available_cash(total_cost, working_ledger)):
-            return finalize("REJECT", notional_usd=notional_usd)
-
-        # 11. Per-transaction notional cap.
-        if run(_max_single_transaction(notional_usd, policy)):
-            return finalize("REJECT", notional_usd=notional_usd)
-
-        # 12. Per-symbol concentration cap.
-        if run(_max_symbol_exposure(proposal.symbol, notional_usd, price, working_ledger, policy)):
-            return finalize("REJECT", notional_usd=notional_usd)
-
-        # 13. Portfolio-wide concentration cap.
-        if run(_max_total_exposure(notional_usd, prices, working_ledger, policy)):
-            return finalize("REJECT", notional_usd=notional_usd)
-
-        # 14. Minimum cash reserve after the hypothetical buy.
-        cash_after = working_ledger.cash_usd - total_cost
+        cash_after = working.cash_usd - total_debit
+        holdings_after = dict(working.holdings)
+        key = proposal.symbol.upper()
+        holdings_after[key] = working.holding(key) + proposal.quantity
+        price_for_exposure = price_map | {key: trade_price}
+        if run(_max_symbol_exposure(key, notional, trade_price, working, policy)):
+            return finalize("REJECT", notional_usd=notional, estimated_costs_usd=costs)
+        try:
+            exposure_after = InternalLedger(
+                cash_usd=cash_after,
+                holdings=holdings_after,
+                capital_usd=working.capital_usd,
+                reserved_cash_usd=working.reserved_cash_usd,
+            ).total_exposure_usd(price_for_exposure)
+        except LedgerInvalid as exc:
+            run(("projected_exposure", "INSUFFICIENT_DATA", str(exc)))
+            return finalize("INSUFFICIENT_DATA", notional_usd=notional, estimated_costs_usd=costs)
+        if run(_max_total_exposure_value(exposure_after, policy)):
+            return finalize(
+                "REJECT",
+                notional_usd=notional,
+                projected_cash_usd=cash_after,
+                projected_holdings=holdings_after,
+                projected_exposure_usd=exposure_after,
+                estimated_costs_usd=costs,
+            )
         if run(_min_cash_reserve(cash_after, policy)):
-            return finalize("REJECT", notional_usd=notional_usd, projected_cash_usd=cash_after)
-
-        # 15. Modeled same-day loss: the transaction's own cost, as a
-        #     fraction of capital. A simple cost-based proxy, not a VaR model.
-        if run(_max_daily_modeled_loss(spread_cost, policy.commission_usd, policy)):
-            return finalize("REJECT", notional_usd=notional_usd, projected_cash_usd=cash_after)
-
-        return finalize("APPROVE", notional_usd=notional_usd, projected_cash_usd=cash_after)
+            return finalize(
+                "REJECT",
+                notional_usd=notional,
+                projected_cash_usd=cash_after,
+                projected_holdings=holdings_after,
+                projected_exposure_usd=exposure_after,
+                estimated_costs_usd=costs,
+            )
+        if run(_transaction_cost_budget(costs, policy)):
+            return finalize(
+                "REJECT",
+                notional_usd=notional,
+                projected_cash_usd=cash_after,
+                projected_holdings=holdings_after,
+                projected_exposure_usd=exposure_after,
+                estimated_costs_usd=costs,
+            )
+        return finalize(
+            "APPROVE",
+            notional_usd=notional,
+            projected_cash_usd=cash_after,
+            projected_holdings=holdings_after,
+            projected_exposure_usd=exposure_after,
+            estimated_costs_usd=costs,
+        )
 
 
 def evaluate_proposal(
@@ -155,12 +258,45 @@ def evaluate_proposal(
     policy: RiskPolicy | None = None,
     *,
     store: _SeenStore | None = None,
+    account: AccountMetrics | None = None,
+    now: datetime | None = None,
 ) -> EvaluationResult:
-    """Convenience wrapper around ``RiskEngine(policy).evaluate(...)``."""
-    return RiskEngine(policy).evaluate(proposal, ledger, prices, store=store)
+    return RiskEngine(policy).evaluate(
+        proposal, ledger, prices, store=store, account=account, now=now
+    )
 
 
-# -- individual rules ---------------------------------------------------
+# -- rules ------------------------------------------------------------------
+
+
+def _resolve_account(
+    account: AccountMetrics | None,
+    ledger: InternalLedger,
+    price_map: dict[str, Decimal],
+) -> AccountMetrics | None:
+    """Build default day metrics from cash+mark when the caller omits them.
+
+    Realized P&L defaults to 0 for a pure mark-to-market snapshot. Callers that
+    track true realized day P&L should pass ``AccountMetrics`` explicitly.
+    """
+    if account is not None:
+        return account
+    try:
+        exposure = (
+            ledger.total_exposure_usd(price_map)
+            if any(qty != 0 for qty in ledger.holdings.values())
+            else Decimal("0")
+        )
+    except LedgerInvalid:
+        return None
+    equity = ledger.cash_usd + exposure
+    # Do not invent a peak above current equity — that would fabricate drawdown.
+    # Callers tracking true peaks must pass AccountMetrics explicitly.
+    return AccountMetrics(
+        realized_pnl_today_usd=Decimal("0"),
+        equity_usd=equity,
+        peak_equity_usd=equity,
+    )
 
 
 def _emergency_halt(policy: RiskPolicy) -> _RuleOutcome:
@@ -178,9 +314,17 @@ def _duplicate_proposal(proposal: Proposal, store: _SeenStore | None) -> _RuleOu
         return (
             "duplicate_proposal_id",
             "REJECT",
-            f"Proposal id {proposal.id!r} was already evaluated (idempotency).",
+            f"Proposal id {proposal.id!r} was already evaluated or reserved.",
         )
-    return ("duplicate_proposal_id", "PASS", "Proposal id has not been evaluated before.")
+    return ("duplicate_proposal_id", "PASS", "Proposal id has not been seen.")
+
+
+def _ledger_validity(ledger: InternalLedger, policy: RiskPolicy) -> _RuleOutcome:
+    try:
+        ledger.validate(allowed_symbols=policy.allowed_symbols)
+    except LedgerInvalid as exc:
+        return ("ledger_validity", "REJECT", str(exc))
+    return ("ledger_validity", "PASS", "Ledger snapshot is valid.")
 
 
 def _unsupported_symbol(proposal: Proposal, policy: RiskPolicy) -> _RuleOutcome:
@@ -195,11 +339,11 @@ def _unsupported_symbol(proposal: Proposal, policy: RiskPolicy) -> _RuleOutcome:
 
 
 def _invalid_quantity(proposal: Proposal) -> _RuleOutcome:
-    if proposal.quantity <= 0:
+    if proposal.quantity <= 0 or not proposal.quantity.is_finite():
         return (
             "invalid_quantity",
             "REJECT",
-            f"Quantity {proposal.quantity} must be strictly positive.",
+            f"Quantity {proposal.quantity} must be finite and strictly positive.",
         )
     return ("invalid_quantity", "PASS", "Quantity is positive.")
 
@@ -217,7 +361,55 @@ def _quantity_precision(proposal: Proposal, policy: RiskPolicy) -> _RuleOutcome:
     return ("quantity_precision", "PASS", "Quantity precision is within policy.")
 
 
-def _extract_price(
+def _proposal_timestamp(proposal: Proposal, now: datetime) -> _RuleOutcome:
+    as_of = proposal.as_of
+    if as_of.tzinfo is None:
+        return ("proposal_timestamp", "INSUFFICIENT_DATA", "Proposal as_of is naive.")
+    if as_of > now.astimezone(UTC) + timedelta(minutes=1):
+        return (
+            "proposal_timestamp",
+            "INSUFFICIENT_DATA",
+            "Proposal as_of is in the future relative to evaluation time.",
+        )
+    return ("proposal_timestamp", "PASS", "Proposal as_of is usable.")
+
+
+def _price_map(prices: dict[str, Any]) -> tuple[dict[str, Decimal], _RuleOutcome]:
+    out: dict[str, Decimal] = {}
+    for symbol, quote in prices.items():
+        try:
+            raw = quote["price"] if isinstance(quote, dict) else quote.price
+            price = raw if isinstance(raw, Decimal) else Decimal(str(raw))
+        except (KeyError, InvalidOperation, ValueError, TypeError, AttributeError) as exc:
+            return (
+                {},
+                (
+                    "price_map",
+                    "INSUFFICIENT_DATA",
+                    f"Malformed price for {symbol}: {exc}.",
+                ),
+            )
+        if price <= 0 or not price.is_finite():
+            return (
+                {},
+                (
+                    "price_map",
+                    "INSUFFICIENT_DATA",
+                    f"Non-finite or non-positive price for {symbol}: {price}.",
+                ),
+            )
+        out[str(symbol).upper()] = price
+    return (out, ("price_map", "PASS", "Price map is well-formed."))
+
+
+def _holdings_priced(ledger: InternalLedger, price_map: dict[str, Decimal]) -> _RuleOutcome:
+    ok, reason = ledger.require_prices_for_holdings(price_map)
+    if not ok:
+        return ("holdings_valuation", "INSUFFICIENT_DATA", reason)
+    return ("holdings_valuation", "PASS", reason)
+
+
+def _trade_price(
     proposal: Proposal, prices: dict[str, Any]
 ) -> tuple[_RuleOutcome, Decimal, datetime]:
     quote = prices.get(proposal.symbol)
@@ -231,48 +423,62 @@ def _extract_price(
         if isinstance(quote, dict):
             raw_price = quote["price"]
             raw_as_of = quote["as_of"]
+            feed = str(quote.get("feed") or "")
         else:
             raw_price = quote.price
             raw_as_of = quote.as_of
+            feed = str(getattr(quote, "feed", "") or "")
         price = raw_price if isinstance(raw_price, Decimal) else Decimal(str(raw_price))
-        if isinstance(raw_as_of, datetime):
-            as_of = raw_as_of
-        else:
-            as_of = datetime.fromisoformat(str(raw_as_of))
+        as_of = (
+            raw_as_of if isinstance(raw_as_of, datetime) else datetime.fromisoformat(str(raw_as_of))
+        )
     except (KeyError, InvalidOperation, ValueError, TypeError) as exc:
         return (
             ("missing_or_invalid_price", "INSUFFICIENT_DATA", f"Price quote is malformed: {exc}."),
             Decimal("0"),
             datetime.now(UTC),
         )
-    if price <= 0:
+    if as_of.tzinfo is None:
         return (
-            ("missing_or_invalid_price", "INSUFFICIENT_DATA", f"Price {price} must be positive."),
+            (
+                "missing_or_invalid_price",
+                "INSUFFICIENT_DATA",
+                "Price as_of must be timezone-aware.",
+            ),
             Decimal("0"),
             datetime.now(UTC),
         )
-    as_of = _as_utc(as_of)
-    proposal_as_of = _as_utc(proposal.as_of)
+    as_of = as_of.astimezone(UTC)
+    proposal_as_of = proposal.as_of.astimezone(UTC)
     if as_of > proposal_as_of:
         return (
             (
                 "missing_or_invalid_price",
                 "INSUFFICIENT_DATA",
-                "Price as_of is after the proposal's as_of (look-ahead data is not usable).",
+                "Price as_of is after the proposal's as_of (look-ahead).",
             ),
             Decimal("0"),
             datetime.now(UTC),
         )
-    outcome: _RuleOutcome = (
-        "missing_or_invalid_price",
-        "PASS",
-        "Price data is present and well-formed.",
+    if not feed:
+        return (
+            (
+                "missing_or_invalid_price",
+                "INSUFFICIENT_DATA",
+                "Price quote must include feed/source provenance.",
+            ),
+            Decimal("0"),
+            datetime.now(UTC),
+        )
+    return (
+        ("missing_or_invalid_price", "PASS", f"Trade price present ({feed})."),
+        price,
+        as_of,
     )
-    return (outcome, price, as_of)
 
 
 def _stale_price(proposal: Proposal, price_as_of: datetime, policy: RiskPolicy) -> _RuleOutcome:
-    age = _as_utc(proposal.as_of) - price_as_of
+    age = proposal.as_of.astimezone(UTC) - price_as_of
     if age > policy.max_price_age:
         return (
             "stale_price",
@@ -280,6 +486,16 @@ def _stale_price(proposal: Proposal, price_as_of: datetime, policy: RiskPolicy) 
             f"Price age {age} exceeds the policy limit of {policy.max_price_age}.",
         )
     return ("stale_price", "PASS", f"Price age {age} is within the policy limit.")
+
+
+def _invalid_trade_price(price: Decimal) -> _RuleOutcome:
+    if price <= 0 or not price.is_finite():
+        return (
+            "trade_price_finite",
+            "INSUFFICIENT_DATA",
+            f"Trade price {price} is not a finite positive number.",
+        )
+    return ("trade_price_finite", "PASS", "Trade price is finite and positive.")
 
 
 def _sell_insufficient_holdings(proposal: Proposal, ledger: InternalLedger) -> _RuleOutcome:
@@ -299,21 +515,22 @@ def _capital_scale_sanity(notional_usd: Decimal, policy: RiskPolicy) -> _RuleOut
         return (
             "capital_scale_sanity",
             "REJECT",
-            f"Proposal notional ${notional_usd} vastly exceeds the ${policy.capital_usd} "
-            "internal capital base. This engine evaluates against the internal paper "
-            "ledger only and never against Alpaca account buying power.",
+            f"Proposal notional ${notional_usd} exceeds the ${policy.capital_usd} "
+            "internal capital base (never Alpaca buying power).",
         )
     return ("capital_scale_sanity", "PASS", "Notional is within the internal capital scale.")
 
 
 def _available_cash(total_cost: Decimal, ledger: InternalLedger) -> _RuleOutcome:
-    if total_cost > ledger.cash_usd:
+    available = ledger.available_cash_usd()
+    if total_cost > available:
         return (
             "available_cash",
             "REJECT",
-            f"Total cost ${total_cost} exceeds available internal cash of ${ledger.cash_usd}.",
+            f"Total debit ${total_cost} exceeds available internal cash of ${available} "
+            f"(cash ${ledger.cash_usd} minus reserved ${ledger.reserved_cash_usd}).",
         )
-    return ("available_cash", "PASS", f"Total cost ${total_cost} is covered by internal cash.")
+    return ("available_cash", "PASS", f"Total debit ${total_cost} is covered by available cash.")
 
 
 def _max_single_transaction(notional_usd: Decimal, policy: RiskPolicy) -> _RuleOutcome:
@@ -350,36 +567,23 @@ def _max_symbol_exposure(
     return (
         "max_symbol_exposure",
         "PASS",
-        f"Projected {symbol} exposure fraction {fraction:.4f} is within max_symbol_exposure.",
+        f"Projected {symbol} exposure fraction {fraction:.4f} is within limit.",
     )
 
 
-def _max_total_exposure(
-    notional_usd: Decimal,
-    prices: dict[str, Any],
-    ledger: InternalLedger,
-    policy: RiskPolicy,
-) -> _RuleOutcome:
-    price_map: dict[str, Decimal] = {}
-    for symbol, quote in prices.items():
-        try:
-            raw = quote["price"] if isinstance(quote, dict) else quote.price
-            price_map[symbol] = raw if isinstance(raw, Decimal) else Decimal(str(raw))
-        except (KeyError, InvalidOperation, ValueError, TypeError, AttributeError):
-            continue
-    projected = ledger.total_exposure_usd(price_map) + notional_usd
-    fraction = projected / policy.capital_usd
+def _max_total_exposure_value(exposure_after: Decimal, policy: RiskPolicy) -> _RuleOutcome:
+    fraction = exposure_after / policy.capital_usd
     if fraction > policy.max_total_exposure:
         return (
             "max_total_exposure",
             "REJECT",
-            f"Projected total exposure ${projected} is {fraction:.4f}x capital, "
+            f"Projected total exposure ${exposure_after} is {fraction:.4f}x capital, "
             f"exceeding max_total_exposure ({policy.max_total_exposure}).",
         )
     return (
         "max_total_exposure",
         "PASS",
-        f"Projected total exposure fraction {fraction:.4f} is within max_total_exposure.",
+        f"Projected total exposure fraction {fraction:.4f} is within limit.",
     )
 
 
@@ -398,24 +602,67 @@ def _min_cash_reserve(cash_after: Decimal, policy: RiskPolicy) -> _RuleOutcome:
     )
 
 
-def _max_daily_modeled_loss(
-    spread_cost: Decimal, commission_usd: Decimal, policy: RiskPolicy
-) -> _RuleOutcome:
-    modeled_loss = spread_cost + commission_usd
-    limit = policy.max_daily_modeled_loss_fraction * policy.capital_usd
-    if modeled_loss > limit:
+def _transaction_cost_budget(costs: Decimal, policy: RiskPolicy) -> _RuleOutcome:
+    """Spread+commission budget only — not a portfolio drawdown breaker."""
+    limit = policy.max_transaction_cost_fraction * policy.capital_usd
+    if costs > limit:
         return (
-            "max_daily_modeled_loss",
+            "transaction_cost_budget",
             "REJECT",
-            f"Modeled transaction loss ${modeled_loss} exceeds "
-            f"max_daily_modeled_loss_fraction limit (${limit}).",
+            f"Estimated transaction costs ${costs} exceed cost budget (${limit}).",
         )
     return (
-        "max_daily_modeled_loss",
+        "transaction_cost_budget",
         "PASS",
-        f"Modeled transaction loss ${modeled_loss} is within the daily loss limit.",
+        f"Estimated transaction costs ${costs} are within the cost budget.",
     )
 
 
-def _as_utc(value: datetime) -> datetime:
-    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+def _realized_daily_loss(account: AccountMetrics | None, policy: RiskPolicy) -> _RuleOutcome:
+    if account is None or account.realized_pnl_today_usd is None:
+        return (
+            "realized_daily_loss",
+            "INSUFFICIENT_DATA",
+            "Realized daily P&L is required for the daily-loss circuit breaker.",
+        )
+    pnl = account.realized_pnl_today_usd
+    if not pnl.is_finite():
+        return ("realized_daily_loss", "INSUFFICIENT_DATA", "Realized daily P&L is not finite.")
+    limit = -(policy.max_realized_daily_loss_fraction * policy.capital_usd)
+    if pnl < limit:
+        return (
+            "realized_daily_loss",
+            "REJECT",
+            f"Realized daily P&L ${pnl} breaches loss limit (${limit}).",
+        )
+    return ("realized_daily_loss", "PASS", f"Realized daily P&L ${pnl} is within limit.")
+
+
+def _unrealized_drawdown(account: AccountMetrics | None, policy: RiskPolicy) -> _RuleOutcome:
+    if account is None or account.equity_usd is None or account.peak_equity_usd is None:
+        return (
+            "unrealized_drawdown",
+            "INSUFFICIENT_DATA",
+            "Equity and peak equity are required for the drawdown circuit breaker.",
+        )
+    equity = account.equity_usd
+    peak = account.peak_equity_usd
+    if not equity.is_finite() or not peak.is_finite() or peak <= 0:
+        return (
+            "unrealized_drawdown",
+            "INSUFFICIENT_DATA",
+            "Equity/peak equity values are not usable.",
+        )
+    drawdown = (peak - equity) / peak
+    if drawdown > policy.max_unrealized_drawdown_fraction:
+        return (
+            "unrealized_drawdown",
+            "REJECT",
+            f"Unrealized drawdown {drawdown:.4f} exceeds "
+            f"max_unrealized_drawdown_fraction ({policy.max_unrealized_drawdown_fraction}).",
+        )
+    return (
+        "unrealized_drawdown",
+        "PASS",
+        f"Unrealized drawdown {drawdown:.4f} is within limit.",
+    )

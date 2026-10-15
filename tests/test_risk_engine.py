@@ -215,16 +215,57 @@ def test_emergency_halt_is_rejected() -> None:
     assert rule_names(result) == ["emergency_halt"]
 
 
-def test_excessive_modeled_loss_is_rejected() -> None:
-    # An inflated spread turns a small, otherwise-compliant buy into a large
-    # modeled same-day loss.
+def test_excessive_transaction_cost_budget_is_rejected() -> None:
+    # Inflated spread hits the transaction-cost budget (not a drawdown breaker).
     policy = RiskPolicy(spread_bps=Decimal("10000"))
     proposal = make_proposal(quantity=Decimal("2"))
     result = evaluate_proposal(
         proposal, ledger(cash=Decimal("100")), price_map(price=Decimal("20")), policy
     )
     assert result.verdict == "REJECT"
-    assert rule_status(result, "max_daily_modeled_loss") == "REJECT"
+    assert rule_status(result, "transaction_cost_budget") == "REJECT"
+
+
+def test_missing_held_position_price_is_insufficient_data() -> None:
+    holding_ledger = ledger(
+        cash=Decimal("50"), holdings={"SPY": Decimal("0.1"), "QQQ": Decimal("0.1")}
+    )
+    # Only SPY priced — QQQ holding cannot be valued as zero.
+    result = evaluate_proposal(
+        make_proposal(quantity=Decimal("0.01")),
+        holding_ledger,
+        price_map(symbol="SPY", price=Decimal("500")),
+    )
+    assert result.verdict == "INSUFFICIENT_DATA"
+    assert rule_status(result, "holdings_valuation") == "INSUFFICIENT_DATA"
+
+
+def test_sell_projects_cash_and_costs_without_mutating() -> None:
+    holding_ledger = ledger(cash=Decimal("40"), holdings={"SPY": Decimal("0.1")})
+    before = holding_ledger.snapshot()
+    result = evaluate_proposal(
+        make_proposal(side="sell", quantity=Decimal("0.05")),
+        holding_ledger,
+        price_map(price=Decimal("500")),
+    )
+    assert result.verdict == "APPROVE"
+    assert result.projected_cash_usd is not None
+    assert result.projected_cash_usd > before.cash_usd
+    assert result.estimated_costs_usd is not None
+    assert holding_ledger.cash_usd == before.cash_usd
+    assert holding_ledger.holdings == before.holdings
+
+
+def test_reservation_is_transactional(tmp_path: Path) -> None:
+    store = RiskStore(tmp_path / "risk.sqlite")
+    proposal = make_proposal(id="reserve-1", quantity=Decimal("0.01"))
+    store.reserve(proposal, reserved_cash_usd=Decimal("5.01"))
+    with pytest.raises(RiskStoreError):
+        store.reserve(proposal, reserved_cash_usd=Decimal("5.01"))
+    assert store.seen(proposal.id) is True
+    store.release_reservation(proposal.id, reason="test")
+    # After release, evaluate+record can proceed under a fresh reservation path.
+    store.reserve(proposal, reserved_cash_usd=Decimal("5.01"))
 
 
 @pytest.mark.parametrize(
@@ -324,14 +365,16 @@ def test_policy_hash_is_stable_and_sensitive_to_changes() -> None:
 
 def test_policy_defaults_match_documented_values() -> None:
     policy = RiskPolicy()
-    assert policy.version == POLICY_VERSION == "1.0.0"
+    assert policy.version == POLICY_VERSION == "1.1.0"
     assert policy.capital_usd == Decimal("100")
     assert policy.allowed_symbols == frozenset({"SPY", "QQQ"})
     assert policy.max_total_exposure == Decimal("1.0")
     assert policy.max_symbol_exposure == Decimal("1.0")
     assert policy.max_single_transaction_usd == Decimal("50")
     assert policy.min_cash_reserve_usd == Decimal("5")
-    assert policy.max_daily_modeled_loss_fraction == Decimal("0.25")
+    assert policy.max_transaction_cost_fraction == Decimal("0.25")
+    assert policy.max_realized_daily_loss_fraction == Decimal("0.10")
+    assert policy.max_unrealized_drawdown_fraction == Decimal("0.25")
     assert policy.max_price_age == timedelta(hours=48)
     assert policy.max_qty_decimals == 6
     assert policy.spread_bps == Decimal("1")
