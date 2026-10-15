@@ -1594,3 +1594,68 @@ export async function loadRiskEvaluations(
     items: value.items.filter(isRecord).map((item) => item as RiskEvaluation),
   };
 }
+
+export type ShadowStatus = {
+  trading_state: string;
+  allow_order_submission: false | boolean;
+  initialized: boolean;
+  starting_capital_usd: string;
+  cash_usd?: string;
+  reserved_cash_usd?: string;
+  holdings?: Record<string, string>;
+  cost_basis?: Record<string, string>;
+  realized_pnl_usd?: string;
+  total_costs_usd?: string;
+  peak_equity_usd?: string;
+  ledger_version?: number;
+  updated_at?: string;
+  cycle_count: number;
+  note: string;
+};
+
+export type ShadowCycle = {
+  id: number;
+  cycle_key: string;
+  created_at: string;
+  mode: string;
+  label: string;
+  signal_session: string | null;
+  fill_session: string | null;
+  status: string;
+  intent: string;
+  risk_verdict: string | null;
+  evidence_hash: string;
+  warnings: string[];
+  evidence: Record<string, unknown>;
+};
+
+export async function loadShadowStatus(): Promise<ShadowStatus> {
+  const value = await readJson("/api/shadow/status");
+  if (!isRecord(value) || value.trading_state !== "SHADOW_ONLY") {
+    throw new Error("Unexpected shadow status");
+  }
+  return value as ShadowStatus;
+}
+
+export async function loadShadowCycles(
+  query = "?limit=50",
+): Promise<{ items: ShadowCycle[]; total: number }> {
+  const value = await readJson(`/api/shadow/cycles${query}`);
+  if (!isRecord(value) || !Array.isArray(value.items) || typeof value.total !== "number") {
+    throw new Error("Unexpected shadow cycles");
+  }
+  return {
+    total: value.total,
+    items: value.items.filter(isRecord).map((item) => item as ShadowCycle),
+  };
+}
+
+export async function loadShadowEquity(
+  limit = 500,
+): Promise<{ items: Array<Record<string, string | number | null>> }> {
+  const value = await readJson(`/api/shadow/equity?limit=${limit}`);
+  if (!isRecord(value) || !Array.isArray(value.items)) {
+    throw new Error("Unexpected shadow equity");
+  }
+  return { items: value.items as Array<Record<string, string | number | null>> };
+}

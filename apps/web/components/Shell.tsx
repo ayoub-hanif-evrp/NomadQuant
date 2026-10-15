@@ -64,6 +64,7 @@ const NAV: NavGroup[] = [
     items: [
       { href: "/agents", label: "Agents", icon: Bot, available: true },
       { href: "/strategies", label: "Risk Policy Lab", icon: ShieldAlert, available: true },
+      { href: "/shadow", label: "Shadow Portfolio", icon: Workflow, available: true },
     ],
   },
 ];

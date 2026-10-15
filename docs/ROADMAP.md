@@ -64,6 +64,10 @@ Measured local benchmarks (`nomadquant-agent benchmark`), live market-fingerprin
 
 Deterministic `RiskEngine` against the internal $100 ledger only. Verdicts are APPROVE / REJECT / INSUFFICIENT_DATA for hypothetical proposals. CLI `nomadquant-risk`, append-only SQLite audit, and a Risk Policy Lab dashboard. No Alpaca order path.
 
+## Phase 6A — daily shadow research cycle (current)
+
+Persistent $100 shadow ledger, `nomadquant-shadow cycle`, next-session-open simulated fills, and Shadow Portfolio dashboard. Still no Alpaca order path. Dry-run execution gateway contracts exist for a later milestone.
+
 ## Phase 5B — paper order gateway (next, separate decision)
 
 Only after risk enforcement is reviewed: an explicitly disabled-by-default Alpaca paper-execution gateway with reconciliation and idempotency. Never given unrestricted LLM tools.

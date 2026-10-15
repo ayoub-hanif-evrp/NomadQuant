@@ -44,6 +44,7 @@ def make_settings(tmp_path: Path, **overrides: object) -> Settings:
         "agents_path": str(tmp_path / "agents.sqlite"),
         "agent_memo_root": str(tmp_path / "agent-memos"),
         "risk_path": str(tmp_path / "risk.sqlite"),
+        "shadow_path": str(tmp_path / "shadow.sqlite"),
     }
     values.update(overrides)
     return Settings(_env_file=None, **values)

@@ -68,6 +68,7 @@ class Settings(BaseSettings):
     agent_memo_root: str = "data/agent-memos"
     agent_benchmark_path: str = "data/agent-benchmarks.sqlite"
     risk_path: str = "data/risk.sqlite"
+    shadow_path: str = "data/shadow.sqlite"
 
     @field_validator("ollama_base_url")
     @classmethod

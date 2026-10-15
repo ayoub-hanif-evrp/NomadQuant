@@ -163,6 +163,15 @@ uv run --no-sync python -c "from nomadquant.agents.cli import main; main(['bench
 
 After `uv sync` (stop the API first if Windows locks the scripts), the same commands work as `uv run nomadquant-agent ...`. Inspect results at `http://127.0.0.1:3000/agents`. Reviews are retrospective and never place orders.
 
+## Shadow portfolio (daily cycle)
+
+```powershell
+uv run --no-sync python -c "from nomadquant.shadow.cli import main; main(['cycle','--mode','dry-run'])"
+uv run --no-sync python -c "from nomadquant.shadow.cli import main; main(['status'])"
+```
+
+Dashboard: `http://127.0.0.1:3000/shadow`. Uses the internal $100 ledger only. No Alpaca orders.
+
 ## Risk Policy Lab (hypothetical only)
 
 ```powershell

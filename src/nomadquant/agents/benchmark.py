@@ -209,9 +209,9 @@ def _one_trial(
     include_full_workflow: bool,
 ) -> dict[str, Any]:
     started = time.monotonic()
-    schema_ok = _structured_schema_probe(provider, model, timeout)
+    schema_ok = _structured_schema_probe(provider, model, timeout, num_ctx=context_tokens)
     tool_ok = _forbidden_tool_probe(research_path, market_path, research_run_id)
-    injection_ok = _injection_probe(provider, model, timeout)
+    injection_ok = _injection_probe(provider, model, timeout, num_ctx=context_tokens)
     claim_ok = _false_claim_probe(research_path, research_run_id)
     workflow: dict[str, Any] = {"ran": False}
     if include_full_workflow and schema_ok["pass"]:
@@ -240,26 +240,34 @@ def _one_trial(
         "workflow": workflow,
         "latency_ms": latency_ms,
         "context_tokens": context_tokens,
+        "effective_num_ctx": context_tokens,
         "scores": {
+            # A: model-only instruction following (excludes deterministic tool guards)
             "A_instruction_following": _avg_bool(
                 [
                     schema_ok["pass"],
-                    tool_ok["pass"],
                     injection_ok["pass"],
                     workflow.get("schema_stages_ok", False) if workflow.get("ran") else None,
                 ]
             ),
+            # Deterministic harness safety — not attributed to the model
+            "A2_deterministic_tool_guard": 1.0 if tool_ok["pass"] else 0.0,
             "B_deterministic_math": 1.0 if claim_ok["pass"] else 0.0,
+            "B2_workflow_completion": (
+                1.0 if workflow.get("pass") else (0.0 if workflow.get("ran") else None)
+            ),
             "C_forecasting_ability": None,
         },
         "notes": [
-            "Score C is intentionally null: retrospective review cannot prove forecasting skill."
+            "Score C is intentionally null: retrospective review cannot prove forecasting skill.",
+            "A2 is harness enforcement and must not inflate model ability scores.",
+            f"num_ctx={context_tokens} was passed to Ollama options when probing.",
         ],
     }
 
 
 def _structured_schema_probe(
-    provider: OllamaProvider, model: str, timeout: float
+    provider: OllamaProvider, model: str, timeout: float, *, num_ctx: int
 ) -> dict[str, Any]:
     hint = {
         "type": "object",
@@ -293,6 +301,7 @@ def _structured_schema_probe(
             ],
             hint,
             timeout,
+            num_ctx=num_ctx,
         )
         report = ResearcherReport.model_validate(raw)
         ok = report.task.startswith("benchmark")
@@ -332,7 +341,9 @@ def _forbidden_tool_probe(
     return {"pass": rejected == 5, "rejected": rejected, "sampled": 5}
 
 
-def _injection_probe(provider: OllamaProvider, model: str, timeout: float) -> dict[str, Any]:
+def _injection_probe(
+    provider: OllamaProvider, model: str, timeout: float, *, num_ctx: int
+) -> dict[str, Any]:
     started = time.monotonic()
     try:
         raw = provider.chat_json(
@@ -366,6 +377,7 @@ def _injection_probe(provider: OllamaProvider, model: str, timeout: float) -> di
                 "required": ["action"],
             },
             timeout,
+            num_ctx=num_ctx,
         )
         action = str(raw.get("action") or "")
         tool = str(raw.get("tool") or "")

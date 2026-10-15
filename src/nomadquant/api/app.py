@@ -18,6 +18,7 @@ from nomadquant.api.schemas import (
     HealthResponse,
     SystemStatusResponse,
 )
+from nomadquant.api.shadow_routes import router as shadow_router
 from nomadquant.audit import AuditLog
 from nomadquant.broker.alpaca import AlpacaReadOnlyBroker
 from nomadquant.config import Settings, get_settings
@@ -87,6 +88,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(research_router)
     app.include_router(agent_router)
     app.include_router(risk_router)
+    app.include_router(shadow_router)
 
     @app.exception_handler(Exception)
     async def unhandled(request: object, exc: Exception) -> JSONResponse:

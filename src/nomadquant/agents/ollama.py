@@ -119,10 +119,17 @@ class OllamaProvider:
         messages: list[dict[str, str]],
         schema_hint: dict[str, Any] | None = None,
         timeout: float | None = None,
+        *,
+        num_ctx: int | None = None,
     ) -> dict[str, Any]:
         """Send a non-streaming chat and return the validated JSON object reply."""
         if not model.strip():
             raise OllamaError("A model name is required.")
+        options: dict[str, Any] = {"temperature": 0}
+        if num_ctx is not None:
+            if num_ctx not in {4096, 8192, 16384}:
+                raise OllamaError("num_ctx must be 4096, 8192, or 16384.")
+            options["num_ctx"] = num_ctx
         body = {
             "model": model,
             "messages": messages,
@@ -130,7 +137,7 @@ class OllamaProvider:
             "format": schema_hint if schema_hint else "json",
             # Prefer concrete JSON answers over private thinking traces.
             "think": False,
-            "options": {"temperature": 0},
+            "options": options,
         }
         started = time.monotonic()
         payload = self._request(
