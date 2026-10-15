@@ -63,7 +63,7 @@ const NAV: NavGroup[] = [
     title: "Future",
     items: [
       { href: "/agents", label: "Agents", icon: Bot, available: true },
-      { href: "/strategies", label: "Risk & Execution", icon: ShieldAlert, available: false },
+      { href: "/strategies", label: "Risk Policy Lab", icon: ShieldAlert, available: true },
     ],
   },
 ];

@@ -25,6 +25,7 @@ _ENV_VARS = (
     "OLLAMA_MODEL",
     "AGENTS_PATH",
     "AGENT_MEMO_ROOT",
+    "RISK_PATH",
 )
 
 
@@ -42,6 +43,7 @@ def make_settings(tmp_path: Path, **overrides: object) -> Settings:
         "research_path": str(tmp_path / "research.sqlite"),
         "agents_path": str(tmp_path / "agents.sqlite"),
         "agent_memo_root": str(tmp_path / "agent-memos"),
+        "risk_path": str(tmp_path / "risk.sqlite"),
     }
     values.update(overrides)
     return Settings(_env_file=None, **values)

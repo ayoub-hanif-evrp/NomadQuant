@@ -7,6 +7,7 @@ budgets are all rejected in code.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import tempfile
 import time
@@ -241,11 +242,18 @@ class GuardedResearchTools:
         name = Path(raw_name).name
         if name != raw_name or not name.endswith(".md") or name.startswith("."):
             raise GuardedToolError("Memo name must be a single .md filename.")
-        text = str(arguments["text"])[:MEMO_TEXT_LIMIT]
+        text = str(arguments["text"])
+        if len(text) > MEMO_TEXT_LIMIT:
+            raise GuardedToolError(
+                f"Memo text exceeds {MEMO_TEXT_LIMIT} characters and was rejected "
+                "(no silent truncation)."
+            )
         self._memo_dir.mkdir(parents=True, exist_ok=True)
         target = (self._memo_dir / name).resolve()
         if target.parent != self._memo_dir:
             raise GuardedToolError("Memo path is outside the agent run directory.")
+        encoded = text.encode("utf-8")
+        digest = hashlib.sha256(encoded).hexdigest()
         handle, temp_name = tempfile.mkstemp(dir=self._memo_dir, prefix=".memo-", suffix=".tmp")
         try:
             with os.fdopen(handle, "w", encoding="utf-8", newline="\n") as stream:
@@ -258,7 +266,9 @@ class GuardedResearchTools:
             raise
         return {
             "path": f"agent-run-{self.agent_run_id}/{name}",
-            "bytes": len(text.encode("utf-8")),
+            "bytes": len(encoded),
+            "sha256": digest,
+            "truncated": False,
         }
 
     # -- audit --------------------------------------------------------------

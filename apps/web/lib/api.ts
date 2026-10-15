@@ -1416,6 +1416,15 @@ export function configString(config: Record<string, unknown>, key: string): stri
   return null;
 }
 
+export type AgentModelDetail = {
+  name: string;
+  digest?: string;
+  size?: number | null;
+  modified_at?: string;
+  family?: string;
+  parameter_size?: string;
+};
+
 export type AgentStatus = {
   ollama: {
     available: boolean;
@@ -1425,13 +1434,27 @@ export type AgentStatus = {
     error?: string;
   };
   configured_model: string;
+  installed_models?: AgentModelDetail[];
   prompt_version: string;
   tool_schema_version: string;
+  benchmark_version?: string;
   label: string;
   tools: string[];
   order_tools_available: false;
   trading_mode: "paper";
   run_count: number;
+};
+
+export type AgentBenchmarkRow = {
+  id: number;
+  created_at: string;
+  model: string;
+  model_digest: string;
+  research_run_id: number;
+  context_tokens: number | null;
+  trial_index: number;
+  metrics: Record<string, unknown>;
+  benchmark_version: string;
 };
 
 export type AgentRunSummary = {
@@ -1499,4 +1522,75 @@ export async function loadAgentRun(id: number): Promise<AgentRunDetail> {
     throw new Error("Unexpected agent run detail");
   }
   return value as AgentRunDetail;
+}
+
+export async function loadAgentBenchmarks(
+  limit = 50,
+): Promise<{ items: AgentBenchmarkRow[]; benchmark_version: string }> {
+  const value = await readJson(`/api/agents/benchmarks?limit=${limit}`);
+  if (!isRecord(value) || !Array.isArray(value.items)) {
+    throw new Error("Unexpected agent benchmarks");
+  }
+  return {
+    benchmark_version: String(value.benchmark_version ?? ""),
+    items: value.items.filter(isRecord).map((item) => item as AgentBenchmarkRow),
+  };
+}
+
+export type RiskStatus = {
+  label: string;
+  is_broker_execution: false;
+  order_submission_enabled: false;
+  allow_order_submission: false;
+  trading_mode: "paper";
+  internal_capital_usd: number;
+  policy_version: string;
+  policy_hash: string;
+  policy: Record<string, unknown>;
+  evaluation_count: number;
+  note: string;
+};
+
+export type RiskEvaluation = {
+  id: number;
+  proposal_id: string;
+  created_at: string;
+  source: string;
+  symbol: string;
+  side: string;
+  quantity: string;
+  verdict: string;
+  reasons: string[];
+  rule_verdicts: Array<Record<string, unknown>>;
+  policy_version: string;
+  policy_hash: string;
+  notional_usd: string | null;
+  projected_cash_usd: string | null;
+  agent_run_id: number | null;
+};
+
+export async function loadRiskStatus(): Promise<RiskStatus> {
+  const value = await readJson("/api/risk/status");
+  if (
+    !isRecord(value) ||
+    value.is_broker_execution !== false ||
+    value.order_submission_enabled !== false ||
+    value.allow_order_submission !== false
+  ) {
+    throw new Error("Risk status violates paper-only locks");
+  }
+  return value as RiskStatus;
+}
+
+export async function loadRiskEvaluations(
+  query = "?limit=50",
+): Promise<{ items: RiskEvaluation[]; total: number }> {
+  const value = await readJson(`/api/risk/evaluations${query}`);
+  if (!isRecord(value) || !Array.isArray(value.items) || typeof value.total !== "number") {
+    throw new Error("Unexpected risk evaluations");
+  }
+  return {
+    total: value.total,
+    items: value.items.filter(isRecord).map((item) => item as RiskEvaluation),
+  };
 }

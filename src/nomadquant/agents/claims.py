@@ -110,9 +110,7 @@ def _check(
     )
 
 
-def _resolve_run_ref(
-    evidence_ref: str, run_id: int, strategy_id: str
-) -> tuple[str, str] | None:
+def _resolve_run_ref(evidence_ref: str, run_id: int, strategy_id: str) -> tuple[str, str] | None:
     """Return (verdict, detail) on failure, else None when the ref targets this run."""
     text = evidence_ref.strip()
     match = _REF_PATTERN.match(text)

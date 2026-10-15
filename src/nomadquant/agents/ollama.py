@@ -62,15 +62,35 @@ class OllamaProvider:
         self._opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect())
 
     def list_models(self, timeout: float = 5.0) -> list[str]:
+        return sorted(item["name"] for item in self.list_model_details(timeout=timeout))
+
+    def list_model_details(self, timeout: float = 5.0) -> list[dict[str, Any]]:
         payload = self._request("GET", "/api/tags", None, timeout)
         models = payload.get("models")
         if not isinstance(models, list):
             raise OllamaResponseError("Ollama /api/tags returned no model list.")
-        names: list[str] = []
+        details: list[dict[str, Any]] = []
         for item in models:
-            if isinstance(item, dict) and isinstance(item.get("name"), str):
-                names.append(item["name"])
-        return sorted(names)
+            if not isinstance(item, dict) or not isinstance(item.get("name"), str):
+                continue
+            details.append(
+                {
+                    "name": item["name"],
+                    "digest": str(item.get("digest") or ""),
+                    "size": item.get("size") if isinstance(item.get("size"), int) else None,
+                    "modified_at": str(item.get("modified_at") or ""),
+                    "family": _model_family(item),
+                    "parameter_size": _model_parameter_size(item),
+                }
+            )
+        return details
+
+    def model_digest(self, model: str, timeout: float = 5.0) -> str:
+        """Return the installed model digest from /api/tags, or empty string."""
+        for item in self.list_model_details(timeout=timeout):
+            if item["name"] == model and item["digest"]:
+                return str(item["digest"])
+        return ""
 
     def health(self, timeout: float = 2.0) -> dict[str, Any]:
         """Never raises. Reports reachability and installed models."""
@@ -169,6 +189,24 @@ class OllamaProvider:
         if not isinstance(parsed, dict):
             raise OllamaResponseError("Ollama returned an unexpected body.")
         return parsed
+
+
+def _model_family(item: dict[str, Any]) -> str:
+    details = item.get("details")
+    if isinstance(details, dict):
+        family = details.get("family")
+        if isinstance(family, str):
+            return family
+    return ""
+
+
+def _model_parameter_size(item: dict[str, Any]) -> str:
+    details = item.get("details")
+    if isinstance(details, dict):
+        size = details.get("parameter_size")
+        if isinstance(size, str):
+            return size
+    return ""
 
 
 def _check_required(parsed: dict[str, Any], schema_hint: dict[str, Any] | None) -> None:

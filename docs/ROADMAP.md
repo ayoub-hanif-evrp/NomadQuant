@@ -52,17 +52,21 @@ Cost accounting charges spread and slippage once. Open timestamps use America/Ne
 
 Cohesive dark trading workstation: Command Center, Market Explorer (real SIP daily candles via TradingView Lightweight Charts), Research Lab (date-aligned Recharts equity/drawdown), Decision Intelligence, searchable Activity with histograms, and controlled TanStack Query refresh. Read-only chart API `GET /api/market-data/bars`.
 
-## Phase 4A — local AI research agents (current)
+## Phase 4A — local AI research agents
 
 Sequential Researcher → Skeptic → Reviewer on one local Ollama model with read-only tools, claim verification, SQLite agent-run history, CLI (`nomadquant-agent`), and an Agents monitoring page. Retrospective reviews only. No broker tools. No autonomous scheduling.
 
-## Phase 4 — risk engine before any paper order
+## Phase 4B — Ollama model benchmarking and agent reliability (current)
 
-Implement `RiskEngine` against the $100 constraint and the limits above. Only after it can reject orders should a paper order gateway exist. The gateway is not given to an agent. Reconciliation and idempotency keys land in SQLite before the first paper submit.
+Measured local benchmarks (`nomadquant-agent benchmark`), live market-fingerprint checkpoint invalidation, memo overflow rejection, and Agents UI inventory / claim / benchmark panels. Recommended daily model is chosen from measured latency and structured-output reliability, not parameter count.
 
-## Phase 5 — research agents, still without a broker tool
+## Phase 5A — independent risk policy lab (current)
 
-Add an agent runner behind the provider abstraction (local Ollama or an OpenAI-compatible gateway). Tools are limited to reading local data, writing notes, and requesting a backtest. The dashboard can show those notes. It still has no button that trades.
+Deterministic `RiskEngine` against the internal $100 ledger only. Verdicts are APPROVE / REJECT / INSUFFICIENT_DATA for hypothetical proposals. CLI `nomadquant-risk`, append-only SQLite audit, and a Risk Policy Lab dashboard. No Alpaca order path.
+
+## Phase 5B — paper order gateway (next, separate decision)
+
+Only after risk enforcement is reviewed: an explicitly disabled-by-default Alpaca paper-execution gateway with reconciliation and idempotency. Never given unrestricted LLM tools.
 
 ## Explicitly out of scope until a separate decision
 

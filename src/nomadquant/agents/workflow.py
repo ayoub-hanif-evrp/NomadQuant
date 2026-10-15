@@ -11,7 +11,7 @@ import json
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any, Protocol, TypeVar
 
@@ -34,6 +34,7 @@ from nomadquant.agents.schemas import (
 )
 from nomadquant.agents.store import AgentStore
 from nomadquant.audit import AuditLog
+from nomadquant.research.fingerprint import dataset_fingerprint
 from nomadquant.research.store import ResearchStore
 from nomadquant.research.tools import ToolError
 
@@ -154,12 +155,22 @@ class _StageMetrics:
 
 
 def compute_fingerprint(
-    *, research_run_id: int, dataset_fingerprint: str, model: str, as_of: str
+    *,
+    research_run_id: int,
+    recorded_dataset_fingerprint: str,
+    live_dataset_fingerprint: str,
+    model: str,
+    model_digest: str,
+    config_digest: str,
+    as_of: str,
 ) -> str:
     material = {
         "research_run_id": research_run_id,
-        "dataset_fingerprint": dataset_fingerprint,
+        "recorded_dataset_fingerprint": recorded_dataset_fingerprint,
+        "live_dataset_fingerprint": live_dataset_fingerprint,
         "model": model,
+        "model_digest": model_digest,
+        "config_digest": config_digest,
         "as_of": as_of,
         "prompt_version": PROMPT_VERSION,
         "tool_schema_version": TOOL_SCHEMA_VERSION,
@@ -167,20 +178,61 @@ def compute_fingerprint(
     return hashlib.sha256(json.dumps(material, sort_keys=True).encode("utf-8")).hexdigest()
 
 
+def live_market_digest(run: dict[str, Any], market_path: str | Path) -> str:
+    """Recompute the market digest for the experiment's symbol/feed/window."""
+    config = run.get("config") or {}
+    symbols = list(config.get("symbols") or [])
+    feed = str(config.get("feed") or "")
+    start_raw = config.get("data_start")
+    end_raw = config.get("data_end")
+    if not symbols or not feed or not start_raw or not end_raw:
+        return ""
+    start = date.fromisoformat(str(start_raw)[:10])
+    end = date.fromisoformat(str(end_raw)[:10])
+    return str(
+        dataset_fingerprint(market_path, symbols=symbols, feed=feed, start=start, end=end)["digest"]
+    )
+
+
+def config_digest(run: dict[str, Any] | None) -> str:
+    if run is None:
+        return ""
+    payload = {
+        "experiment_id": run.get("experiment_id"),
+        "config": run.get("config") or {},
+    }
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
+    ).hexdigest()
+
+
 def plan_review(
-    research_run_id: int, model: str, *, research_path: str | Path
-) -> tuple[str, str, dict[str, Any] | None]:
-    """Return (fingerprint, as_of_iso, research_run) for the current stored inputs."""
+    research_run_id: int,
+    model: str,
+    *,
+    research_path: str | Path,
+    market_path: str | Path,
+    model_digest: str = "",
+) -> tuple[str, str, dict[str, Any] | None, str]:
+    """Return (fingerprint, as_of_iso, research_run, live_dataset_fingerprint)."""
     run = ResearchStore(research_path).get_run(research_run_id)
     as_of = ""
-    dataset = ""
+    recorded = ""
+    live = ""
     if run is not None:
-        dataset = str(run["dataset_fingerprint"])
+        recorded = str(run["dataset_fingerprint"])
         as_of = _as_of_for(run).isoformat()
+        live = live_market_digest(run, market_path)
     fingerprint = compute_fingerprint(
-        research_run_id=research_run_id, dataset_fingerprint=dataset, model=model, as_of=as_of
+        research_run_id=research_run_id,
+        recorded_dataset_fingerprint=recorded,
+        live_dataset_fingerprint=live,
+        model=model,
+        model_digest=model_digest,
+        config_digest=config_digest(run),
+        as_of=as_of,
     )
-    return fingerprint, as_of, run
+    return fingerprint, as_of, run, live
 
 
 def run_research_review(
@@ -205,12 +257,25 @@ def run_research_review(
         raise ValueError("Provide a provider or a chat_fn.")
     chat: ChatProvider = provider if provider is not None else _CallableProvider(_require(chat_fn))
 
-    fingerprint, as_of_iso, research_run = plan_review(
-        research_run_id, model, research_path=research_path
+    model_digest = ""
+    digest_fn = getattr(chat, "model_digest", None)
+    if callable(digest_fn):
+        try:
+            model_digest = str(digest_fn(model) or "")
+        except OllamaError:
+            model_digest = ""
+    fingerprint, as_of_iso, research_run, live_digest = plan_review(
+        research_run_id,
+        model,
+        research_path=research_path,
+        market_path=market_path,
+        model_digest=model_digest,
     )
     config = {
         "research_run_id": research_run_id,
         "model": model,
+        "model_digest": model_digest,
+        "live_dataset_fingerprint": live_digest,
         "max_calls_per_run": max_calls_per_run,
         "max_calls_per_stage": max_calls_per_stage,
     }
@@ -243,6 +308,33 @@ def run_research_review(
             summary=reason,
             result=_result_payload(
                 research_run_id, "research_incomplete", reason, None, [], [], None, []
+            ),
+        )
+
+    recorded_digest = str(research_run["dataset_fingerprint"])
+    if not live_digest or live_digest != recorded_digest:
+        reason = (
+            "Live market dataset fingerprint does not match the recorded research fingerprint; "
+            "agent checkpoint inputs are invalid until the market store matches the experiment."
+        )
+        stage_id = store.start_stage(agent_run_id, "preflight", "system")
+        store.finish_stage(
+            stage_id,
+            status="succeeded",
+            output={
+                "reason": reason,
+                "recorded_dataset_fingerprint": recorded_digest,
+                "live_dataset_fingerprint": live_digest,
+            },
+        )
+        return _finish(
+            store,
+            audit,
+            agent_run_id,
+            verdict="verification_failed",
+            summary=reason,
+            result=_result_payload(
+                research_run_id, "verification_failed", reason, None, [], [], None, []
             ),
         )
 

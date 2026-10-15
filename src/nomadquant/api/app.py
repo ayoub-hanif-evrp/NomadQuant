@@ -11,6 +11,7 @@ from nomadquant.api.agent_routes import router as agent_router
 from nomadquant.api.market_routes import router as market_router
 from nomadquant.api.observe import router as observability_router
 from nomadquant.api.research_routes import router as research_router
+from nomadquant.api.risk_routes import router as risk_router
 from nomadquant.api.schemas import (
     BrokerAccountResponse,
     BrokerPositionsResponse,
@@ -85,6 +86,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(observability_router)
     app.include_router(research_router)
     app.include_router(agent_router)
+    app.include_router(risk_router)
 
     @app.exception_handler(Exception)
     async def unhandled(request: object, exc: Exception) -> JSONResponse:

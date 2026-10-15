@@ -1,0 +1,169 @@
+"""Append-only SQLite history of risk evaluations.
+
+This store never submits orders and never touches a broker. It only records
+what ``RiskEngine.evaluate`` decided, so a human can audit every verdict
+later. A proposal id, once recorded, is never overwritten: ``record`` raises
+if the id already exists. ``RiskEngine.evaluate`` only reads this store (via
+``seen``) for idempotency; callers are responsible for calling ``record``
+after a proposal has been evaluated.
+"""
+
+from __future__ import annotations
+
+import json
+import sqlite3
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+
+from nomadquant.risk.schemas import EvaluationResult, Proposal
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS risk_evaluations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    proposal_id TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL,
+    source TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    side TEXT NOT NULL,
+    quantity TEXT NOT NULL,
+    limit_price TEXT,
+    proposal_as_of TEXT NOT NULL,
+    agent_run_id INTEGER,
+    verdict TEXT NOT NULL,
+    reasons_json TEXT NOT NULL,
+    rule_verdicts_json TEXT NOT NULL,
+    policy_version TEXT NOT NULL,
+    policy_hash TEXT NOT NULL,
+    notional_usd TEXT,
+    projected_cash_usd TEXT,
+    evaluated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS risk_evaluations_created ON risk_evaluations (created_at);
+"""
+
+
+class RiskStoreError(ValueError):
+    """A write would overwrite a previously recorded, immutable evaluation."""
+
+
+class RiskStore:
+    def __init__(self, path: str | Path = "data/risk.sqlite") -> None:
+        self.path = Path(path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with self._connect() as connection:
+            connection.executescript(SCHEMA)
+
+    def seen(self, proposal_id: str) -> bool:
+        """True if this proposal id was already recorded (idempotency check)."""
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT 1 FROM risk_evaluations WHERE proposal_id = ?", (proposal_id,)
+            ).fetchone()
+        return row is not None
+
+    def record(self, proposal: Proposal, result: EvaluationResult) -> int:
+        """Append one evaluation. Raises if the proposal id already exists."""
+        if proposal.id != result.proposal_id:
+            raise RiskStoreError("Proposal id does not match the evaluation result.")
+        if self.seen(proposal.id):
+            raise RiskStoreError(
+                f"Proposal {proposal.id!r} was already recorded and cannot be overwritten."
+            )
+        with self._connect() as connection:
+            try:
+                cursor = connection.execute(
+                    """
+                    INSERT INTO risk_evaluations (
+                        proposal_id, created_at, source, symbol, side, quantity,
+                        limit_price, proposal_as_of, agent_run_id, verdict, reasons_json,
+                        rule_verdicts_json, policy_version, policy_hash, notional_usd,
+                        projected_cash_usd, evaluated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        proposal.id,
+                        _now(),
+                        proposal.source,
+                        proposal.symbol,
+                        proposal.side,
+                        str(proposal.quantity),
+                        None if proposal.limit_price is None else str(proposal.limit_price),
+                        proposal.as_of.isoformat(),
+                        proposal.agent_run_id,
+                        result.verdict,
+                        json.dumps(result.reasons),
+                        json.dumps([rv.model_dump() for rv in result.rule_verdicts], default=str),
+                        result.policy_version,
+                        result.policy_hash,
+                        None if result.notional_usd is None else str(result.notional_usd),
+                        None
+                        if result.projected_cash_usd is None
+                        else str(result.projected_cash_usd),
+                        result.evaluated_at.isoformat(),
+                    ),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise RiskStoreError(
+                    f"Proposal {proposal.id!r} was already recorded and cannot be overwritten."
+                ) from exc
+            return int(cursor.lastrowid or 0)
+
+    def get(self, proposal_id: str) -> dict[str, Any] | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM risk_evaluations WHERE proposal_id = ?", (proposal_id,)
+            ).fetchone()
+        return None if row is None else _row(row)
+
+    def get_by_id(self, evaluation_id: int) -> dict[str, Any] | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM risk_evaluations WHERE id = ?", (evaluation_id,)
+            ).fetchone()
+        return None if row is None else _row(row)
+
+    def list(self, limit: int = 50, offset: int = 0) -> list[dict[str, Any]]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM risk_evaluations ORDER BY id DESC LIMIT ? OFFSET ?",
+                (limit, offset),
+            ).fetchall()
+        return [_row(row) for row in rows]
+
+    def count(self) -> int:
+        with self._connect() as connection:
+            row = connection.execute("SELECT COUNT(*) AS n FROM risk_evaluations").fetchone()
+        return int(row["n"])
+
+    def _connect(self) -> sqlite3.Connection:
+        connection = sqlite3.connect(self.path)
+        connection.row_factory = sqlite3.Row
+        return connection
+
+
+def _now() -> str:
+    return datetime.now(UTC).isoformat()
+
+
+def _row(row: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "id": row["id"],
+        "proposal_id": row["proposal_id"],
+        "created_at": row["created_at"],
+        "source": row["source"],
+        "symbol": row["symbol"],
+        "side": row["side"],
+        "quantity": row["quantity"],
+        "limit_price": row["limit_price"],
+        "proposal_as_of": row["proposal_as_of"],
+        "agent_run_id": row["agent_run_id"],
+        "verdict": row["verdict"],
+        "reasons": json.loads(row["reasons_json"]),
+        "rule_verdicts": json.loads(row["rule_verdicts_json"]),
+        "policy_version": row["policy_version"],
+        "policy_hash": row["policy_hash"],
+        "notional_usd": row["notional_usd"],
+        "projected_cash_usd": row["projected_cash_usd"],
+        "evaluated_at": row["evaluated_at"],
+    }

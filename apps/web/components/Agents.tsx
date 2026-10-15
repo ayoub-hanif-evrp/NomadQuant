@@ -14,7 +14,7 @@ import {
   Skeleton,
   toneFor,
 } from "@/components/ui";
-import { loadAgentRun, loadAgentRuns, loadAgentStatus } from "@/lib/api";
+import { loadAgentBenchmarks, loadAgentRun, loadAgentRuns, loadAgentStatus } from "@/lib/api";
 
 const STAGES = ["researcher", "skeptic", "reviewer"] as const;
 
@@ -32,6 +32,11 @@ export function Agents() {
       const active = items.some((item) => item.status === "running" || item.status === "started");
       return active ? 5_000 : 30_000;
     },
+  });
+  const benchmarks = useQuery({
+    queryKey: ["agent-benchmarks"],
+    queryFn: () => loadAgentBenchmarks(30),
+    refetchInterval: 60_000,
   });
 
   const [selectedId, setSelectedId] = useState<number | null>(null);
@@ -115,13 +120,69 @@ export function Agents() {
         <h2 className="text-sm font-semibold">Start a research review (CLI)</h2>
         <pre className="mt-3 overflow-x-auto rounded-xl border border-[var(--line)] bg-black/30 p-3 font-mono text-[11px] text-[var(--muted)]">
 {`uv run nomadquant-agent status
-uv run nomadquant-agent run --research-run-id 2 --model qwen3.5:9b
+uv run nomadquant-agent run --research-run-id <id> --model qwen3.5:9b
+uv run nomadquant-agent benchmark --models qwen3.5:9b,gemma4:12b --research-run-id <id>
 uv run nomadquant-agent inspect --run-id <agent-run-id>`}
         </pre>
         <p className="mt-2 text-xs text-[var(--muted)]">
           Label: {status.data?.label ?? "retrospective_research_review"}. Prompt{" "}
-          {status.data?.prompt_version ?? "…"} · tools {status.data?.tool_schema_version ?? "…"}.
+          {status.data?.prompt_version ?? "…"} · tools {status.data?.tool_schema_version ?? "…"} ·
+          bench {status.data?.benchmark_version ?? "…"}.
         </p>
+      </Panel>
+
+      {(status.data?.installed_models?.length ?? 0) > 0 ? (
+        <Panel>
+          <h2 className="mb-3 text-sm font-semibold">Installed Ollama models</h2>
+          <ul className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+            {status.data?.installed_models?.map((model) => (
+              <li
+                key={model.name}
+                className="rounded-xl border border-[var(--line)] px-3 py-2 text-sm"
+              >
+                <p className="font-mono text-xs text-[var(--cyan)]">{model.name}</p>
+                <p className="mt-1 text-[11px] text-[var(--muted)]">
+                  {model.parameter_size || model.family || "local"} ·{" "}
+                  {model.digest ? `${model.digest.slice(0, 12)}…` : "digest n/a"}
+                </p>
+              </li>
+            ))}
+          </ul>
+        </Panel>
+      ) : null}
+
+      <Panel>
+        <h2 className="mb-3 text-sm font-semibold">Benchmark history (measured)</h2>
+        {benchmarks.isLoading ? <Skeleton lines={3} /> : null}
+        {(benchmarks.data?.items.length ?? 0) === 0 && !benchmarks.isLoading ? (
+          <EmptyState
+            title="No benchmarks recorded"
+            note="Run nomadquant-agent benchmark against a verified research run. Charts only appear after measured rows exist."
+          />
+        ) : (
+          <ul className="space-y-2 text-sm">
+            {(benchmarks.data?.items ?? []).slice(0, 12).map((row) => {
+              const scores = (row.metrics?.scores ?? {}) as Record<string, unknown>;
+              const latency = row.metrics?.latency_ms;
+              return (
+                <li
+                  key={row.id}
+                  className="flex flex-wrap items-center gap-3 rounded-xl border border-[var(--line)] px-3 py-2"
+                >
+                  <span className="font-mono text-xs">{row.model}</span>
+                  <Badge tone="info">ctx {String(row.context_tokens ?? "—")}</Badge>
+                  <span className="text-[11px] text-[var(--muted)]">
+                    A={String(scores.A_instruction_following ?? "—")} · B=
+                    {String(scores.B_deterministic_math ?? "—")} · C=null
+                  </span>
+                  <span className="ml-auto font-mono text-[11px] text-[var(--muted)]">
+                    {latency != null ? `${latency} ms` : "—"}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        )}
       </Panel>
 
       <div className="grid gap-3 sm:grid-cols-3">
@@ -251,6 +312,66 @@ uv run nomadquant-agent inspect --run-id <agent-run-id>`}
                   })}
                 </div>
               </Panel>
+
+              {detail.data.result ? (
+                <Panel>
+                  <h3 className="mb-3 text-sm font-semibold">Independent verification</h3>
+                  <div className="mb-3 flex flex-wrap gap-2">
+                    <Badge tone="info">{String(detail.data.result.verdict ?? detail.data.verdict)}</Badge>
+                    {detail.data.result.model_verdict ? (
+                      <Badge tone="info">
+                        model said {String(detail.data.result.model_verdict)}
+                      </Badge>
+                    ) : null}
+                  </div>
+                  <ul className="space-y-2 text-sm">
+                    {((detail.data.result.claim_verification as Array<Record<string, unknown>>) ?? []).map(
+                      (item, index) => (
+                        <li
+                          key={index}
+                          className="rounded-xl border border-[var(--line)] px-3 py-2 text-[12px]"
+                        >
+                          <div className="flex items-center gap-2">
+                            <Badge tone={toneFor(String(item.verdict))}>{String(item.verdict)}</Badge>
+                            <span className="font-mono text-[11px]">
+                              {String((item.claim as Record<string, unknown> | undefined)?.name ?? "")}
+                            </span>
+                          </div>
+                          <p className="mt-1 text-[var(--muted)]">{String(item.detail ?? "")}</p>
+                        </li>
+                      ),
+                    )}
+                  </ul>
+                  {Array.isArray(detail.data.result.confirmed_findings) &&
+                  detail.data.result.confirmed_findings.length > 0 ? (
+                    <div className="mt-4">
+                      <p className="text-[10px] uppercase tracking-wide text-[var(--muted)]">
+                        Confirmed findings
+                      </p>
+                      <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-[var(--muted)]">
+                        {(detail.data.result.confirmed_findings as string[]).slice(0, 8).map((line) => (
+                          <li key={line}>{line}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
+                  {Array.isArray(detail.data.result.unresolved_objections) &&
+                  detail.data.result.unresolved_objections.length > 0 ? (
+                    <div className="mt-4">
+                      <p className="text-[10px] uppercase tracking-wide text-[var(--muted)]">
+                        Skeptic / unresolved
+                      </p>
+                      <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-[var(--muted)]">
+                        {(detail.data.result.unresolved_objections as string[])
+                          .slice(0, 8)
+                          .map((line) => (
+                            <li key={line}>{line}</li>
+                          ))}
+                      </ul>
+                    </div>
+                  ) : null}
+                </Panel>
+              ) : null}
 
               <Panel>
                 <h3 className="mb-3 text-sm font-semibold">Tool-call chronology</h3>

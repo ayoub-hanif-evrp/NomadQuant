@@ -7,9 +7,10 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
+from nomadquant.agents.benchmark import BENCHMARK_VERSION, BenchmarkStore
 from nomadquant.agents.constants import PROMPT_VERSION, RUN_LABEL, TOOL_SCHEMA_VERSION
 from nomadquant.agents.guarded_tools import ALLOWED_TOOLS
-from nomadquant.agents.ollama import OllamaProvider
+from nomadquant.agents.ollama import OllamaError, OllamaProvider
 from nomadquant.agents.store import AgentStore
 
 router = APIRouter(prefix="/api/agents")
@@ -28,16 +29,39 @@ def agents_status(request: Request) -> dict[str, Any]:
         settings.ollama_base_url
     )
     store = _store(request)
+    health = provider.health(timeout=1.5)
+    models: list[dict[str, Any]] = []
+    if health["available"]:
+        try:
+            models = provider.list_model_details(timeout=1.5)
+        except OllamaError:
+            models = [{"name": name} for name in health["models"]]
     return {
-        "ollama": provider.health(timeout=1.5),
+        "ollama": health,
         "configured_model": settings.ollama_model,
+        "installed_models": models,
         "prompt_version": PROMPT_VERSION,
         "tool_schema_version": TOOL_SCHEMA_VERSION,
+        "benchmark_version": BENCHMARK_VERSION,
         "label": RUN_LABEL,
         "tools": sorted(ALLOWED_TOOLS),
         "order_tools_available": False,
         "trading_mode": "paper",
         "run_count": 0 if store is None else store.count_runs(),
+    }
+
+
+@router.get("/benchmarks")
+def agent_benchmarks(
+    request: Request,
+    limit: int = Query(default=50, ge=1, le=200),
+) -> dict[str, Any]:
+    path = Path(request.app.state.settings.agent_benchmark_path)
+    if not path.exists():
+        return {"items": [], "benchmark_version": BENCHMARK_VERSION}
+    return {
+        "items": BenchmarkStore(path).list_recent(limit=limit),
+        "benchmark_version": BENCHMARK_VERSION,
     }
 
 

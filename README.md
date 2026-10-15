@@ -51,7 +51,7 @@ npm install
 npm run dev
 ```
 
-The dashboard listens on `http://127.0.0.1:3000` (Command Center, Market Explorer with daily charts, Research Lab, Decision Intelligence, Activity, Runs).
+The dashboard listens on `http://127.0.0.1:3000` (Command Center, Market Explorer, Research Lab, Decision Intelligence, Agents, Risk Policy Lab, Activity, Runs).
 
 Equivalent scripts: `.\scripts\dev-api.ps1` and `.\scripts\dev-web.ps1`.
 
@@ -115,15 +115,17 @@ Pytest warns that Starlette wants `httpx2` and that `websockets.legacy` is depre
 - One pre-registered SPY time-series momentum backtest with independent replay and verification
 - Structured logs that redact configured secrets
 - A premium dark research terminal: interactive SIP daily charts, date-aligned equity/drawdown charts, decision drill-down, activity search/histogram
-- Empty, honest placeholders for agents and risk/execution (not configured)
+- Local Ollama research agents (Researcher → Skeptic → Reviewer), claim checker, agent SQLite history, and benchmark CLI
+- Deterministic Risk Policy Lab against the internal $100 ledger (proposal-only; no order submission)
 
 ## What is not included
 
 - Order placement, cancellation, or liquidation
 - Live trading
-- Dividend-adjusted total-return series, Qlib, DuckDB, Ollama, or a running agent runtime
+- Dividend-adjusted total-return series, Qlib, or DuckDB
 - Autonomous execution or start/pause/stop trading controls
 - Claims of statistical significance or profitability from backtests
+- Paid / remote LLM providers
 
 ## Layout
 
@@ -151,18 +153,28 @@ data/              Local SQLite files (gitignored)
 
 ## Local AI research review
 
-Requires Ollama on `127.0.0.1:11434` and an installed model (preferred on this machine: `qwen3.5:9b`).
+Requires Ollama on `127.0.0.1:11434` and an installed model (recommended daily: `qwen3.5:9b` after local benchmarks).
 
 ```powershell
 uv run --no-sync python -c "from nomadquant.agents.cli import main; main(['status'])"
 uv run --no-sync python -c "from nomadquant.agents.cli import main; main(['run','--research-run-id','2','--model','qwen3.5:9b'])"
+uv run --no-sync python -c "from nomadquant.agents.cli import main; main(['benchmark','--models','qwen3.5:9b,gemma4:12b','--research-run-id','2'])"
 ```
 
 After `uv sync` (stop the API first if Windows locks the scripts), the same commands work as `uv run nomadquant-agent ...`. Inspect results at `http://127.0.0.1:3000/agents`. Reviews are retrospective and never place orders.
 
+## Risk Policy Lab (hypothetical only)
+
+```powershell
+uv run --no-sync python -c "from nomadquant.risk.cli import main; main(['status'])"
+uv run --no-sync python -c "from nomadquant.risk.cli import main; main(['evaluate','--proposal-id','demo-1','--symbol','SPY','--side','buy','--qty','0.01','--price','500'])"
+```
+
+Dashboard: `http://127.0.0.1:3000/strategies`. Verdicts never submit broker orders.
+
 ## Suggested next milestone
 
-Risk engine before any paper order path. Do not grant broker order tools to agents.
+Explicitly reviewed Alpaca paper-execution gateway with risk enforcement still default-disabled. Do not grant broker order tools to agents.
 
 ## License
 

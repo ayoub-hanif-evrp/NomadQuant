@@ -256,8 +256,8 @@ def review(env: Env, provider: FakeProvider, **overrides: Any) -> dict[str, Any]
 
 
 def test_package_exports_and_versions() -> None:
-    assert agents_pkg.PROMPT_VERSION == PROMPT_VERSION == "1.0.0"
-    assert agents_pkg.TOOL_SCHEMA_VERSION == TOOL_SCHEMA_VERSION == "1.0.0"
+    assert agents_pkg.PROMPT_VERSION == PROMPT_VERSION == "1.1.0"
+    assert agents_pkg.TOOL_SCHEMA_VERSION == TOOL_SCHEMA_VERSION == "1.1.0"
     assert "ENGINE" in (agents_pkg.__doc__ or "")
 
 
@@ -457,6 +457,8 @@ def test_memo_is_atomic_scoped_and_rejects_traversal(env: Env) -> None:
     saved = tools.call("save_research_memo", {"name": "note.md", "text": INJECTION})
     target = env.memo_root / "agent-run-7" / "note.md"
     assert saved["path"] == "agent-run-7/note.md"
+    assert saved["truncated"] is False
+    assert saved["sha256"]
     assert target.read_text(encoding="utf-8") == INJECTION
     assert not list((env.memo_root / "agent-run-7").glob(".memo-*"))
     for bad in ("../escape.md", "sub/dir.md", "note.txt", ".hidden.md", "..\\x.md"):
@@ -464,6 +466,30 @@ def test_memo_is_atomic_scoped_and_rejects_traversal(env: Env) -> None:
             tools.call("save_research_memo", {"name": bad, "text": "x"})
     assert not (env.memo_root / "escape.md").exists()
     assert not (env.tmp / "escape.md").exists()
+
+
+def test_memo_rejects_oversized_text_without_truncation(env: Env) -> None:
+    from nomadquant.agents.guarded_tools import MEMO_TEXT_LIMIT
+
+    tools = guarded(env, agent_run_id=8)
+    tools.begin_stage("memo", {"save_research_memo"})
+    huge = "x" * (MEMO_TEXT_LIMIT + 1)
+    with pytest.raises(GuardedToolError, match="rejected"):
+        tools.call("save_research_memo", {"name": "big.md", "text": huge})
+    assert not (env.memo_root / "agent-run-8" / "big.md").exists()
+
+
+def test_live_market_fingerprint_mismatch_fails_preflight(env: Env, monkeypatch: Any) -> None:
+    provider = FakeProvider(happy_script(env))
+
+    def broken_digest(run: dict[str, Any], market_path: str | Path) -> str:
+        return "0" * 64
+
+    monkeypatch.setattr("nomadquant.agents.workflow.live_market_digest", broken_digest)
+    detail = review(env, provider)
+    assert detail["status"] == "succeeded"
+    assert detail["verdict"] == "verification_failed"
+    assert "Live market dataset fingerprint" in detail["summary"]
 
 
 # -- claim checker -------------------------------------------------------------------
@@ -569,8 +595,8 @@ def test_workflow_with_fake_provider_persists_all_stages(env: Env) -> None:
     assert detail["result"]["is_statistical_claim"] is False
     memo = env.memo_root / f"agent-run-{detail['id']}" / f"review-run-{env.run_id}.md"
     assert "Not a trading decision" in memo.read_text(encoding="utf-8")
-    assert detail["prompt_version"] == "1.0.0"
-    assert detail["tool_schema_version"] == "1.0.0"
+    assert detail["prompt_version"] == "1.1.0"
+    assert detail["tool_schema_version"] == "1.1.0"
 
 
 def test_workflow_accepts_injected_chat_fn(env: Env) -> None:

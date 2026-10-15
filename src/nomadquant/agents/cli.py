@@ -5,10 +5,12 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from pathlib import Path
 from typing import Any
 
+from nomadquant.agents.benchmark import BenchmarkStore, run_benchmark
 from nomadquant.agents.constants import PROMPT_VERSION, TOOL_SCHEMA_VERSION
-from nomadquant.agents.ollama import OllamaProvider
+from nomadquant.agents.ollama import OllamaError, OllamaProvider
 from nomadquant.agents.store import AgentStore, AgentStoreError
 from nomadquant.agents.workflow import run_research_review
 from nomadquant.audit import AuditLog
@@ -31,6 +33,22 @@ def main(argv: list[str] | None = None) -> None:
     resume_parser = sub.add_parser("resume", help="Resume an unfinished agent run.")
     resume_parser.add_argument("--run-id", required=True, type=int)
     resume_parser.add_argument("--model", default="", help="Must match the original run.")
+
+    bench = sub.add_parser("benchmark", help="Benchmark installed Ollama models on fixed tasks.")
+    bench.add_argument("--models", required=True, help="Comma-separated Ollama model names.")
+    bench.add_argument("--research-run-id", required=True, type=int)
+    bench.add_argument("--trials", type=int, default=1)
+    bench.add_argument(
+        "--context",
+        type=int,
+        default=8192,
+        help="Recorded context length for this trial (4096/8192/16384).",
+    )
+    bench.add_argument(
+        "--skip-workflow",
+        action="store_true",
+        help="Skip the full three-stage workflow (faster probes only).",
+    )
 
     args = parser.parse_args(argv)
     settings = get_settings()
@@ -59,17 +77,31 @@ def _dispatch(args: argparse.Namespace, settings: Settings) -> int:
             return 1
         model = args.model or existing["model"]
         return _run(settings, int(existing["research_run_id"]), model, args.run_id)
+    if args.command == "benchmark":
+        return _benchmark(settings, args)
     print(f"error: unsupported command {args.command}", file=sys.stderr)
     return 2
 
 
 def _status(settings: Settings) -> int:
+    provider = OllamaProvider(settings.ollama_base_url)
     store = AgentStore(settings.agents_path)
-    health = OllamaProvider(settings.ollama_base_url).health()
+    health = provider.health()
+    models: list[dict[str, Any]] = []
+    if health["available"]:
+        try:
+            models = provider.list_model_details()
+        except OllamaError:
+            models = [{"name": name} for name in health["models"]]
+    benches: list[dict[str, Any]] = []
+    bench_path = Path(settings.agent_benchmark_path)
+    if bench_path.exists():
+        benches = BenchmarkStore(bench_path).list_recent(limit=10)
     _print(
         {
             "ollama": health,
             "configured_model": settings.ollama_model,
+            "installed_models": models,
             "prompt_version": PROMPT_VERSION,
             "tool_schema_version": TOOL_SCHEMA_VERSION,
             "trading_mode": settings.trading_mode,
@@ -80,9 +112,41 @@ def _status(settings: Settings) -> int:
                 }
                 for item in store.list_runs(limit=10)
             ],
+            "recent_benchmarks": benches,
         }
     )
     return 0 if health["available"] else 1
+
+
+def _benchmark(settings: Settings, args: argparse.Namespace) -> int:
+    models = [item.strip() for item in str(args.models).split(",") if item.strip()]
+    if not models:
+        print("error: provide at least one model", file=sys.stderr)
+        return 2
+    if args.context not in {4096, 8192, 16384}:
+        print("error: --context must be 4096, 8192, or 16384", file=sys.stderr)
+        return 2
+    provider = OllamaProvider(settings.ollama_base_url, default_timeout=240.0)
+    try:
+        report = run_benchmark(
+            models=models,
+            research_run_id=args.research_run_id,
+            research_path=settings.research_path,
+            market_path=settings.market_data_path,
+            memo_root=settings.agent_memo_root,
+            agents_path=settings.agents_path,
+            benchmark_path=settings.agent_benchmark_path,
+            audit_path=settings.database_path,
+            provider=provider,
+            trials=max(1, args.trials),
+            context_tokens=args.context,
+            include_full_workflow=not args.skip_workflow,
+        )
+    except OllamaError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    _print(report)
+    return 0
 
 
 def _run(settings: Settings, research_run_id: int, model: str, resume_run_id: int | None) -> int:
@@ -102,7 +166,6 @@ def _run(settings: Settings, research_run_id: int, model: str, resume_run_id: in
     store = AgentStore(settings.agents_path)
     audit = AuditLog(settings.database_path, settings.secret_values)
     try:
-        # A resume with a changed fingerprint or a finished run is refused before any model call.
         detail = run_research_review(
             research_run_id,
             model,
