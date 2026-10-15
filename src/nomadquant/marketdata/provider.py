@@ -1,8 +1,10 @@
 """Point-in-time reads over one stored feed."""
 
-from datetime import datetime
+from datetime import UTC, datetime
 
 from nomadquant.contracts import Bar
+from nomadquant.marketdata.coverage import knowable_sessions
+from nomadquant.marketdata.errors import IncompleteCoverage
 from nomadquant.marketdata.store import MarketStore
 
 
@@ -23,6 +25,18 @@ class SqliteMarketDataProvider:
         as_of: datetime,
     ) -> list[Bar]:
         self._store.require_symbols(symbols, self.feed)
+        cutoff = as_of if as_of.tzinfo is not None else as_of.replace(tzinfo=UTC)
+        expected = knowable_sessions(start, end, cutoff)
+        for symbol in symbols:
+            stored = self._store.sessions(symbol, self.feed)
+            missing = [session for session in expected if session not in stored]
+            if missing:
+                sample = ", ".join(session.isoformat() for session in missing[:5])
+                raise IncompleteCoverage(
+                    f"{symbol} {self.feed} is missing {len(missing)} knowable sessions, "
+                    f"including {sample}. The information cutoff did not withhold them, "
+                    "and missing sessions were not invented."
+                )
         rows = self._store.bars(symbols, self.feed, start, end, as_of)
         return [
             Bar(

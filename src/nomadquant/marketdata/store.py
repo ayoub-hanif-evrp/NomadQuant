@@ -125,6 +125,7 @@ class MarketStore:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as connection:
             connection.executescript(SCHEMA)
+            _migrate(connection)
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.path)
@@ -158,6 +159,8 @@ class MarketStore:
                     inserted += 1
                 elif row["content_hash"] == stored.content_hash:
                     unchanged += 1
+                elif _revision_exists(connection, stored):
+                    unchanged += 1
                 else:
                     connection.execute(
                         """
@@ -174,7 +177,7 @@ class MarketStore:
                             stored.timeframe,
                             stored.adjustment,
                             stored.provider,
-                            _iso(datetime.now(UTC)),
+                            _iso(stored.first_retrieved_at),
                             stored.content_hash,
                             str(stored.open),
                             str(stored.high),
@@ -298,6 +301,21 @@ class MarketStore:
             row = connection.execute("SELECT COUNT(*) AS n FROM bar_revisions").fetchone()
         return int(row["n"]) if row is not None else 0
 
+    def sessions(self, symbol: str, feed: str) -> set[date]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT session_date FROM bars WHERE symbol = ? AND feed = ?",
+                (symbol, feed),
+            ).fetchall()
+        return {date.fromisoformat(row["session_date"]) for row in rows}
+
+    def latest_run(self) -> sqlite3.Row | None:
+        with self._connect() as connection:
+            rows: Sequence[sqlite3.Row] = connection.execute(
+                "SELECT * FROM import_runs ORDER BY id DESC LIMIT 1"
+            ).fetchall()
+        return rows[0] if rows else None
+
     def last_success(self) -> sqlite3.Row | None:
         with self._connect() as connection:
             rows: Sequence[sqlite3.Row] = connection.execute(
@@ -406,6 +424,39 @@ def _stored(row: sqlite3.Row) -> StoredBar:
         available_at=datetime.fromisoformat(row["available_at"]),
         first_retrieved_at=datetime.fromisoformat(row["first_retrieved_at"]),
         content_hash=row["content_hash"],
+    )
+
+
+def _revision_exists(connection: sqlite3.Connection, bar: StoredBar) -> bool:
+    row = connection.execute(
+        """
+        SELECT 1 FROM bar_revisions
+        WHERE symbol = ? AND session_date = ? AND feed = ?
+          AND timeframe = ? AND adjustment = ? AND provider = ?
+          AND content_hash = ?
+        """,
+        (*_key(bar), bar.content_hash),
+    ).fetchone()
+    return row is not None
+
+
+def _migrate(connection: sqlite3.Connection) -> None:
+    connection.execute(
+        """
+        DELETE FROM bar_revisions
+        WHERE id NOT IN (
+            SELECT MIN(id) FROM bar_revisions
+            GROUP BY symbol, session_date, feed, timeframe, adjustment, provider, content_hash
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS bar_revisions_identity
+        ON bar_revisions (
+            symbol, session_date, feed, timeframe, adjustment, provider, content_hash
+        )
+        """
     )
 
 

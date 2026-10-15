@@ -22,7 +22,7 @@ Alpaca's SDK returns OHLC as binary floating point. NomadQuant converts that tex
 
 ## Feeds
 
-The canonical research feed is consolidated SIP when the account can read it. Alpaca documents that historical SIP can be queried without the paid subscription outside a recent restricted window. The sync command therefore stops at the latest completed session, which is older than that window once 16:30 New York has passed.
+The canonical research feed is consolidated SIP when the account can read it. Alpaca withholds roughly the latest 15 minutes of SIP from unpaid historical queries. NomadQuant keeps a 30-minute margin. A request end is the earlier of the next UTC midnight after the session and that margin before the current time, so the end is never in the future and never inside the recent SIP window. The default end date is the latest NYSE session that is already model-available and still satisfies that bound. An explicit `--end` that cannot be requested safely is rejected before any call. `StockBarsRequest.asof` is not used as the information cutoff.
 
 If SIP returns an authorization failure, the command stops and tells you to rerun with `--feed iex`. It does not switch feeds by itself. IEX rows and SIP rows can both exist in the database, but a read is bound to one feed. IEX is one exchange's trades, not consolidated US volume. Do not treat an IEX series as the same sample as SIP.
 
@@ -42,7 +42,7 @@ Modeled availability is 16:30 America/New_York on the session date, stored in UT
 
 ## Revisions
 
-The unique key is symbol, session date, feed, timeframe, adjustment, and provider. Repeating an import leaves an identical row in place. A later download with different OHLCV is appended to `bar_revisions` and does not replace the original. Import runs record start and finish, symbols, feed, row counts, warnings, and an error code.
+The unique key is symbol, session date, feed, timeframe, adjustment, and provider. Repeating an import leaves an identical row in place. A later download with different OHLCV is appended to `bar_revisions` once and does not replace the original. Importing that same revised bar again does not create another revision row. `first_retrieved_at` is the time that download returned, not the moment the import job started. Import runs record start and finish, symbols, feed, the requested window, row counts, warnings, and an error code. A run is `success` only when every requested symbol has every NYSE session in that window.
 
 A failed chunk is not written. Chunks that already committed stay. Network and rate-limit errors are retried with bounded exponential backoff. Authorization failures are not retried.
 
@@ -52,7 +52,7 @@ From the repository root in PowerShell, after `uv sync --all-groups` and a paper
 
 ```powershell
 uv run nomadquant-data sync --symbols SPY,QQQ --start 2018-01-01 --feed sip
-uv run nomadquant-data report
+uv run nomadquant-data report --symbols SPY,QQQ --start 2024-01-02 --end 2024-02-29 --feed sip
 ```
 
 `--feed` defaults to `sip` and the command prints that choice. Omit `--end` to use the latest NYSE session whose modeled availability is already at or before the current time. An explicit end on a weekend, a holiday, or a session that has not reached 16:30 New York is rejected before any request.

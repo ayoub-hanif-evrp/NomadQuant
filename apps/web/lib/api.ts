@@ -54,9 +54,12 @@ export type SymbolCoverage = {
   symbol: string;
   feed: string;
   bar_count: number;
-  earliest_session: string;
-  latest_session: string;
+  earliest_session: string | null;
+  latest_session: string | null;
   gap_count: number;
+  missing_start: number;
+  missing_middle: number;
+  missing_end: number;
 };
 
 export type MarketDataStatus = {
@@ -65,9 +68,13 @@ export type MarketDataStatus = {
   earliest_session: string | null;
   latest_session: string | null;
   bar_count: number;
+  requested_start: string | null;
+  requested_end: string | null;
+  requested_feed: string | null;
   coverage: SymbolCoverage[];
   last_successful_ingestion: string | null;
   warnings: string[];
+  coverage_complete: boolean;
   suitable_for_research: boolean;
   caveat: string;
 };
@@ -238,9 +245,12 @@ export function parseMarketDataStatus(value: unknown): MarketDataStatus {
       typeof item.symbol !== "string" ||
       typeof item.feed !== "string" ||
       typeof item.bar_count !== "number" ||
-      typeof item.earliest_session !== "string" ||
-      typeof item.latest_session !== "string" ||
-      typeof item.gap_count !== "number"
+      typeof item.gap_count !== "number" ||
+      typeof item.missing_start !== "number" ||
+      typeof item.missing_middle !== "number" ||
+      typeof item.missing_end !== "number" ||
+      !isOptionalString(item.earliest_session) ||
+      !isOptionalString(item.latest_session)
     ) {
       throw new Error("Unexpected coverage field");
     }
@@ -251,12 +261,19 @@ export function parseMarketDataStatus(value: unknown): MarketDataStatus {
       earliest_session: item.earliest_session,
       latest_session: item.latest_session,
       gap_count: item.gap_count,
+      missing_start: item.missing_start,
+      missing_middle: item.missing_middle,
+      missing_end: item.missing_end,
     };
   });
   if (
     typeof value.bar_count !== "number" ||
+    typeof value.coverage_complete !== "boolean" ||
     typeof value.suitable_for_research !== "boolean" ||
-    typeof value.caveat !== "string"
+    typeof value.caveat !== "string" ||
+    !isOptionalString(value.requested_start) ||
+    !isOptionalString(value.requested_end) ||
+    !isOptionalString(value.requested_feed)
   ) {
     throw new Error("Unexpected market data summary");
   }
@@ -264,9 +281,9 @@ export function parseMarketDataStatus(value: unknown): MarketDataStatus {
   const latest = value.latest_session;
   const last = value.last_successful_ingestion;
   if (
-    (earliest !== null && typeof earliest !== "string") ||
-    (latest !== null && typeof latest !== "string") ||
-    (last !== null && typeof last !== "string")
+    !isOptionalString(earliest) ||
+    !isOptionalString(latest) ||
+    !isOptionalString(last)
   ) {
     throw new Error("Unexpected market data dates");
   }
@@ -276,12 +293,20 @@ export function parseMarketDataStatus(value: unknown): MarketDataStatus {
     earliest_session: earliest,
     latest_session: latest,
     bar_count: value.bar_count,
+    requested_start: value.requested_start,
+    requested_end: value.requested_end,
+    requested_feed: value.requested_feed,
     coverage,
     last_successful_ingestion: last,
     warnings: readStringList(value.warnings, "warnings"),
+    coverage_complete: value.coverage_complete,
     suitable_for_research: value.suitable_for_research,
     caveat: value.caveat,
   };
+}
+
+function isOptionalString(value: unknown): value is string | null {
+  return value === null || typeof value === "string";
 }
 
 export async function loadMarketData(): Promise<MarketDataStatus> {

@@ -18,9 +18,11 @@ The session calendar is `exchange-calendars` XNYS (Apache-2.0). Weekends and NYS
 
 ## Gaps and revisions
 
-After import, the report compares stored session dates with XNYS sessions between the earliest and latest stored date for that symbol and feed. Missing sessions are warnings. They stay missing.
+After import, the report compares stored session dates with XNYS sessions in the requested window, separately for each symbol and feed. A gap at the start, in the middle, or at the end all count. A continuous block of stored days is not treated as complete when the request was longer than that block. Missing sessions stay missing.
 
-A repeated download that changes OHLCV increments the revision table. The original row remains the one readers see. `suitable_for_research` is false when the database is empty, when any symbol/feed has a gap, or when any revision is present. That flag means "no blocking quality warning in this local file." It does not mean the series is a total-return index or a verified historical archive.
+`suitable_for_research` is true only when that requested window is fully present and no conflicting revision is unresolved. A later read through `MarketDataProvider.get_bars` raises if a knowable session in the caller's window is absent. A session withheld because the cutoff is before 16:30 New York is not reported as missing.
+
+A repeated download that changes OHLCV records one revision. Importing that same revised bar again does not add another copy. The original row remains the one readers see, and the revision keeps the timestamp of the download that first observed it. The flag does not mean the series is a total-return index or a verified historical archive.
 
 ## What the report cannot prove
 

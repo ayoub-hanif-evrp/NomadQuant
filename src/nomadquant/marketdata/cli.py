@@ -6,7 +6,7 @@ from datetime import UTC, date, datetime
 
 from nomadquant.config import Settings, get_settings
 from nomadquant.marketdata.alpaca_bars import AlpacaDailyBars
-from nomadquant.marketdata.availability import latest_completed_session
+from nomadquant.marketdata.availability import latest_safe_session
 from nomadquant.marketdata.errors import MarketDataError
 from nomadquant.marketdata.report import market_data_status
 from nomadquant.marketdata.store import MarketStore
@@ -24,6 +24,10 @@ def main(argv: list[str] | None = None) -> None:
     sync.add_argument("--database", default=None)
     report = sub.add_parser("report", help="Validate the local database without downloading.")
     report.add_argument("--database", default=None)
+    report.add_argument("--symbols", default=None)
+    report.add_argument("--start", default=None)
+    report.add_argument("--end", default=None)
+    report.add_argument("--feed", choices=["sip", "iex"], default=None)
     args = parser.parse_args(argv)
     try:
         settings = get_settings()
@@ -32,7 +36,15 @@ def main(argv: list[str] | None = None) -> None:
         raise SystemExit(2) from None
     database = args.database or settings.market_data_path
     if args.command == "report":
-        _print_status(database)
+        _print_status(
+            database,
+            start=None if args.start is None else date.fromisoformat(args.start),
+            end=None if args.end is None else date.fromisoformat(args.end),
+            symbols=None
+            if args.symbols is None
+            else [part.strip().upper() for part in args.symbols.split(",") if part.strip()],
+            feed=args.feed,
+        )
         return
     _sync(settings, database, args.symbols, args.start, args.end, args.feed)
 
@@ -56,7 +68,7 @@ def _sync(
         raise SystemExit(2)
     symbols = [part.strip().upper() for part in symbols_text.split(",") if part.strip()]
     start = date.fromisoformat(start_text)
-    end = date.fromisoformat(end_text) if end_text else latest_completed_session(datetime.now(UTC))
+    end = date.fromisoformat(end_text) if end_text else latest_safe_session(datetime.now(UTC), feed)
     print(f"feed={feed} adjustment=raw timeframe=1Day symbols={','.join(symbols)}")
     print(f"window={start.isoformat()}..{end.isoformat()} database={database}")
     if feed == "sip":
@@ -78,16 +90,28 @@ def _sync(
     _print_status(database)
 
 
-def _print_status(database: str) -> None:
-    status = market_data_status(database)
-    print(f"bars={status.bar_count} feeds={','.join(status.feeds) or 'none'}")
-    print(f"sessions={status.earliest_session}..{status.latest_session}")
+def _print_status(
+    database: str,
+    start: date | None = None,
+    end: date | None = None,
+    symbols: list[str] | None = None,
+    feed: str | None = None,
+) -> None:
+    status = market_data_status(database, start=start, end=end, symbols=symbols, feed=feed)
+    print(
+        f"requested={status.requested_start}..{status.requested_end} "
+        f"feed={status.requested_feed or 'none'}"
+    )
+    print(f"bars={status.bar_count} stored={status.earliest_session}..{status.latest_session}")
     print(f"last_success={status.last_successful_ingestion}")
+    print(f"coverage_complete={status.coverage_complete}")
     print(f"suitable_for_research={status.suitable_for_research}")
     for item in status.coverage:
         print(
             f"{item.symbol} {item.feed} rows={item.bar_count} "
-            f"{item.earliest_session}..{item.latest_session} gaps={item.gap_count}"
+            f"{item.earliest_session}..{item.latest_session} "
+            f"missing_start={item.missing_start} missing_middle={item.missing_middle} "
+            f"missing_end={item.missing_end}"
         )
     for warning in status.warnings:
         print(f"warning: {warning}")

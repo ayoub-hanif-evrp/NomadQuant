@@ -26,3 +26,7 @@ class InvalidBar(MarketDataError):
 
 class MissingMarketData(MarketDataError):
     """A requested symbol has no stored bars for the selected feed."""
+
+
+class IncompleteCoverage(MarketDataError):
+    """Knowable sessions in the requested window are absent from the store."""

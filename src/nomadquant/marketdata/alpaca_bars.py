@@ -8,6 +8,7 @@ from alpaca.data.historical.stock import StockHistoricalDataClient
 from alpaca.data.requests import StockBarsRequest
 from alpaca.data.timeframe import TimeFrame
 
+from nomadquant.marketdata.availability import historical_request_end
 from nomadquant.marketdata.errors import MarketDataError, SipNotEntitled
 from nomadquant.marketdata.validate import (
     ADJUSTMENT,
@@ -57,20 +58,28 @@ class FetchedBar:
 class AlpacaDailyBars:
     """Downloads one feed. SIP and IEX are never merged by this client."""
 
-    def __init__(self, api_key: str, secret_key: str, sleeper: Any = None) -> None:
+    def __init__(
+        self,
+        api_key: str,
+        secret_key: str,
+        sleeper: Any = None,
+        clock: Any = None,
+    ) -> None:
         self._client = StockHistoricalDataClient(
             api_key,
             secret_key,
             url_override=DATA_HOST,
         )
         self._sleep = sleeper if callable(sleeper) else _sleep
+        self._clock = clock if callable(clock) else lambda: datetime.now(UTC)
 
     def fetch(self, symbols: list[str], start: date, end: date, feed: str) -> list[FetchedBar]:
+        now = self._clock()
         request = StockBarsRequest(
             symbol_or_symbols=symbols,
             timeframe=TimeFrame.Day,
             start=datetime(start.year, start.month, start.day, tzinfo=UTC),
-            end=datetime(end.year, end.month, end.day, 23, 59, 59, tzinfo=UTC),
+            end=historical_request_end(end, now, feed),
             adjustment=Adjustment.RAW,
             feed=_feed(feed),
         )

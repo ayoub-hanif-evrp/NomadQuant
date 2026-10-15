@@ -90,7 +90,7 @@ function Ready({ status }: { status: MarketDataStatus }) {
         <article className="rounded-xl border border-[#2a3646] bg-[#151b23] p-5">
           <h2 className="text-xs font-semibold tracking-wide text-[#93a1b5]">RESEARCH USE</h2>
           <p className="mt-3 text-lg font-semibold">
-            {status.suitable_for_research ? "No blocking quality warnings" : "Not ready"}
+            {status.suitable_for_research ? "Requested window is complete" : "Not ready"}
           </p>
         </article>
       </section>
@@ -103,14 +103,17 @@ function Ready({ status }: { status: MarketDataStatus }) {
           <ul className="mt-3 space-y-2 text-sm">
             {status.coverage.map((item) => (
               <li key={`${item.symbol}-${item.feed}`}>
-                {item.symbol} {item.feed}: {item.bar_count} bars, {item.earliest_session} to{" "}
-                {item.latest_session}, gaps {item.gap_count}
+                {item.symbol} {item.feed}: {item.bar_count} bars, {item.earliest_session ?? "none"}{" "}
+                to {item.latest_session ?? "none"}. Missing start {item.missing_start}, middle{" "}
+                {item.missing_middle}, end {item.missing_end}.
               </li>
             ))}
           </ul>
         )}
         <p className="mt-4 text-sm text-[#93a1b5]">
-          Last successful ingestion: {status.last_successful_ingestion ?? "none"}
+          Requested window: {status.requested_start ?? "none"} to {status.requested_end ?? "none"} (
+          {status.requested_feed ?? "no feed"}). Last successful ingestion:{" "}
+          {status.last_successful_ingestion ?? "none"}.
         </p>
       </section>
 

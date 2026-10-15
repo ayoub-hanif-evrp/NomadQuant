@@ -1,15 +1,22 @@
 """Offline daily-bar tests. No credentials and no network."""
 
-from datetime import UTC, date, datetime
+import sqlite3
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import pytest
 
 from nomadquant.marketdata.alpaca_bars import AlpacaDailyBars, FetchedBar
-from nomadquant.marketdata.availability import modeled_available_at, session_date_from_timestamp
+from nomadquant.marketdata.availability import (
+    latest_safe_session,
+    modeled_available_at,
+    session_bar_timestamp,
+    session_date_from_timestamp,
+)
 from nomadquant.marketdata.calendar import is_early_close, is_session
 from nomadquant.marketdata.cli import main
 from nomadquant.marketdata.errors import (
+    IncompleteCoverage,
     IncompleteSession,
     InvalidBar,
     MarketDataError,
@@ -17,6 +24,7 @@ from nomadquant.marketdata.errors import (
     SipNotEntitled,
 )
 from nomadquant.marketdata.provider import SqliteMarketDataProvider
+from nomadquant.marketdata.report import market_data_status
 from nomadquant.marketdata.store import MarketStore
 from nomadquant.marketdata.sync import sync_daily_bars
 from tests.conftest import make_settings
@@ -96,6 +104,7 @@ def test_repeat_import_is_idempotent(tmp_path: Path) -> None:
 def test_revised_bar_is_kept_beside_the_original(tmp_path: Path) -> None:
     store = MarketStore(tmp_path / "market.sqlite")
     _sync(store, [_bar(close=100)])
+    observed = datetime(2024, 8, 2, 15, tzinfo=UTC)
     sync_daily_bars(
         store,
         lambda symbols, start, end, requested: [_bar(close=110)],
@@ -104,6 +113,7 @@ def test_revised_bar_is_kept_beside_the_original(tmp_path: Path) -> None:
         date(2024, 1, 2),
         "sip",
         now=NOW,
+        retrieved_at=lambda: observed,
     )
     stored = store.bars(
         ["SPY"],
@@ -114,6 +124,33 @@ def test_revised_bar_is_kept_beside_the_original(tmp_path: Path) -> None:
     )
     assert str(stored[0].close) == "100"
     assert store.conflict_count() == 1
+    sync_daily_bars(
+        store,
+        lambda symbols, start, end, requested: [_bar(close=110)],
+        ["SPY"],
+        date(2024, 1, 2),
+        date(2024, 1, 2),
+        "sip",
+        now=NOW,
+        retrieved_at=lambda: observed,
+    )
+    again = datetime(2024, 8, 3, 15, tzinfo=UTC)
+    sync_daily_bars(
+        store,
+        lambda symbols, start, end, requested: [_bar(close=110)],
+        ["SPY"],
+        date(2024, 1, 2),
+        date(2024, 1, 2),
+        "sip",
+        now=NOW,
+        retrieved_at=lambda: again,
+    )
+    assert store.conflict_count() == 1
+    with sqlite3.connect(tmp_path / "market.sqlite") as connection:
+        row = connection.execute("SELECT COUNT(*), MIN(observed_at) FROM bar_revisions").fetchone()
+    assert row is not None
+    assert row[0] == 1
+    assert row[1] == observed.isoformat()
 
 
 def test_inconsistent_ohlc_is_rejected() -> None:
@@ -271,13 +308,13 @@ def test_missing_symbol_is_not_fabricated(tmp_path: Path) -> None:
             datetime(2024, 1, 5, tzinfo=UTC),
             NOW,
         )
-    rows = provider.get_bars(
-        ["SPY"],
-        datetime(2024, 1, 1, tzinfo=UTC),
-        datetime(2024, 1, 5, tzinfo=UTC),
-        NOW,
-    )
-    assert [row.session_date for row in rows] == [date(2024, 1, 2), date(2024, 1, 4)]
+    with pytest.raises(IncompleteCoverage, match="not invented"):
+        provider.get_bars(
+            ["SPY"],
+            datetime(2024, 1, 1, tzinfo=UTC),
+            datetime(2024, 1, 5, tzinfo=UTC),
+            NOW,
+        )
     assert store.gaps("SPY", "sip") == [date(2024, 1, 3)]
 
 
@@ -328,6 +365,171 @@ def test_report_command_stays_offline(
     captured = capsys.readouterr()
     assert "bars=0" in captured.out
     assert "suitable_for_research=False" in captured.out
+
+
+def test_retrieval_time_is_not_the_job_start(tmp_path: Path) -> None:
+    store = MarketStore(tmp_path / "market.sqlite")
+    retrieved = datetime(2024, 8, 1, 16, tzinfo=UTC)
+    sync_daily_bars(
+        store,
+        lambda symbols, start, end, requested: [_bar()],
+        ["SPY"],
+        date(2024, 1, 2),
+        date(2024, 1, 2),
+        "sip",
+        now=NOW,
+        retrieved_at=lambda: retrieved,
+    )
+    rows = store.bars(
+        ["SPY"],
+        "sip",
+        datetime(2024, 1, 1, tzinfo=UTC),
+        datetime(2024, 1, 3, tzinfo=UTC),
+        NOW,
+    )
+    assert rows[0].first_retrieved_at == retrieved
+    assert rows[0].first_retrieved_at != NOW
+
+
+def test_short_span_is_not_complete_for_a_longer_request(tmp_path: Path) -> None:
+    store = MarketStore(tmp_path / "market.sqlite")
+    short = [_bar(session=date(2024, 1, day)) for day in (2, 3, 4, 5)]
+    sync_daily_bars(
+        store,
+        lambda symbols, start, end, requested: short,
+        ["SPY"],
+        date(2024, 1, 2),
+        date(2024, 1, 5),
+        "sip",
+        now=NOW,
+    )
+    narrow = market_data_status(str(store.path))
+    wide = market_data_status(
+        str(store.path),
+        start=date(2018, 1, 2),
+        end=date(2024, 1, 5),
+        symbols=["SPY"],
+        feed="sip",
+    )
+    assert narrow.coverage_complete is True
+    assert narrow.suitable_for_research is True
+    assert wide.suitable_for_research is False
+    assert wide.coverage[0].missing_start > 0
+    assert wide.coverage[0].missing_end == 0
+
+
+def test_missing_edges_and_middle_are_reported(tmp_path: Path) -> None:
+    store = MarketStore(tmp_path / "market.sqlite")
+    result = sync_daily_bars(
+        store,
+        lambda symbols, start, end, requested: [
+            _bar(session=date(2024, 1, 2)),
+            _bar(session=date(2024, 1, 4)),
+        ],
+        ["SPY"],
+        date(2024, 1, 2),
+        date(2024, 1, 5),
+        "sip",
+        now=NOW,
+    )
+    assert result.status == "incomplete"
+    status = market_data_status(str(store.path))
+    item = status.coverage[0]
+    assert item.missing_start == 0
+    assert item.missing_middle == 1
+    assert item.missing_end == 1
+    assert status.suitable_for_research is False
+
+
+def test_missing_opening_sessions_are_not_hidden(tmp_path: Path) -> None:
+    store = MarketStore(tmp_path / "market.sqlite")
+    sync_daily_bars(
+        store,
+        lambda symbols, start, end, requested: [
+            _bar(session=date(2024, 1, 4)),
+            _bar(session=date(2024, 1, 5)),
+        ],
+        ["SPY"],
+        date(2024, 1, 2),
+        date(2024, 1, 5),
+        "sip",
+        now=NOW,
+    )
+    item = market_data_status(str(store.path)).coverage[0]
+    assert item.missing_start == 2
+    assert item.missing_middle == 0
+    assert item.missing_end == 0
+
+
+def test_qqq_gap_does_not_make_spy_complete_window_ready(tmp_path: Path) -> None:
+    store = MarketStore(tmp_path / "market.sqlite")
+    sync_daily_bars(
+        store,
+        lambda symbols, start, end, requested: [_bar(symbol="SPY")],
+        ["SPY", "QQQ"],
+        date(2024, 1, 2),
+        date(2024, 1, 2),
+        "sip",
+        now=NOW,
+    )
+    status = market_data_status(str(store.path))
+    by_symbol = {item.symbol: item for item in status.coverage}
+    assert by_symbol["SPY"].gap_count == 0
+    assert by_symbol["QQQ"].gap_count == 1
+    assert status.suitable_for_research is False
+    with pytest.raises(MissingMarketData):
+        SqliteMarketDataProvider(store, "sip").get_bars(
+            ["QQQ"],
+            datetime(2024, 1, 1, tzinfo=UTC),
+            datetime(2024, 1, 3, tzinfo=UTC),
+            NOW,
+        )
+
+
+def test_sip_request_end_stays_before_the_recent_window() -> None:
+    captured: dict[str, object] = {}
+
+    class _Capture:
+        def get_stock_bars(self, request: object) -> object:
+            captured["end"] = getattr(request, "end", None)
+            captured["asof"] = getattr(request, "asof", None)
+            return _BarSet()
+
+    moment = datetime(2024, 3, 11, 21, tzinfo=UTC)
+    client = AlpacaDailyBars("not-a-key", "not-a-secret", clock=lambda: moment)
+    client._client = _Capture()
+    client.fetch(["SPY"], date(2024, 3, 11), date(2024, 3, 11), "sip")
+    end = captured["end"]
+    assert isinstance(end, datetime)
+    ceiling = (moment - timedelta(minutes=30)).replace(tzinfo=None)
+    bar_time = session_bar_timestamp(date(2024, 3, 11)).replace(tzinfo=None)
+    assert end <= ceiling
+    assert end > bar_time
+    assert end != datetime(2024, 3, 11, 23, 59, 59)
+    assert captured["asof"] is None
+
+
+def test_too_recent_sip_end_is_rejected_before_the_request() -> None:
+    calls = {"count": 0}
+
+    class _Counting:
+        def get_stock_bars(self, request: object) -> object:
+            calls["count"] += 1
+            return _BarSet()
+
+    moment = session_bar_timestamp(date(2024, 1, 2)) + timedelta(minutes=10)
+    client = AlpacaDailyBars("not-a-key", "not-a-secret", clock=lambda: moment)
+    client._client = _Counting()
+    with pytest.raises(IncompleteSession, match="too recent"):
+        client.fetch(["SPY"], date(2024, 1, 2), date(2024, 1, 2), "sip")
+    assert calls["count"] == 0
+
+
+def test_default_session_skips_an_open_market_day() -> None:
+    opening = datetime(2024, 3, 11, 13, 30, tzinfo=UTC)
+    after_close = datetime(2024, 3, 11, 21, tzinfo=UTC)
+    assert latest_safe_session(opening, "sip") == date(2024, 3, 8)
+    assert latest_safe_session(after_close, "sip") == date(2024, 3, 11)
 
 
 def _bar_unchecked(low: float) -> FetchedBar:

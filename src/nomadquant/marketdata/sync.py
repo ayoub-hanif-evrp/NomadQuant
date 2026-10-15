@@ -5,8 +5,9 @@ from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 
 from nomadquant.marketdata.alpaca_bars import FetchedBar, year_chunks
-from nomadquant.marketdata.availability import modeled_available_at
-from nomadquant.marketdata.calendar import is_early_close, is_session
+from nomadquant.marketdata.availability import historical_request_end, modeled_available_at
+from nomadquant.marketdata.calendar import is_early_close, is_session, sessions_between
+from nomadquant.marketdata.coverage import classify_missing
 from nomadquant.marketdata.errors import IncompleteSession, InvalidBar, MarketDataError
 from nomadquant.marketdata.store import MarketStore, StoredBar, WriteCounts, content_hash
 
@@ -32,29 +33,31 @@ def sync_daily_bars(
     end: date,
     feed: str,
     now: datetime | None = None,
+    retrieved_at: Callable[[], datetime] | None = None,
 ) -> SyncResult:
     clock = now if now is not None else datetime.now(UTC)
-    _require_complete_end(end, clock)
+    stamp = retrieved_at if retrieved_at is not None else lambda: datetime.now(UTC)
+    _require_complete_end(end, clock, feed)
     if feed not in {"sip", "iex"}:
         raise MarketDataError("Feed must be sip or iex.")
     started = clock
     totals = WriteCounts()
     warnings: list[str] = []
-    seen: set[str] = set()
+    seen: dict[str, set[date]] = {symbol: set() for symbol in symbols}
     try:
         for chunk_start, chunk_end in year_chunks(start, end):
             fetched = fetcher(symbols, chunk_start, chunk_end, feed)
+            retrieved = stamp()
             _require_single_feed(fetched, feed)
             _reject_duplicate_sessions(fetched)
             _require_chunk_window(fetched, chunk_start, chunk_end)
-            seen.update(bar.symbol for bar in fetched)
-            stored = [_to_stored(bar, clock) for bar in fetched]
+            for bar in fetched:
+                seen.setdefault(bar.symbol, set()).add(bar.session_date)
+            stored = [_to_stored(bar, retrieved) for bar in fetched]
             warnings.extend(_early_close_notes(stored))
             counts = store.write_bars(stored)
             totals = _add(totals, counts)
-        for symbol in symbols:
-            if symbol not in seen:
-                warnings.append(f"{symbol} returned no bars. Missing sessions were not invented.")
+        warnings.extend(_coverage_warnings(symbols, start, end, seen))
     except MarketDataError as exc:
         code = _error_code(exc)
         store.record_run(
@@ -69,14 +72,15 @@ def sync_daily_bars(
             error_code=code,
         )
         raise
-    result = SyncResult(feed, start, end, totals, warnings)
+    status = "incomplete" if _has_missing(warnings) else "success"
+    result = SyncResult(feed, start, end, totals, warnings, status)
     store.record_run(
         started_at=started,
         symbols=symbols,
         feed=feed,
         start=start,
         end=end,
-        status="success",
+        status=status,
         counts=totals,
         warnings=warnings,
         error_code="",
@@ -84,7 +88,7 @@ def sync_daily_bars(
     return result
 
 
-def _require_complete_end(end: date, now: datetime) -> None:
+def _require_complete_end(end: date, now: datetime, feed: str) -> None:
     if not is_session(end):
         raise IncompleteSession(f"{end.isoformat()} is not a completed NYSE session.")
     if modeled_available_at(end) > now.astimezone(UTC):
@@ -92,6 +96,7 @@ def _require_complete_end(end: date, now: datetime) -> None:
             f"{end.isoformat()} is not available yet. "
             "The close is modeled as knowable at 16:30 America/New_York."
         )
+    historical_request_end(end, now, feed)
 
 
 def _reject_duplicate_sessions(bars: list[FetchedBar]) -> None:
@@ -159,6 +164,32 @@ def _to_stored(bar: FetchedBar, retrieved_at: datetime) -> StoredBar:
         first_retrieved_at=stored.first_retrieved_at,
         content_hash=content_hash(stored),
     )
+
+
+def _coverage_warnings(
+    symbols: list[str],
+    start: date,
+    end: date,
+    seen: dict[str, set[date]],
+) -> list[str]:
+    expected = sessions_between(start, end)
+    warnings: list[str] = []
+    for symbol in symbols:
+        begin, middle, finish = classify_missing(expected, seen.get(symbol, set()))
+        missing = len(begin) + len(middle) + len(finish)
+        if missing == 0:
+            continue
+        warnings.append(
+            f"{symbol} is missing {missing} NYSE sessions "
+            f"in {start.isoformat()}..{end.isoformat()} "
+            f"(start {len(begin)}, middle {len(middle)}, end {len(finish)}). "
+            "Missing sessions were not invented."
+        )
+    return warnings
+
+
+def _has_missing(warnings: list[str]) -> bool:
+    return any("is missing" in warning for warning in warnings)
 
 
 def _early_close_notes(bars: list[StoredBar]) -> list[str]:
