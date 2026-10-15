@@ -57,7 +57,7 @@ function Get-Endpoint([string]$Path) {
 }
 
 function Test-Decimal([string]$Value) {
-    $parsedNumber = 0.0
+    $parsedNumber = [decimal]0
     return [decimal]::TryParse(
         $Value,
         [Globalization.NumberStyles]::Number,
