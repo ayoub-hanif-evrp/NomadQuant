@@ -30,11 +30,12 @@ def _isolated_environment(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def make_settings(tmp_path: Path, **overrides: object) -> Settings:
-    return Settings(
-        _env_file=None,
-        database_path=str(tmp_path / "nomadquant.db"),
-        **overrides,
-    )
+    values: dict[str, object] = {
+        "database_path": str(tmp_path / "nomadquant.db"),
+        "market_data_path": str(tmp_path / "market.sqlite"),
+    }
+    values.update(overrides)
+    return Settings(_env_file=None, **values)
 
 
 @pytest.fixture

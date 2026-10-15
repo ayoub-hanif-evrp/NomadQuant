@@ -50,6 +50,28 @@ export type BrokerPositions = {
   positions: PositionSnapshot[];
 };
 
+export type SymbolCoverage = {
+  symbol: string;
+  feed: string;
+  bar_count: number;
+  earliest_session: string;
+  latest_session: string;
+  gap_count: number;
+};
+
+export type MarketDataStatus = {
+  symbols: string[];
+  feeds: string[];
+  earliest_session: string | null;
+  latest_session: string | null;
+  bar_count: number;
+  coverage: SymbolCoverage[];
+  last_successful_ingestion: string | null;
+  warnings: string[];
+  suitable_for_research: boolean;
+  caveat: string;
+};
+
 const BROKER_STATUSES: readonly BrokerStatus[] = [
   "connected",
   "disconnected",
@@ -192,6 +214,78 @@ async function readJson(path: string): Promise<unknown> {
     throw new Error(`API request failed (${response.status})`);
   }
   return response.json() as Promise<unknown>;
+}
+
+function readStringList(value: unknown, label: string): string[] {
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
+    throw new Error(`Unexpected ${label}`);
+  }
+  return value;
+}
+
+export function parseMarketDataStatus(value: unknown): MarketDataStatus {
+  if (!isRecord(value)) {
+    throw new Error("Unexpected market data payload");
+  }
+  if (!Array.isArray(value.coverage)) {
+    throw new Error("Unexpected market data coverage");
+  }
+  const coverage = value.coverage.map((item) => {
+    if (!isRecord(item)) {
+      throw new Error("Unexpected coverage row");
+    }
+    if (
+      typeof item.symbol !== "string" ||
+      typeof item.feed !== "string" ||
+      typeof item.bar_count !== "number" ||
+      typeof item.earliest_session !== "string" ||
+      typeof item.latest_session !== "string" ||
+      typeof item.gap_count !== "number"
+    ) {
+      throw new Error("Unexpected coverage field");
+    }
+    return {
+      symbol: item.symbol,
+      feed: item.feed,
+      bar_count: item.bar_count,
+      earliest_session: item.earliest_session,
+      latest_session: item.latest_session,
+      gap_count: item.gap_count,
+    };
+  });
+  if (
+    typeof value.bar_count !== "number" ||
+    typeof value.suitable_for_research !== "boolean" ||
+    typeof value.caveat !== "string"
+  ) {
+    throw new Error("Unexpected market data summary");
+  }
+  const earliest = value.earliest_session;
+  const latest = value.latest_session;
+  const last = value.last_successful_ingestion;
+  if (
+    (earliest !== null && typeof earliest !== "string") ||
+    (latest !== null && typeof latest !== "string") ||
+    (last !== null && typeof last !== "string")
+  ) {
+    throw new Error("Unexpected market data dates");
+  }
+  return {
+    symbols: readStringList(value.symbols, "symbols"),
+    feeds: readStringList(value.feeds, "feeds"),
+    earliest_session: earliest,
+    latest_session: latest,
+    bar_count: value.bar_count,
+    coverage,
+    last_successful_ingestion: last,
+    warnings: readStringList(value.warnings, "warnings"),
+    suitable_for_research: value.suitable_for_research,
+    caveat: value.caveat,
+  };
+}
+
+export async function loadMarketData(): Promise<MarketDataStatus> {
+  return parseMarketDataStatus(await readJson("/api/market-data/status"));
 }
 
 export async function loadOverview(): Promise<{

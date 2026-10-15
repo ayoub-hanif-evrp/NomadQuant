@@ -18,6 +18,7 @@ build/
 data/*
 !data/.gitkeep
 *.db
+*.sqlite
 
 # Node
 apps/web/node_modules/

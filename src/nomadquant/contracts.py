@@ -1,14 +1,14 @@
 """Future component contracts.
 
-These protocols document extension points. Phase 1 implements none of them
-except the read-only paper account adapter in ``nomadquant.broker``.
+These protocols document extension points. The read-only paper account adapter
+is in ``nomadquant.broker``. Daily bars are in ``nomadquant.marketdata``.
 
 Order placement is intentionally absent. A later order gateway, if one is
 added, may be called only after ``RiskEngine.evaluate`` returns an approval.
 Research agents must never receive that gateway or a broker order client.
 """
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Literal, Protocol
 
@@ -16,9 +16,15 @@ from pydantic import BaseModel, Field
 
 
 class Bar(BaseModel):
-    """One OHLCV bar that was knowable at ``as_of``."""
+    """One daily bar and the time at which this system models it as knowable.
+
+    ``as_of`` is NomadQuant's modeled availability time. It is not Alpaca's
+    symbol-mapping ``asof`` parameter, and it is not proof of what a vendor
+    published on that historical date.
+    """
 
     symbol: str
+    session_date: date
     timestamp: datetime
     open: Decimal
     high: Decimal
@@ -26,13 +32,20 @@ class Bar(BaseModel):
     close: Decimal
     volume: Decimal
     as_of: datetime
+    provider: str
+    feed: Literal["sip", "iex"]
+    adjustment: Literal["raw"]
+    timeframe: Literal["1Day"]
+    currency: str
+    first_retrieved_at: datetime
 
 
 class MarketDataProvider(Protocol):
     """Historical data with an explicit knowledge cutoff.
 
-    Implementations must refuse bars whose ``as_of`` is later than the
-    requested cutoff. Shuffled or revised rows are not acceptable input.
+    Implementations must not return a bar whose modeled availability is later
+    than the requested cutoff. A bar timestamp inside the window is not enough.
+    Missing sessions stay missing.
     """
 
     def get_bars(
@@ -42,7 +55,7 @@ class MarketDataProvider(Protocol):
         end: datetime,
         as_of: datetime,
     ) -> list[Bar]:
-        """Return bars knowable at ``as_of`` inside ``[start, end]``."""
+        """Return bars in ``[start, end]`` that were model-available at ``as_of``."""
 
 
 class Hypothesis(BaseModel):

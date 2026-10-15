@@ -16,6 +16,7 @@ from nomadquant.broker.alpaca import AlpacaReadOnlyBroker
 from nomadquant.config import Settings, get_settings
 from nomadquant.db import database_ok, init_db
 from nomadquant.logging import configure_logging, get_logger
+from nomadquant.marketdata.report import MarketDataStatus, market_data_status
 
 logger = get_logger(__name__)
 
@@ -89,5 +90,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def broker_positions() -> BrokerPositionsResponse:
         broker: AlpacaReadOnlyBroker = app.state.broker
         return broker.positions()
+
+    @app.get("/api/market-data/status", response_model=MarketDataStatus)
+    def market_data() -> MarketDataStatus:
+        current: Settings = app.state.settings
+        return market_data_status(current.market_data_path)
 
     return app

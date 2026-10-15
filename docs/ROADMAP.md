@@ -32,11 +32,9 @@ An LLM must not be able to skip the risk check or call broker order tools. The s
 - Research, security, and license documents
 - Typed protocols with no fake implementations
 
-## Phase 2 — point-in-time market data
+## Phase 2 — daily market data (current)
 
-Build a local daily-bar store for a small US ETF universe. Every bar needs an `as_of` timestamp. `MarketDataProvider.get_bars` must refuse bars that were not knowable at the cutoff. Tests should try to read the future and fail. Still no orders and no strategy claim.
-
-Free data has holes, revision lag, and weak corporate-action history. The store has to record the vendor and the retrieval time instead of pretending the file is a clean institutional feed.
+Local raw daily bars for SPY and QQQ, one feed at a time, with modeled availability at 16:30 America/New_York and a separate first-retrieved timestamp. Conflicting downloads are kept as revisions. This is not a verified point-in-time archive and not a dividend-adjusted total-return series. Still no orders and no strategy claim. See [MARKET_DATA.md](MARKET_DATA.md).
 
 ## Phase 3 — one reproducible backtest
 

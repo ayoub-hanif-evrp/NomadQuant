@@ -218,6 +218,7 @@ def test_no_order_submission_endpoint(client: TestClient) -> None:
         "/api/system/status",
         "/api/broker/account",
         "/api/broker/positions",
+        "/api/market-data/status",
     }
     for path, operations in paths.items():
         assert "order" not in path.lower()
@@ -277,3 +278,15 @@ def test_trading_client_is_constructed_for_paper_only(
         "paper": True,
         "url_override": "https://paper-api.alpaca.markets",
     }
+
+
+def test_market_data_status_does_not_create_a_database(client: TestClient, tmp_path: Path) -> None:
+    path = tmp_path / "market.sqlite"
+    response = client.get("/api/market-data/status")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["bar_count"] == 0
+    assert body["suitable_for_research"] is False
+    assert "dividend-adjusted" in body["caveat"]
+    assert "point-in-time" in body["caveat"]
+    assert not path.exists()

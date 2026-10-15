@@ -1,6 +1,6 @@
 # NomadQuant
 
-NomadQuant is a locally hosted, paper-only foundation for algorithmic trading research. Phase 1 provides configuration locks, a read-only Alpaca paper adapter, a small operational database, and a local status dashboard.
+NomadQuant is a locally hosted, paper-only foundation for algorithmic trading research. It provides configuration locks, a read-only Alpaca paper adapter, a small operational database, a local daily-bar store, and a local status dashboard.
 
 It does not place orders, and it does not contain a trading strategy. Nothing in this repository is evidence of profit.
 
@@ -67,6 +67,17 @@ With the API already running:
 
 The script calls the local read-only API, prints PASS or FAIL for each check, and does not place orders. Broker equity is reported separately from the internal $100 limit. A missing `.env` is a configuration gap, not an authentication or network failure.
 
+## Download daily bars
+
+This does not run at install or at API startup. It writes `data/market.sqlite`, which is gitignored. The default feed is consolidated SIP. Raw bars are not dividend-adjusted total returns.
+
+```powershell
+uv run nomadquant-data sync --symbols SPY,QQQ --start 2018-01-01 --feed sip
+uv run nomadquant-data report
+```
+
+If the account is not entitled to SIP, the command exits with an instruction to rerun the same arguments with `--feed iex`. IEX is a single-exchange feed and is stored separately. The assumptions and limits are in [docs/MARKET_DATA.md](docs/MARKET_DATA.md).
+
 ## Checks
 
 ```powershell
@@ -79,25 +90,26 @@ npm run lint
 npx tsc --noEmit
 ```
 
-On 15 October 2026 those commands passed in this workspace: Ruff reported no issues, mypy reported no issues, pytest reported 27 passed, and the dashboard lint and typecheck completed without errors. Pytest warns that Starlette wants `httpx2` and that `websockets.legacy` is deprecated. Neither warning failed the suite.
+Pytest warns that Starlette wants `httpx2` and that `websockets.legacy` is deprecated. Neither warning fails the suite.
 
-## What Phase 1 includes
+## What is included
 
 - Paper-only settings that reject live mode, live Alpaca URLs, non-local binds, and order submission
 - Startup without Alpaca credentials, in disconnected mode
 - Read-only account and position retrieval, with rate limits and connection errors returned as data
-- `GET /health`, `GET /api/system/status`, `GET /api/broker/account`, `GET /api/broker/positions`
+- `GET /health`, `GET /api/system/status`, `GET /api/broker/account`, `GET /api/broker/positions`, `GET /api/market-data/status`
 - SQLite startup log in `data/nomadquant.db`
+- Raw daily SPY/QQQ bars in `data/market.sqlite`, with a 16:30 New York availability model
 - Structured logs that redact configured secrets
 - Typed extension protocols for later data, research, strategy, backtest, risk, and paper-broker work
 - A dark local dashboard with honest "Not implemented yet" pages
 
-## What Phase 1 does not include
+## What is not included
 
 - Order placement, cancellation, or liquidation
 - Live trading
 - A strategy, backtest, equity curve, or performance number
-- Market-data storage, Qlib, DuckDB, Ollama, or an agent runtime
+- Dividend-adjusted total-return series, Qlib, DuckDB, Ollama, or an agent runtime
 - Start, pause, or stop controls for trading
 
 ## Layout
@@ -109,12 +121,14 @@ src/nomadquant/    Python package
 tests/             Pytest suite
 docs/              Architecture, research standards, security, licenses
 scripts/           PowerShell dev launchers
-data/              Local SQLite database (gitignored)
+data/              Local SQLite files (gitignored)
 ```
 
 ## Documentation
 
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+- [docs/MARKET_DATA.md](docs/MARKET_DATA.md)
+- [docs/DATA_QUALITY.md](docs/DATA_QUALITY.md)
 - [docs/RESEARCH_STANDARDS.md](docs/RESEARCH_STANDARDS.md)
 - [docs/SECURITY.md](docs/SECURITY.md)
 - [docs/DEPENDENCY_REVIEW.md](docs/DEPENDENCY_REVIEW.md)
@@ -122,9 +136,9 @@ data/              Local SQLite database (gitignored)
 - [docs/DECISIONS/0001-initial-architecture.md](docs/DECISIONS/0001-initial-architecture.md)
 - [docs/DECISIONS/0002-proprietary-license.md](docs/DECISIONS/0002-proprietary-license.md)
 
-## Suggested Phase 2 prompt
+## Suggested next milestone
 
-Add a local point-in-time daily-bar store for a small long-only US ETF universe. Persist bars with an `as_of` timestamp, serve them through the `MarketDataProvider` protocol, and add tests that reject any bar not yet knowable at the requested cutoff. Do not submit orders, do not add a live broker, and do not claim a strategy result.
+One pre-registered backtest on the stored raw daily bars, with costs and the benchmarks in the research standards. Label it as a backtest. Do not adjust for dividends unless that adjustment is a separate, explicit series. Do not submit orders.
 
 ## License
 

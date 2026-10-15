@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     api_host: str = "127.0.0.1"
     api_port: int = Field(default=8000, ge=1, le=65535)
     database_path: str = "data/nomadquant.db"
+    market_data_path: str = "data/market.sqlite"
 
     @field_validator("trading_mode")
     @classmethod

@@ -81,7 +81,10 @@ vectorbt.pro, if encountered separately, is a commercial product and is out of s
 | fastapi | HTTP API | MIT |
 | pydantic / pydantic-settings | Typed settings and responses | MIT |
 | uvicorn | ASGI server | BSD-3-Clause |
-| alpaca-py | Read-only paper broker | Apache-2.0 |
+| alpaca-py | Read-only paper broker and historical daily bars | Apache-2.0 |
+| exchange-calendars | XNYS session calendar | Apache-2.0 |
 | pytest, ruff, mypy, httpx | Development only | MIT (httpx is BSD-3-Clause) |
+
+`exchange-calendars` 4.13.2 declares `License-Expression: Apache-2.0` in the installed package metadata. It is used only to decide which New York sessions exist. Apache-2.0 permits use inside a proprietary program and does not grant rights in the NomadQuant code.
 
 Lockfiles: `uv.lock` for Python and `apps/web/package-lock.json` for the dashboard. Exact transitive license texts are the ones shipped with those locked versions.

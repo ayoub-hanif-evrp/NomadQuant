@@ -8,6 +8,7 @@ requires-python = ">=3.12"
 authors = [{ name = "NomadQuant contributors" }]
 dependencies = [
     "alpaca-py>=0.39",
+    "exchange-calendars>=4.13.2",
     "fastapi>=0.115",
     "pydantic-settings>=2.6",
     "uvicorn[standard]>=0.32",
@@ -15,6 +16,7 @@ dependencies = [
 
 [project.scripts]
 nomadquant-api = "nomadquant.cli:main"
+nomadquant-data = "nomadquant.marketdata.cli:main"
 
 [dependency-groups]
 dev = [
@@ -53,7 +55,7 @@ packages = ["nomadquant"]
 warn_unused_ignores = true
 
 [[tool.mypy.overrides]]
-module = ["alpaca.*"]
+module = ["alpaca.*", "exchange_calendars", "exchange_calendars.*", "pandas"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
