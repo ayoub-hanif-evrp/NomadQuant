@@ -1,0 +1,5 @@
+.env
+.env.local
+apps/web/.env.local
+data/*.db
+

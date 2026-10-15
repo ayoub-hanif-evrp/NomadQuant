@@ -55,6 +55,18 @@ The dashboard listens on `http://127.0.0.1:3000`.
 
 Equivalent scripts: `.\scripts\dev-api.ps1` and `.\scripts\dev-web.ps1`.
 
+## Verify the paper account
+
+Create `.env` yourself from `.env.example`. Set `ALPACA_API_KEY` and `ALPACA_API_SECRET` to a paper key pair from the Alpaca dashboard. Leave `ALPACA_BASE_URL` at `https://paper-api.alpaca.markets`. Do not paste keys into a chat. Restart the API after saving the file.
+
+With the API already running:
+
+```powershell
+.\scripts\verify-paper.ps1
+```
+
+The script calls the local read-only API, prints PASS or FAIL for each check, and does not place orders. Broker equity is reported separately from the internal $100 limit. A missing `.env` is a configuration gap, not an authentication or network failure.
+
 ## Checks
 
 ```powershell

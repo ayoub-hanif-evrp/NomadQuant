@@ -129,6 +129,8 @@ function Ready({
             <Row label="Order submission" value="disabled" />
             <Row label="Credentials" value={status.credentials_configured ? "configured" : "absent"} />
             <Row label="Operational database" value={status.database_ok ? "ok" : "unavailable"} />
+            <Row label="API host" value={status.api_host} />
+            <Row label="Alpaca host" value="paper-api.alpaca.markets" />
           </dl>
           {status.broker_message ? (
             <p className="mt-4 text-sm leading-6 text-[#c5d0de]">{status.broker_message}</p>

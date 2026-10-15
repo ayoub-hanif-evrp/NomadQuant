@@ -5,6 +5,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 BrokerStatus = Literal["connected", "disconnected", "error", "rate_limited"]
+FailureKind = Literal["authentication", "network", "broker"]
 
 
 class HealthResponse(BaseModel):
@@ -21,6 +22,9 @@ class SystemStatusResponse(BaseModel):
     credentials_configured: bool
     broker_status: BrokerStatus
     broker_message: str | None = None
+    failure_kind: FailureKind | None = None
+    alpaca_base_url: str
+    api_host: str
     database_ok: bool
 
 
@@ -35,6 +39,7 @@ class AccountSnapshot(BaseModel):
 class BrokerAccountResponse(BaseModel):
     status: BrokerStatus
     message: str | None = None
+    failure_kind: FailureKind | None = None
     virtual_capital_usd: float
     broker_equity_note: str = (
         "This $100 figure is NomadQuant's internal strategy limit. "
@@ -56,4 +61,5 @@ class PositionSnapshot(BaseModel):
 class BrokerPositionsResponse(BaseModel):
     status: BrokerStatus
     message: str | None = None
+    failure_kind: FailureKind | None = None
     positions: list[PositionSnapshot] = Field(default_factory=list)

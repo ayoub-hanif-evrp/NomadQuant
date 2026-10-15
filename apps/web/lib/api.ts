@@ -1,6 +1,7 @@
 export const API_URL = "http://127.0.0.1:8000";
 
 export type BrokerStatus = "connected" | "disconnected" | "error" | "rate_limited";
+export type FailureKind = "authentication" | "network" | "broker";
 
 export type SystemStatus = {
   trading_mode: "paper";
@@ -10,6 +11,9 @@ export type SystemStatus = {
   credentials_configured: boolean;
   broker_status: BrokerStatus;
   broker_message: string | null;
+  failure_kind: FailureKind | null;
+  alpaca_base_url: string;
+  api_host: string;
   database_ok: boolean;
 };
 
@@ -24,6 +28,7 @@ export type AccountSnapshot = {
 export type BrokerAccount = {
   status: BrokerStatus;
   message: string | null;
+  failure_kind: FailureKind | null;
   virtual_capital_usd: number;
   broker_equity_note: string;
   account: AccountSnapshot | null;
@@ -41,6 +46,7 @@ export type PositionSnapshot = {
 export type BrokerPositions = {
   status: BrokerStatus;
   message: string | null;
+  failure_kind: FailureKind | null;
   positions: PositionSnapshot[];
 };
 
@@ -60,6 +66,16 @@ function readStatus(value: unknown): BrokerStatus {
     return value as BrokerStatus;
   }
   throw new Error("Unexpected broker status");
+}
+
+function readFailureKind(value: unknown): FailureKind | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (value === "authentication" || value === "network" || value === "broker") {
+    return value;
+  }
+  throw new Error("Unexpected failure kind");
 }
 
 function readMessage(value: unknown): string | null {
@@ -106,6 +122,12 @@ export function parseSystemStatus(value: unknown): SystemStatus {
   if (typeof value.credentials_configured !== "boolean" || typeof value.database_ok !== "boolean") {
     throw new Error("Unexpected system flags");
   }
+  if (value.alpaca_base_url !== "https://paper-api.alpaca.markets") {
+    throw new Error("API is not locked to the Alpaca paper host");
+  }
+  if (value.api_host !== "127.0.0.1") {
+    throw new Error("API is not bound to localhost");
+  }
   return {
     trading_mode: "paper",
     paper_only: true,
@@ -114,6 +136,9 @@ export function parseSystemStatus(value: unknown): SystemStatus {
     credentials_configured: value.credentials_configured,
     broker_status: readStatus(value.broker_status),
     broker_message: readMessage(value.broker_message),
+    failure_kind: readFailureKind(value.failure_kind),
+    alpaca_base_url: value.alpaca_base_url,
+    api_host: value.api_host,
     database_ok: value.database_ok,
   };
 }
@@ -128,6 +153,7 @@ export function parseBrokerAccount(value: unknown): BrokerAccount {
   return {
     status: readStatus(value.status),
     message: readMessage(value.message),
+    failure_kind: readFailureKind(value.failure_kind),
     virtual_capital_usd: value.virtual_capital_usd,
     broker_equity_note: value.broker_equity_note,
     account: readAccountSnapshot(value.account),
@@ -155,6 +181,7 @@ export function parsePositions(value: unknown): BrokerPositions {
   return {
     status: readStatus(value.status),
     message: readMessage(value.message),
+    failure_kind: readFailureKind(value.failure_kind),
     positions,
   };
 }

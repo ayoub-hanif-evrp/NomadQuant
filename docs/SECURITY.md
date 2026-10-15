@@ -5,7 +5,7 @@ NomadQuant Phase 1 is a local research tool with a read-only view of an Alpaca p
 ## Secrets
 
 - `ALPACA_API_KEY` and `ALPACA_API_SECRET` are read from the process environment or a local `.env` file.
-- `.env` is gitignored. `.env.example` contains empty values.
+- `.env` is gitignored and listed in `.cursorignore` so it is not indexed. `.env.example` contains empty values.
 - The Next.js app does not receive the keys. The browser talks only to the local API.
 - Logs use a JSON formatter that replaces configured secret values and assignment-style `api_key`, `secret`, `authorization`, and `bearer` tokens with `[REDACTED]`.
 - Broker failures return a fixed message. Exception text is not copied into the HTTP body, because an upstream error can contain request headers or URL material.
@@ -30,6 +30,8 @@ There is no live credential field, no live adapter, and no code path that submit
 ## Disconnected mode
 
 If both keys are absent, the API still starts. `/health` returns ok. Broker routes return `disconnected` with an explanation. That is an observable state, not a crash.
+
+Rejected credentials return `failure_kind=authentication`. A connection failure returns `failure_kind=network`. Other broker failures return `failure_kind=broker`. None of those responses include the upstream body or the credential values. `scripts/verify-paper.ps1` reads only these local API fields.
 
 ## Network
 

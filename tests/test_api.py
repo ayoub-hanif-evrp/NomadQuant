@@ -81,6 +81,9 @@ def test_status_reports_paper_defaults(client: TestClient) -> None:
     assert body.initial_virtual_capital_usd == 100
     assert body.credentials_configured is False
     assert body.broker_status == "disconnected"
+    assert body.failure_kind is None
+    assert body.alpaca_base_url == "https://paper-api.alpaca.markets"
+    assert body.api_host == "127.0.0.1"
     assert body.database_ok is True
 
 
@@ -135,7 +138,59 @@ def test_broker_errors_do_not_reveal_credentials(tmp_path: Path) -> None:
     assert _PLANTED_SECRET not in response.text
     body = BrokerAccountResponse.model_validate(response.json())
     assert body.status == "error"
+    assert body.failure_kind == "broker"
     assert body.message == "Alpaca request failed. Details were withheld."
+
+
+def test_authentication_failure_is_classified_without_leaking_secrets(tmp_path: Path) -> None:
+    class _AuthError(Exception):
+        status_code = 401
+
+    class _AuthClient:
+        def get_account(self) -> None:
+            raise _AuthError(f"rejected {_PLANTED_SECRET}")
+
+        def get_all_positions(self) -> None:
+            raise AssertionError("positions must not be requested after authentication failure")
+
+    settings = make_settings(
+        tmp_path,
+        alpaca_api_key="paper-key",
+        alpaca_api_secret=_PLANTED_SECRET,
+    )
+    app = create_app(settings)
+    app.state.broker = AlpacaReadOnlyBroker(settings, client=_AuthClient())
+    with TestClient(app) as test_client:
+        response = test_client.get("/api/broker/account")
+    assert _PLANTED_SECRET not in response.text
+    body = BrokerAccountResponse.model_validate(response.json())
+    assert body.status == "error"
+    assert body.failure_kind == "authentication"
+    assert body.account is None
+
+
+def test_network_failure_is_classified_without_leaking_secrets(tmp_path: Path) -> None:
+    class _NetClient:
+        def get_account(self) -> None:
+            raise ConnectionError(f"unreachable {_PLANTED_SECRET}")
+
+        def get_all_positions(self) -> None:
+            raise AssertionError("positions must not be requested after a network failure")
+
+    settings = make_settings(
+        tmp_path,
+        alpaca_api_key="paper-key",
+        alpaca_api_secret=_PLANTED_SECRET,
+    )
+    app = create_app(settings)
+    app.state.broker = AlpacaReadOnlyBroker(settings, client=_NetClient())
+    with TestClient(app) as test_client:
+        response = test_client.get("/api/system/status")
+    assert _PLANTED_SECRET not in response.text
+    body = SystemStatusResponse.model_validate(response.json())
+    assert body.broker_status == "error"
+    assert body.failure_kind == "network"
+    assert body.allow_order_submission is False
 
 
 def test_rate_limit_is_visible_and_redacted(tmp_path: Path) -> None:

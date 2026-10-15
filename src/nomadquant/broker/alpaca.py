@@ -13,6 +13,7 @@ from nomadquant.api.schemas import (
     BrokerAccountResponse,
     BrokerPositionsResponse,
     BrokerStatus,
+    FailureKind,
     PositionSnapshot,
 )
 from nomadquant.config import Settings
@@ -25,6 +26,8 @@ _ACCOUNT_CACHE_SECONDS = 5.0
 _DISCONNECTED = "Alpaca credentials are not configured. The API is running in disconnected mode."
 _RATE_LIMITED = "Alpaca rate limit reached. Try again later."
 _FAILED = "Alpaca request failed. Details were withheld."
+_AUTH_FAILED = "Alpaca rejected the paper credentials."
+_NETWORK = "Alpaca could not be reached. Check the network and try again."
 
 
 @dataclass(frozen=True)
@@ -39,6 +42,27 @@ def _decimal_text(value: object) -> str:
         return format(Decimal(str(value)), "f")
     except (InvalidOperation, ValueError) as exc:
         raise ValueError("Broker returned a non-decimal amount") from exc
+
+
+def _is_network_error(exc: Exception) -> bool:
+    if isinstance(exc, (ConnectionError, TimeoutError)):
+        return True
+    name = type(exc).__name__
+    module = type(exc).__module__
+    if module.startswith(("requests.", "urllib3.", "httpx.", "httpcore.")):
+        return "Timeout" in name or "Connection" in name or name == "ConnectError"
+    return False
+
+
+def _classify_failure(exc: Exception) -> tuple[BrokerStatus, FailureKind | None, str]:
+    code = _status_code(exc)
+    if code == 429:
+        return "rate_limited", None, _RATE_LIMITED
+    if code in {401, 403}:
+        return "error", "authentication", _AUTH_FAILED
+    if _is_network_error(exc):
+        return "error", "network", _NETWORK
+    return "error", "broker", _FAILED
 
 
 def _status_code(exc: Exception) -> int | None:
@@ -123,22 +147,27 @@ class AlpacaReadOnlyBroker:
             raw_account = client.get_account()
             raw_positions = client.get_all_positions()
         except Exception as exc:
-            status: BrokerStatus = "rate_limited" if _status_code(exc) == 429 else "error"
-            message = _RATE_LIMITED if status == "rate_limited" else _FAILED
+            status, failure_kind, message = _classify_failure(exc)
             logger.warning(
-                "alpaca_read_failed error_type=%s status_code=%s",
+                "alpaca_read_failed error_type=%s status_code=%s failure_kind=%s",
                 type(exc).__name__,
                 _status_code(exc),
+                failure_kind,
             )
             return _CacheEntry(
                 stored_at=time.monotonic(),
                 account=BrokerAccountResponse(
                     status=status,
                     message=message,
+                    failure_kind=failure_kind,
                     virtual_capital_usd=capital,
                     account=None,
                 ),
-                positions=BrokerPositionsResponse(status=status, message=message),
+                positions=BrokerPositionsResponse(
+                    status=status,
+                    message=message,
+                    failure_kind=failure_kind,
+                ),
             )
         try:
             account = AccountSnapshot(
@@ -166,10 +195,15 @@ class AlpacaReadOnlyBroker:
                 account=BrokerAccountResponse(
                     status="error",
                     message=_FAILED,
+                    failure_kind="broker",
                     virtual_capital_usd=capital,
                     account=None,
                 ),
-                positions=BrokerPositionsResponse(status="error", message=_FAILED),
+                positions=BrokerPositionsResponse(
+                    status="error",
+                    message=_FAILED,
+                    failure_kind="broker",
+                ),
             )
         return _CacheEntry(
             stored_at=time.monotonic(),

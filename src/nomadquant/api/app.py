@@ -74,6 +74,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             credentials_configured=current.credentials_configured,
             broker_status=account.status,
             broker_message=account.message,
+            failure_kind=account.failure_kind,
+            alpaca_base_url=current.alpaca_base_url,
+            api_host=current.api_host,
             database_ok=database_ok(current.database_path),
         )
 
