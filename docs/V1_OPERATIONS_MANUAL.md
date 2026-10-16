@@ -80,10 +80,16 @@ Stop affects only process IDs recorded by the start script. It does not stop eve
 
 | Page | Use |
 | --- | --- |
-| Command Center | What is connected, covered, and waiting. |
-| Market Explorer | Stored SPY and QQQ daily bars. |
-| Research Lab | Backtests and verification. |
-| Agents | Local retrospective memos. |
-| Risk Policy Lab | Why a hypothetical order would be refused. |
-| Shadow Operations | The internal $100 book and cycle evidence. |
-| Activity | Audit events. |
+| Home | What is happening, what needs attention, and the next step. |
+| Decisions | The decision story: market, signal, agents, risk, recommendation, approval. |
+| Agents | How Researcher, Skeptic, Reviewer, and the deterministic risk gate relate. |
+| Portfolio | The internal $100 shadow book. |
+| Market | Stored SPY and QQQ coverage in plain English. |
+| Approvals | One-time internal shadow permissions. Not broker orders. |
+| Advanced | The previous workbench: research, runs, risk, shadow operations, and health. |
+
+## Approval email
+
+An approval request is stored in `data/approvals.sqlite`. The email, or the local file under `data/approval-outbox` when `SMTP_HOST` or `APPROVAL_EMAIL_TO` is blank, contains a review link. Opening the link does not use the token. Confirming on that page does. The token is one-time, expires, and is stored only as a hash. Approval records permission for an internal shadow step. It does not apply the live ledger by itself, does not bypass risk checks, and does not submit an Alpaca order.
+
+Set `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, and `APPROVAL_EMAIL_TO` only in `.env`. Do not put those values in the frontend.

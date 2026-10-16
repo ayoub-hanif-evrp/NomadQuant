@@ -101,6 +101,35 @@ kbd {
   box-shadow: -12px 0 40px rgba(0, 0, 0, 0.45);
 }
 
+@keyframes nq-rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.nq-rise {
+  animation: nq-rise 0.45s ease both;
+}
+
+@keyframes nq-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.nq-pulse {
+  animation: nq-pulse 1.8s ease-in-out infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .skeleton {
     animation: none;

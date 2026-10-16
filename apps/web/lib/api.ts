@@ -1949,3 +1949,43 @@ export async function loadShadowTimeline(
     items: value.items.filter(isRecord).map((item) => item as ShadowTimelineItem),
   };
 }
+
+export type ApprovalRequest = {
+  id: string;
+  status: string;
+  instrument: string;
+  action: string;
+  quantity: string;
+  notional_usd: string;
+  why: string;
+  risk_summary: string;
+  caveats: string;
+  scope: string;
+  broker_orders: false;
+  created_at: string;
+  expires_at: string;
+  decided_at: string | null;
+  decision_reason: string;
+  effect: string;
+};
+
+export async function loadApprovals(): Promise<{
+  initialized: boolean;
+  items: ApprovalRequest[];
+  broker_orders: false;
+}> {
+  const value = await readJson("/api/approvals/inbox");
+  if (!isRecord(value) || !Array.isArray(value.items) || value.broker_orders !== false) {
+    throw new Error("Unexpected approval inbox");
+  }
+  return {
+    initialized: value.initialized === true,
+    broker_orders: false,
+    items: value.items.map((item) => {
+      if (!isRecord(item) || typeof item.id !== "string" || item.broker_orders !== false) {
+        throw new Error("Unexpected approval request");
+      }
+      return item as ApprovalRequest;
+    }),
+  };
+}

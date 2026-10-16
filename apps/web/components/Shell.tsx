@@ -43,35 +43,36 @@ type NavGroup = { title: string; items: NavItem[] };
 
 const NAV: NavGroup[] = [
   {
-    title: "Workspace",
+    title: "Guided",
     items: [
-      { href: "/", label: "Command Center", icon: LayoutDashboard, available: true },
-      { href: "/market-data", label: "Market Explorer", icon: LineChart, available: true },
-      { href: "/research", label: "Research Lab", icon: FlaskConical, available: true },
-      { href: "/decisions", label: "Decision Intelligence", icon: Workflow, available: true },
-    ],
-  },
-  {
-    title: "Operations",
-    items: [
-      { href: "/activity", label: "Activity", icon: Activity, available: true },
-      { href: "/runs", label: "Runs & Jobs", icon: Workflow, available: true },
-      { href: "/health", label: "System Health", icon: HeartPulse, available: true },
-    ],
-  },
-  {
-    title: "Future",
-    items: [
+      { href: "/", label: "Home", icon: LayoutDashboard, available: true },
+      { href: "/decisions", label: "Decisions", icon: Workflow, available: true },
       { href: "/agents", label: "Agents", icon: Bot, available: true },
-      { href: "/strategies", label: "Risk Policy Lab", icon: ShieldAlert, available: true },
-      { href: "/shadow", label: "Shadow Operations", icon: Workflow, available: true },
+      { href: "/portfolio", label: "Portfolio", icon: LineChart, available: true },
+      { href: "/market", label: "Market", icon: LineChart, available: true },
+      { href: "/approvals", label: "Approvals", icon: ShieldAlert, available: true },
+      { href: "/advanced", label: "Advanced", icon: FlaskConical, available: true },
     ],
   },
 ];
 
-const FLAT_NAV = NAV.flatMap((group) => group.items);
+const WORKBENCH: NavItem[] = [
+  { href: "/workbench", label: "Command Center", icon: LayoutDashboard, available: true },
+  { href: "/market-data", label: "Market Explorer", icon: LineChart, available: true },
+  { href: "/research", label: "Research Lab", icon: FlaskConical, available: true },
+  { href: "/activity", label: "Activity", icon: Activity, available: true },
+  { href: "/runs", label: "Runs & Jobs", icon: Workflow, available: true },
+  { href: "/health", label: "System Health", icon: HeartPulse, available: true },
+  { href: "/strategies", label: "Risk Policy Lab", icon: ShieldAlert, available: true },
+  { href: "/shadow", label: "Shadow Operations", icon: Workflow, available: true },
+];
+
+const FLAT_NAV = [...NAV.flatMap((group) => group.items), ...WORKBENCH];
 
 function pageTitle(pathname: string): string {
+  if (pathname.startsWith("/approvals/respond/")) {
+    return "Confirm approval";
+  }
   const match = FLAT_NAV.find((item) => item.href === pathname);
   return match?.label ?? "NomadQuant";
 }
@@ -192,7 +193,10 @@ export function Shell({ children }: { children: ReactNode }) {
             ) : null}
             <ul className="space-y-0.5">
               {group.items.map((item) => {
-                const active = pathname === item.href;
+                const active =
+                  item.href === "/"
+                    ? pathname === "/"
+                    : pathname === item.href || pathname.startsWith(`${item.href}/`);
                 const Icon = item.icon;
                 return (
                   <li key={item.href}>

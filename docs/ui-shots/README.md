@@ -24,7 +24,29 @@ Shadow ops: `shadow-operations-{viewport}.png`.
 - Research Lab shows PASS verification and date-aligned multi-series equity; agents remain empty.
 - No browser console errors were printed during capture.
 
-## Re-capture
+## Guided operating layer (2026-10-16)
+
+Captured against the local API and Next dev server on `127.0.0.1:3000`.
+
+| Screen | File |
+| --- | --- |
+| Home | `guided-home-1280x800.png` |
+| Decisions | `guided-decisions-1280x800.png` |
+| Agents | `guided-agents-1280x800.png` |
+| Portfolio | `guided-portfolio-1280x800.png` |
+| Market | `guided-market-1280x800.png` |
+| Approvals | `guided-approvals-1280x800.png`, `guided-approvals-390x844.png` |
+| Advanced | `guided-advanced-1280x800.png` |
+| Approval confirmation | `guided-approval-confirm-1280x800.png` |
+
+Re-check with the API and dashboard already running:
+
+```powershell
+Set-Location apps\web
+node .\scripts-guided-smoke.mjs
+```
+
+## Re-capture earlier screens
 
 ```powershell
 Set-Location apps\web

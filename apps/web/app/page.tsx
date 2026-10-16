@@ -1,5 +1,5 @@
-import { Overview } from "@/components/Overview";
+import { GuidedHome } from "@/components/guided/GuidedHome";
 
 export default function HomePage() {
-  return <Overview />;
+  return <GuidedHome />;
 }
