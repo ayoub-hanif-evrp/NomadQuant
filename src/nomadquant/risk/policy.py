@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from decimal import Decimal
 
-POLICY_VERSION = "1.1.0"
+POLICY_VERSION = "1.2.0"
 
 ALLOWED_SYMBOLS: frozenset[str] = frozenset({"SPY", "QQQ"})
 
@@ -44,6 +44,7 @@ class RiskPolicy:
     max_price_age: timedelta = timedelta(hours=48)
     max_qty_decimals: int = 6
     spread_bps: Decimal = Decimal("1")
+    slippage_bps: Decimal = Decimal("1")
     commission_usd: Decimal = Decimal("0")
     emergency_halt: bool = False
 
@@ -54,6 +55,8 @@ class RiskPolicy:
             raise ValueError("commission_usd cannot be negative.")
         if self.spread_bps < 0:
             raise ValueError("spread_bps cannot be negative.")
+        if self.slippage_bps < 0:
+            raise ValueError("slippage_bps cannot be negative.")
         if self.max_qty_decimals < 0:
             raise ValueError("max_qty_decimals cannot be negative.")
         for name, value in (
@@ -85,6 +88,7 @@ class RiskPolicy:
             "max_price_age_seconds": self.max_price_age.total_seconds(),
             "max_qty_decimals": self.max_qty_decimals,
             "spread_bps": str(self.spread_bps),
+            "slippage_bps": str(self.slippage_bps),
             "commission_usd": str(self.commission_usd),
             "emergency_halt": self.emergency_halt,
         }
@@ -106,6 +110,7 @@ class RiskPolicy:
             "max_price_age": str(self.max_price_age),
             "max_qty_decimals": self.max_qty_decimals,
             "spread_bps": str(self.spread_bps),
+            "slippage_bps": str(self.slippage_bps),
             "commission_usd": str(self.commission_usd),
             "emergency_halt": self.emergency_halt,
             "policy_hash": self.policy_hash(),

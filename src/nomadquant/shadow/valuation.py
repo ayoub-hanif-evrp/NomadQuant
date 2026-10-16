@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Literal
+from zoneinfo import ZoneInfo
+
+from nomadquant.risk.schemas import AccountMetrics
 
 ValuationStatus = Literal["ok", "stale", "valuation_unavailable"]
 
@@ -185,4 +188,57 @@ def value_snapshot(
         valuation_as_of=latest,
         reason="Valued with validated mark prices.",
         ledger_version=version,
+    )
+
+
+_NY = ZoneInfo("America/New_York")
+_CAPITAL = Decimal("100")
+
+
+def journal_day_metrics(
+    store: Any,
+    snapshot: dict[str, Any],
+    *,
+    mark_price: Decimal | None,
+    quantity: Decimal,
+    evaluated_at: datetime,
+) -> AccountMetrics | None:
+    """Day P&L from the shadow equity journal. Missing journals are not zero loss.
+
+    An untouched $100 cash book with no journal rows is the one documented
+    initialization: realized today is 0, equity and peak equal cash.
+    """
+    cash = Decimal(str(snapshot["cash_usd"]))
+    reserved = Decimal(str(snapshot.get("reserved_cash_usd", "0")))
+    realized = Decimal(str(snapshot.get("realized_pnl_usd", "0")))
+    peak = Decimal(str(snapshot.get("peak_equity_usd", cash)))
+    if quantity != 0 and (mark_price is None or mark_price <= 0):
+        return None
+    equity = cash if quantity == 0 or mark_price is None else cash + quantity * mark_price
+    session = evaluated_at.astimezone(_NY).date()
+    history = store.equity_history(limit=5000)
+    prior = [
+        row
+        for row in history
+        if row.get("session") and date.fromisoformat(str(row["session"])) < session
+    ]
+    if prior:
+        day_start_realized = Decimal(str(prior[-1]["realized_pnl_usd"]))
+        realized_today = realized - day_start_realized
+    elif not history:
+        untouched = (
+            cash == _CAPITAL and reserved == 0 and quantity == 0 and realized == 0 and peak == cash
+        )
+        if not untouched:
+            return None
+        realized_today = _ZERO
+    else:
+        first = date.fromisoformat(str(history[0]["session"]))
+        if first != session:
+            return None
+        realized_today = realized
+    return AccountMetrics(
+        realized_pnl_today_usd=realized_today,
+        equity_usd=equity,
+        peak_equity_usd=max(peak, equity),
     )

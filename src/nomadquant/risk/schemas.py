@@ -98,3 +98,4 @@ class EvaluationResult(BaseModel):
     estimated_costs_usd: Decimal | None = None
     is_hypothetical: Literal[True] = True
     is_broker_order: Literal[False] = False
+    evaluation_clock: Literal["prospective", "historical"] = "prospective"

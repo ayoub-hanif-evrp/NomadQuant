@@ -12,7 +12,6 @@ from nomadquant.marketdata.calendar import sessions_between
 from nomadquant.marketdata.store import MarketStore
 from nomadquant.research.models import CostModel
 from nomadquant.risk import (
-    AccountMetrics,
     InternalLedger,
     Proposal,
     RiskEngine,
@@ -142,17 +141,17 @@ def _resume_one(
             "evidence_gaps": ["missing_or_late_bar_provenance"],
         }
     observation_retrieved_at = stored_bar.first_retrieved_at
-    observation_as_of = observation_retrieved_at
+    observation_market_at = stored_bar.timestamp
     bar_evidence = provenance_dict(stored_bar, evaluated_at=now)
 
     before = shadow.snapshot()
     target = Decimal(str(intent.get("target_weight") or evidence.get("target_weight") or "1"))
     costs = CostModel(
-        commission_usd=Decimal("0"),
-        spread_bps=Decimal("1"),
-        slippage_bps=Decimal("1"),
+        commission_usd=policy.commission_usd,
+        spread_bps=policy.spread_bps,
+        slippage_bps=policy.slippage_bps,
         min_notional_usd=Decimal("1"),
-        quantity_precision=6,
+        quantity_precision=policy.max_qty_decimals,
     )
     current_qty = before["holdings"].get(SYMBOL, _ZERO)
     sized = size_policy_aware(
@@ -170,8 +169,13 @@ def _resume_one(
         "execution_model": bar_evidence["execution_assumption"],
         "realtime_executable": False,
         "observation_retrieved_at": observation_retrieved_at.isoformat(),
-        "observation_as_of": observation_as_of.isoformat(),
-        "price_as_of": observation_as_of.isoformat(),
+        "observation_as_of": observation_market_at.isoformat(),
+        "price_as_of": observation_market_at.isoformat(),
+        "signal_created_at": now.isoformat(),
+        "observation_market_timestamp": observation_market_at.isoformat(),
+        "observation_first_retrieved_at": observation_retrieved_at.isoformat(),
+        "risk_evaluated_at": now.isoformat(),
+        "simulation_processed_at": now.isoformat(),
         "fill_session": fill_day.isoformat(),
         "open_price": str(open_price),
         "bar_provenance": bar_evidence,
@@ -203,7 +207,7 @@ def _resume_one(
                 from_state=current["state"],
                 reason=sized.reason,
                 source_price=str(open_price),
-                price_as_of=observation_as_of.isoformat(),
+                price_as_of=observation_market_at.isoformat(),
                 ledger_version=before["version"],
             )
         return _finish(
@@ -229,7 +233,7 @@ def _resume_one(
         symbol=SYMBOL,
         side=sized.side,  # type: ignore[arg-type]
         quantity=sized.quantity,
-        as_of=observation_as_of,
+        as_of=now,
     )
     risk_ledger = InternalLedger(
         cash_usd=before["cash_usd"],
@@ -237,16 +241,36 @@ def _resume_one(
         capital_usd=Decimal("100"),
         reserved_cash_usd=before["reserved_cash_usd"],
     )
-    prices = {SYMBOL: {"price": open_price, "as_of": observation_as_of, "feed": FEED}}
-    exposure = current_qty * open_price
-    account = AccountMetrics(
-        realized_pnl_today_usd=_ZERO,
-        equity_usd=before["cash_usd"] + exposure,
-        peak_equity_usd=max(before["peak_equity_usd"], before["cash_usd"] + exposure),
+    prices = {
+        SYMBOL: {
+            "price": open_price,
+            "as_of": observation_market_at,
+            "feed": FEED,
+            "first_retrieved_at": observation_retrieved_at,
+            "session_date": fill_day.isoformat(),
+            "bar_kind": "daily",
+            "realtime_executable": False,
+        }
+    }
+    from nomadquant.shadow.valuation import journal_day_metrics
+
+    account = journal_day_metrics(
+        shadow,
+        before,
+        mark_price=open_price,
+        quantity=current_qty,
+        evaluated_at=now,
     )
     risk_store = RiskStore(risk_path)
     risk = RiskEngine(policy).evaluate(
-        proposal, risk_ledger, prices, store=risk_store, account=account, now=now
+        proposal,
+        risk_ledger,
+        prices,
+        store=risk_store,
+        account=account,
+        now=now,
+        cost_basis=dict(before["cost_basis"]),
+        clock="prospective",
     )
     evidence["risk_verdict"] = risk.verdict
     evidence["risk_reasons"] = risk.reasons
@@ -269,7 +293,7 @@ def _resume_one(
                 from_state=current["state"],
                 reason=f"Risk {risk.verdict}",
                 source_price=str(open_price),
-                price_as_of=observation_as_of.isoformat(),
+                price_as_of=observation_market_at.isoformat(),
                 risk_verdict=risk.verdict,
                 ledger_version=before["version"],
             )
@@ -343,7 +367,7 @@ def _resume_one(
             "policy_version": risk.policy_version,
             "policy_hash": risk.policy_hash,
             "notional_usd": None if risk.notional_usd is None else str(risk.notional_usd),
-            "proposal_as_of": observation_as_of.isoformat(),
+            "proposal_as_of": now.isoformat(),
             "evaluated_at": now.isoformat(),
             "cycle_key": intent["cycle_key"],
         },

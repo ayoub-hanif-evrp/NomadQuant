@@ -23,7 +23,6 @@ from nomadquant.marketdata.store import MarketStore
 from nomadquant.research.models import CostModel
 from nomadquant.research.signals import momentum_return, target_from_momentum
 from nomadquant.risk import (
-    AccountMetrics,
     InternalLedger,
     Proposal,
     RiskEngine,
@@ -544,27 +543,33 @@ def run_shadow_cycle(
         )
 
     observation_retrieved_at = stored_bar.first_retrieved_at
-    observation_as_of = observation_retrieved_at
+    observation_market_at = stored_bar.timestamp
     evidence["execution_model"] = bar_provenance["execution_assumption"]
     evidence["observation_retrieved_at"] = observation_retrieved_at.isoformat()
-    evidence["observation_as_of"] = observation_as_of.isoformat()
-    evidence["price_as_of"] = observation_as_of.isoformat()
+    evidence["observation_as_of"] = observation_market_at.isoformat()
+    evidence["price_as_of"] = observation_market_at.isoformat()
+    evidence["signal_created_at"] = now.isoformat()
+    evidence["signal_information_cutoff"] = evidence.get("signal_available_at")
+    evidence["observation_market_timestamp"] = observation_market_at.isoformat()
+    evidence["observation_first_retrieved_at"] = observation_retrieved_at.isoformat()
+    evidence["risk_evaluated_at"] = now.isoformat()
+    evidence["simulation_processed_at"] = now.isoformat()
     evidence["fill_session"] = fill_day.isoformat()
     evidence["open_price"] = str(open_price)
     evidence["bar_provenance"] = bar_provenance
     evidence["realtime_executable"] = False
     evidence["observation_note"] = bar_provenance["note"]
 
-    costs = CostModel(
-        commission_usd=Decimal("0"),
-        spread_bps=Decimal("1"),
-        slippage_bps=Decimal("1"),
-        min_notional_usd=Decimal("1"),
-        quantity_precision=6,
-    )
     from nomadquant.shadow.sizing import size_policy_aware
 
     active_policy = policy or RiskPolicy()
+    costs = CostModel(
+        commission_usd=active_policy.commission_usd,
+        spread_bps=active_policy.spread_bps,
+        slippage_bps=active_policy.slippage_bps,
+        min_notional_usd=Decimal("1"),
+        quantity_precision=active_policy.max_qty_decimals,
+    )
     sized = size_policy_aware(
         cash=before["cash_usd"],
         reserved=before["reserved_cash_usd"],
@@ -613,7 +618,7 @@ def run_shadow_cycle(
         symbol=SYMBOL,
         side=side,  # type: ignore[arg-type]
         quantity=proposal_qty,
-        as_of=observation_as_of,
+        as_of=now,
     )
     risk_store = RiskStore(risk_path)
     risk_ledger = InternalLedger(
@@ -625,23 +630,32 @@ def run_shadow_cycle(
     prices = {
         SYMBOL: {
             "price": open_price,
-            "as_of": observation_as_of,
+            "as_of": observation_market_at,
             "feed": FEED,
+            "first_retrieved_at": observation_retrieved_at,
+            "session_date": fill_day.isoformat(),
+            "bar_kind": "daily",
+            "realtime_executable": False,
         }
     }
-    exposure = current_qty * open_price
-    account = AccountMetrics(
-        realized_pnl_today_usd=_ZERO,
-        equity_usd=before["cash_usd"] + exposure,
-        peak_equity_usd=max(before["peak_equity_usd"], before["cash_usd"] + exposure),
+    from nomadquant.shadow.valuation import journal_day_metrics
+
+    account = journal_day_metrics(
+        shadow,
+        before,
+        mark_price=open_price,
+        quantity=current_qty,
+        evaluated_at=now,
     )
-    risk = RiskEngine(policy or RiskPolicy()).evaluate(
+    risk = RiskEngine(active_policy).evaluate(
         proposal,
         risk_ledger,
         prices,
         store=risk_store,
         account=account,
         now=now,
+        cost_basis=dict(before["cost_basis"]),
+        clock="historical" if label == LABEL_RETRO else "prospective",
     )
     evidence["proposal"] = proposal.model_dump(mode="json")
     evidence["risk_verdict"] = risk.verdict
@@ -664,7 +678,7 @@ def run_shadow_cycle(
                 from_state="SIGNAL_RECORDED",
                 reason=f"Risk {risk.verdict}",
                 source_price=str(open_price),
-                price_as_of=observation_as_of.isoformat(),
+                price_as_of=observation_market_at.isoformat(),
                 risk_verdict=risk.verdict,
                 ledger_version=before["version"],
             )
@@ -744,7 +758,7 @@ def run_shadow_cycle(
                 from_state="SIGNAL_RECORDED",
                 reason="Approved sell / zero reserve",
                 source_price=str(open_price),
-                price_as_of=observation_as_of.isoformat(),
+                price_as_of=observation_market_at.isoformat(),
                 risk_verdict=risk.verdict,
                 ledger_version=before["version"],
             )
@@ -810,7 +824,7 @@ def run_shadow_cycle(
             "policy_version": risk.policy_version,
             "policy_hash": risk.policy_hash,
             "notional_usd": None if risk.notional_usd is None else str(risk.notional_usd),
-            "proposal_as_of": observation_as_of.isoformat(),
+            "proposal_as_of": now.isoformat(),
             "evaluated_at": now.isoformat(),
             "cycle_key": cycle_key,
         },

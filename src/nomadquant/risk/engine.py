@@ -7,10 +7,15 @@ or missing P&L inputs required by loss-limit rules.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
+from zoneinfo import ZoneInfo
 
+from nomadquant.finance.accounting import Book, FillResult, apply_fill
+from nomadquant.finance.execution import attribute_costs, execution_price
+from nomadquant.marketdata.calendar import is_session
+from nomadquant.research.models import CostModel
 from nomadquant.risk.ledger import InternalLedger, LedgerInvalid
 from nomadquant.risk.policy import RiskPolicy
 from nomadquant.risk.schemas import (
@@ -42,12 +47,32 @@ class RiskEngine:
         store: _SeenStore | None = None,
         account: AccountMetrics | None = None,
         now: datetime | None = None,
+        cost_basis: dict[str, Decimal] | None = None,
+        clock: Literal["prospective", "historical"] = "prospective",
     ) -> EvaluationResult:
         """Return a verdict. Never mutates ``ledger``, never calls a broker."""
         policy = self.policy
         working = ledger.snapshot()
         rule_verdicts: list[RuleVerdict] = []
-        clock = now or datetime.now(UTC)
+        if clock == "historical" and now is None:
+            rule_verdicts.append(
+                RuleVerdict(
+                    rule="evaluation_clock",
+                    verdict="INSUFFICIENT_DATA",
+                    reason="Historical replay requires an explicit recorded evaluation clock.",
+                )
+            )
+            return EvaluationResult(
+                proposal_id=proposal.id,
+                verdict="INSUFFICIENT_DATA",
+                reasons=["Historical replay requires an explicit recorded evaluation clock."],
+                rule_verdicts=rule_verdicts,
+                policy_version=policy.version,
+                policy_hash=policy.policy_hash(),
+                evaluated_at=datetime.now(UTC),
+                evaluation_clock=clock,
+            )
+        evaluated_at = now or datetime.now(UTC)
 
         def run(outcome: _RuleOutcome) -> bool:
             rule, status, reason = outcome
@@ -76,7 +101,8 @@ class RiskEngine:
                 rule_verdicts=rule_verdicts,
                 policy_version=policy.version,
                 policy_hash=policy.policy_hash(),
-                evaluated_at=clock,
+                evaluated_at=evaluated_at,
+                evaluation_clock=clock,
                 notional_usd=notional_usd,
                 projected_cash_usd=projected_cash_usd,
                 projected_holdings=holdings_out,
@@ -102,7 +128,7 @@ class RiskEngine:
         if run(_quantity_precision(proposal, policy)):
             return finalize("REJECT")
 
-        if run(_proposal_timestamp(proposal, clock)):
+        if run(_proposal_timestamp(proposal, evaluated_at)):
             return finalize("INSUFFICIENT_DATA")
 
         price_map, valuation = _price_map(prices)
@@ -117,7 +143,23 @@ class RiskEngine:
         if run(trade_price_outcome):
             return finalize("INSUFFICIENT_DATA")
 
-        if run(_stale_price(proposal, trade_as_of, policy)):
+        if run(_session_clock(prices.get(proposal.symbol), trade_as_of)):
+            return finalize("INSUFFICIENT_DATA")
+        anchor = _freshness_anchor(prices.get(proposal.symbol), trade_as_of)
+        if anchor is None:
+            rule_verdicts.append(
+                RuleVerdict(
+                    rule="stale_price",
+                    verdict="INSUFFICIENT_DATA",
+                    reason="Price retrieval timestamp is naive.",
+                )
+            )
+            return finalize("INSUFFICIENT_DATA")
+        if run(_future_quote(anchor, evaluated_at)):
+            return finalize("INSUFFICIENT_DATA")
+        if run(_stale_price(anchor, evaluated_at, policy)):
+            return finalize("INSUFFICIENT_DATA")
+        if run(_delayed_daily(prices.get(proposal.symbol))):
             return finalize("INSUFFICIENT_DATA")
 
         if run(_invalid_trade_price(trade_price)):
@@ -134,21 +176,46 @@ class RiskEngine:
             status = rule_verdicts[-1].verdict
             return finalize("INSUFFICIENT_DATA" if status == "INSUFFICIENT_DATA" else "REJECT")
 
-        notional = proposal.quantity * trade_price
-        spread_cost = notional * policy.spread_bps / Decimal(10000)
-        commission = policy.commission_usd
-        costs = spread_cost + commission
+        fill, attributed = _fill_economics(proposal, trade_price, policy)
+        notional = fill.notional
+        costs = attributed
+        mark_notional = proposal.quantity * trade_price
+        if proposal.side == "buy" and run(_capital_scale_sanity(notional, policy)):
+            return finalize("REJECT", notional_usd=notional, estimated_costs_usd=costs)
+        if proposal.side == "sell" and proposal.quantity > working.holding(proposal.symbol):
+            run(_sell_insufficient_holdings(proposal, working))
+            return finalize("REJECT", notional_usd=notional, estimated_costs_usd=costs)
+        debit = -fill.cash_delta if proposal.side == "buy" else Decimal("0")
+        if proposal.side == "buy" and debit > working.available_cash_usd():
+            run(_available_cash(debit, working))
+            return finalize("REJECT", notional_usd=notional, estimated_costs_usd=costs)
+        projected = _project_fill(working, proposal, trade_price, policy, cost_basis)
+        if projected is None:
+            rule_verdicts.append(
+                RuleVerdict(
+                    rule="fill_projection",
+                    verdict="REJECT",
+                    reason="The shared fill kernel cannot fund this quantity.",
+                )
+            )
+            return finalize("REJECT", notional_usd=notional, estimated_costs_usd=costs)
+        updated, kernel_fill, kernel_cost = projected
+        if kernel_fill.notional != notional or kernel_cost != costs:
+            rule_verdicts.append(
+                RuleVerdict(
+                    rule="fill_projection",
+                    verdict="INSUFFICIENT_DATA",
+                    reason="Risk economics diverged from the shared fill kernel.",
+                )
+            )
+            return finalize("INSUFFICIENT_DATA", notional_usd=notional, estimated_costs_usd=costs)
+        cash_after = updated.cash
+        holdings_after = dict(updated.holdings)
 
         if proposal.side == "sell":
             if run(_sell_insufficient_holdings(proposal, working)):
                 return finalize("REJECT", notional_usd=notional, estimated_costs_usd=costs)
-            proceeds = notional - costs
-            cash_after = working.cash_usd + proceeds
-            holdings_after = dict(working.holdings)
             key = proposal.symbol.upper()
-            holdings_after[key] = working.holding(key) - proposal.quantity
-            if holdings_after[key] == 0:
-                holdings_after.pop(key, None)
             try:
                 exposure_after = InternalLedger(
                     cash_usd=cash_after,
@@ -189,20 +256,12 @@ class RiskEngine:
             )
 
         # --- buy path ------------------------------------------------------
-        total_debit = notional + costs
-        if run(_capital_scale_sanity(notional, policy)):
-            return finalize("REJECT", notional_usd=notional, estimated_costs_usd=costs)
-        if run(_available_cash(total_debit, working)):
-            return finalize("REJECT", notional_usd=notional, estimated_costs_usd=costs)
         if run(_max_single_transaction(notional, policy)):
             return finalize("REJECT", notional_usd=notional, estimated_costs_usd=costs)
 
-        cash_after = working.cash_usd - total_debit
-        holdings_after = dict(working.holdings)
         key = proposal.symbol.upper()
-        holdings_after[key] = working.holding(key) + proposal.quantity
         price_for_exposure = price_map | {key: trade_price}
-        if run(_max_symbol_exposure(key, notional, trade_price, working, policy)):
+        if run(_max_symbol_exposure(key, mark_notional, trade_price, working, policy)):
             return finalize("REJECT", notional_usd=notional, estimated_costs_usd=costs)
         try:
             exposure_after = InternalLedger(
@@ -260,9 +319,18 @@ def evaluate_proposal(
     store: _SeenStore | None = None,
     account: AccountMetrics | None = None,
     now: datetime | None = None,
+    cost_basis: dict[str, Decimal] | None = None,
+    clock: Literal["prospective", "historical"] = "prospective",
 ) -> EvaluationResult:
     return RiskEngine(policy).evaluate(
-        proposal, ledger, prices, store=store, account=account, now=now
+        proposal,
+        ledger,
+        prices,
+        store=store,
+        account=account,
+        now=now,
+        cost_basis=cost_basis,
+        clock=clock,
     )
 
 
@@ -281,21 +349,19 @@ def _resolve_account(
     """
     if account is not None:
         return account
-    try:
-        exposure = (
-            ledger.total_exposure_usd(price_map)
-            if any(qty != 0 for qty in ledger.holdings.values())
-            else Decimal("0")
-        )
-    except LedgerInvalid:
+    # An untouched cash book has no journal to disagree with. Any holding,
+    # reservation, or cash change requires an explicit day-P&L input.
+    untouched = (
+        ledger.cash_usd == ledger.capital_usd
+        and ledger.reserved_cash_usd == 0
+        and not any(qty != 0 for qty in ledger.holdings.values())
+    )
+    if not untouched:
         return None
-    equity = ledger.cash_usd + exposure
-    # Do not invent a peak above current equity — that would fabricate drawdown.
-    # Callers tracking true peaks must pass AccountMetrics explicitly.
     return AccountMetrics(
         realized_pnl_today_usd=Decimal("0"),
-        equity_usd=equity,
-        peak_equity_usd=equity,
+        equity_usd=ledger.cash_usd,
+        peak_equity_usd=ledger.cash_usd,
     )
 
 
@@ -477,15 +543,147 @@ def _trade_price(
     )
 
 
-def _stale_price(proposal: Proposal, price_as_of: datetime, policy: RiskPolicy) -> _RuleOutcome:
-    age = proposal.as_of.astimezone(UTC) - price_as_of
+def _freshness_anchor(quote: Any, price_as_of: datetime) -> datetime | None:
+    """Older of the market stamp and the retrieval stamp. Naive retrieval fails closed."""
+    raw = (
+        quote.get("first_retrieved_at")
+        if isinstance(quote, dict)
+        else getattr(quote, "first_retrieved_at", None)
+    )
+    if raw is None:
+        return price_as_of
+    retrieved = raw if isinstance(raw, datetime) else datetime.fromisoformat(str(raw))
+    if retrieved.tzinfo is None:
+        return None
+    return min(price_as_of, retrieved.astimezone(UTC))
+
+
+def _session_clock(quote: Any, price_as_of: datetime) -> _RuleOutcome:
+    raw = None
+    if isinstance(quote, dict):
+        raw = quote.get("session_date")
+    else:
+        raw = getattr(quote, "session_date", None)
+    session_day: date
+    if isinstance(raw, str):
+        session_day = date.fromisoformat(raw[:10])
+    elif isinstance(raw, date) and not isinstance(raw, datetime):
+        session_day = raw
+    else:
+        session_day = price_as_of.astimezone(ZoneInfo("America/New_York")).date()
+    if not is_session(session_day):
+        return (
+            "exchange_session",
+            "INSUFFICIENT_DATA",
+            f"{session_day.isoformat()} is not an NYSE session.",
+        )
+    return ("exchange_session", "PASS", f"{session_day.isoformat()} is an NYSE session.")
+
+
+def _future_quote(anchor: datetime, evaluated_at: datetime) -> _RuleOutcome:
+    if anchor > evaluated_at.astimezone(UTC) + timedelta(minutes=1):
+        return (
+            "future_quote",
+            "INSUFFICIENT_DATA",
+            "Quote timestamp is after the evaluation clock.",
+        )
+    return ("future_quote", "PASS", "Quote timestamp is not after the evaluation clock.")
+
+
+def _stale_price(anchor: datetime, evaluated_at: datetime, policy: RiskPolicy) -> _RuleOutcome:
+    age = evaluated_at.astimezone(UTC) - anchor.astimezone(UTC)
     if age > policy.max_price_age:
         return (
             "stale_price",
             "INSUFFICIENT_DATA",
-            f"Price age {age} exceeds the policy limit of {policy.max_price_age}.",
+            f"Price age {age} exceeds the policy limit of {policy.max_price_age} "
+            "relative to the evaluation clock.",
         )
     return ("stale_price", "PASS", f"Price age {age} is within the policy limit.")
+
+
+def _delayed_daily(quote: Any) -> _RuleOutcome:
+    kind = quote.get("bar_kind") if isinstance(quote, dict) else getattr(quote, "bar_kind", None)
+    realtime = (
+        quote.get("realtime_executable")
+        if isinstance(quote, dict)
+        else getattr(quote, "realtime_executable", None)
+    )
+    if kind == "daily" and realtime is True:
+        return (
+            "delayed_daily_bar",
+            "INSUFFICIENT_DATA",
+            "A daily bar was labeled real-time executable.",
+        )
+    if kind == "daily":
+        return (
+            "delayed_daily_bar",
+            "PASS",
+            "Daily bar is delayed hypothetical evidence, not a live executable price.",
+        )
+    return ("delayed_daily_bar", "PASS", "Quote is not labeled as a daily bar.")
+
+
+def _fill_economics(
+    proposal: Proposal, mid: Decimal, policy: RiskPolicy
+) -> tuple[FillResult, Decimal]:
+    model = _cost_model(policy)
+    price = execution_price(mid, model, side=proposal.side)
+    row = attribute_costs(mid, proposal.quantity, model)
+    notional = proposal.quantity * price
+    commission = row["commission"]
+    cash_delta = -(notional + commission) if proposal.side == "buy" else notional - commission
+    fill = FillResult(
+        fill_price=price,
+        quantity=proposal.quantity,
+        side=proposal.side,
+        notional=notional,
+        commission=commission,
+        spread_cost=row["spread"],
+        slippage_cost=row["slippage"],
+        regulatory_fee=row["regulatory_fee"],
+        cash_delta=cash_delta,
+    )
+    attributed = row["spread"] + row["slippage"] + commission + row["regulatory_fee"]
+    return fill, attributed
+
+
+def _cost_model(policy: RiskPolicy) -> CostModel:
+    return CostModel(
+        commission_usd=policy.commission_usd,
+        spread_bps=policy.spread_bps,
+        slippage_bps=policy.slippage_bps,
+        min_notional_usd=Decimal("0"),
+        quantity_precision=policy.max_qty_decimals,
+    )
+
+
+def _project_fill(
+    ledger: InternalLedger,
+    proposal: Proposal,
+    mid: Decimal,
+    policy: RiskPolicy,
+    cost_basis: dict[str, Decimal] | None,
+) -> tuple[Book, FillResult, Decimal] | None:
+    model = _cost_model(policy)
+    book = Book(
+        cash=ledger.cash_usd,
+        holdings={key.upper(): value for key, value in ledger.holdings.items()},
+        cost_basis={key.upper(): value for key, value in dict(cost_basis or {}).items()},
+    )
+    try:
+        updated, fill = apply_fill(
+            book,
+            symbol=proposal.symbol,
+            side=proposal.side,
+            quantity=proposal.quantity,
+            mid=mid,
+            costs=model,
+        )
+    except ValueError:
+        return None
+    attributed = fill.spread_cost + fill.slippage_cost + fill.commission + fill.regulatory_fee
+    return updated, fill, attributed
 
 
 def _invalid_trade_price(price: Decimal) -> _RuleOutcome:
