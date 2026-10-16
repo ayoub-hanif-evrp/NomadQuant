@@ -8,6 +8,7 @@ Maintenance release.
 - Backups include the retrospective ledger, worker logs, agent memos, and a schema catalog. Restore uses allowlisted names, rejects path escapes, and rolls back from a safety copy. The confirm token is a checksum, not a signature. Each database is snapshotted on its own; this is not one atomic whole-system snapshot.
 - Dashboard reads open the shadow ledger read-only and do not create or migrate it.
 - Stop refuses a tracked PID whose start time does not match, so a reused Windows PID is not killed.
+- The shadow approval fingerprint covers the prices in the strategy window. A scheduled shadow cycle requires an explicit phrase and an expiry, and it can be disabled. A pending intent resumes only when it was authorized. A backup is refused while the app or worker is still running, and a failed restore of the first artifact is rolled back.
 
 ## 1.0.0
 

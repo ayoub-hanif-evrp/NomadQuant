@@ -65,6 +65,12 @@ def artifact_map(settings: Settings) -> dict[str, Path | None]:
 
 def backup_local(settings: Settings, destination: Path) -> dict[str, Any]:
     """Write a consistent backup. Existing live databases are not modified."""
+    data_root = Path(settings.database_path).parent
+    run_dir = data_root / "run"
+    if _writers_alive(run_dir) or _worker_lock_active(data_root):
+        raise BackupError(
+            "Stop the application and the shadow worker before a consistency-sensitive backup."
+        )
     destination = destination.resolve()
     destination.mkdir(parents=True, exist_ok=False)
     included: list[dict[str, Any]] = []
@@ -188,6 +194,7 @@ def restore_local(
     live = artifact_map(settings)
     restored: list[str] = []
     installed: list[tuple[str, Path]] = []
+    current: tuple[str, Path] | None = None
     try:
         for item in manifest["artifacts"]:
             if item.get("status") != "PRESENT":
@@ -203,10 +210,14 @@ def restore_local(
                 target = Path(settings.database_path).resolve().parent / "schema-catalog.json"
             if target.exists() or target.is_symlink():
                 _preserve(target, safety / ARCHIVE_NAMES[name])
+            current = (name, target)
             _install(archive, target)
             installed.append((name, target))
+            current = None
             restored.append(name)
     except Exception as exc:
+        if current is not None:
+            installed.append(current)
         _rollback(safety, installed)
         raise BackupError(
             "Restore stopped and the safety copy was copied back. "
@@ -374,9 +385,34 @@ def _require_stopped(run_dir: Path) -> None:
         )
 
 
+def _worker_lock_active(data_root: Path) -> bool:
+    """True when the shadow worker lock is younger than its stale window."""
+    lock = data_root / "shadow_worker.lock"
+    if not lock.is_file():
+        return False
+    age = datetime.now(UTC).timestamp() - lock.stat().st_mtime
+    return age < 2 * 60 * 60
+
+
 def _pid_alive(pid: int) -> bool:
+    """True when the process exists. Does not signal it.
+
+    On Windows, ``os.kill(pid, 0)`` is Ctrl+C, so this uses a query handle.
+    """
     if pid <= 0:
         return False
+    if os.name == "nt":
+        import ctypes
+
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel.OpenProcess.restype = ctypes.c_void_p
+        kernel.OpenProcess.argtypes = [ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32]
+        kernel.CloseHandle.argtypes = [ctypes.c_void_p]
+        handle = kernel.OpenProcess(0x1000, False, pid)
+        if not handle:
+            return False
+        kernel.CloseHandle(handle)
+        return True
     try:
         os.kill(pid, 0)
     except OSError:

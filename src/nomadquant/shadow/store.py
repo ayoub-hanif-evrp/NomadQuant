@@ -178,6 +178,7 @@ class ShadowStore:
         self.path = Path(path)
         self.pending_approval_binding: dict[str, Any] | None = None
         self.approval_checked_at: datetime | None = None
+        self.authorization_grant: dict[str, Any] | None = None
         self._readonly = False
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as conn:
@@ -218,6 +219,7 @@ class ShadowStore:
         store.path = candidate
         store.pending_approval_binding = None
         store.approval_checked_at = None
+        store.authorization_grant = None
         store._readonly = True
         store._assert_readable()
         return store

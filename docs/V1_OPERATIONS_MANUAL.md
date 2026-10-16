@@ -45,7 +45,12 @@ uv run nomadquant-shadow worker --mode shadow-apply
 
 Run these only after you decide to change the forward ledger. `confirm` stores a one-time internal approval when the state is `READY_TO_START` and the preview hash still matches. It expires in 30 minutes, binds the ledger version, policy hash, feed, and market fingerprint, and is consumed by one `shadow-apply`. It does not place a broker order and does not enable later scheduled applies. Blocked, waiting, and failed states cannot be approved. Today the workstation is `WAITING_FOR_SESSION`, so confirm will reject.
 
-A later unattended schedule is a separate command, `nomadquant-shadow pilot enable-schedule`. Do not run it unless you want later internal shadow cycles without a new token. It is not enabled by installation or by `confirm`.
+A later unattended schedule is separate. It requires the exact phrase and an expiry within 31 days, and it is not enabled by installation or by `confirm`. The daily steps are in `docs/FORWARD_PILOT_RUNBOOK.md`.
+
+```powershell
+uv run nomadquant-shadow pilot enable-schedule --confirm ENABLE_INTERNAL_SHADOW_SCHEDULE --until 2026-11-16T18:00:00+00:00
+uv run nomadquant-shadow pilot disable-schedule --confirm DISABLE_INTERNAL_SHADOW_SCHEDULE
+```
 
 ## Backup and restore
 

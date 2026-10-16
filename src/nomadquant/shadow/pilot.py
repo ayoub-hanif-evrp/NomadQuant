@@ -366,6 +366,7 @@ def pilot_start_preview(settings: Settings) -> dict[str, Any]:
                 "holdings": {key: str(value) for key, value in snap["holdings"].items()},
             }
     from nomadquant.risk.policy import RiskPolicy
+    from nomadquant.shadow.approval import market_fingerprint
 
     policy = RiskPolicy()
     body = {
@@ -394,6 +395,7 @@ def pilot_start_preview(settings: Settings) -> dict[str, Any]:
         ),
         "broker_orders": False,
         "mutates_forward_ledger": False,
+        "market_fingerprint": market_fingerprint(Path(settings.market_data_path)),
     }
     encoded = json.dumps(body, sort_keys=True, separators=(",", ":"))
     body["preview_hash"] = hashlib.sha256(encoded.encode("utf-8")).hexdigest()

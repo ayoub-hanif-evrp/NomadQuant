@@ -53,12 +53,30 @@ def main(argv: list[str] | None = None) -> None:
     pilot = sub.add_parser("pilot", help="Read-only supervised forward-pilot checks.")
     pilot.add_argument(
         "action",
-        choices=["preflight", "status", "report", "preview", "confirm", "enable-schedule"],
+        choices=[
+            "preflight",
+            "status",
+            "report",
+            "preview",
+            "confirm",
+            "enable-schedule",
+            "disable-schedule",
+        ],
     )
     pilot.add_argument(
         "--approval",
         default="",
         help="Exact preview hash. confirm does not apply a fill.",
+    )
+    pilot.add_argument(
+        "--confirm",
+        default="",
+        help="Exact schedule phrase. Required for enable-schedule and disable-schedule.",
+    )
+    pilot.add_argument(
+        "--until",
+        default="",
+        help="Timezone-aware expiry for enable-schedule. At most 31 days ahead.",
     )
     sub.add_parser("reconcile", help="Reconcile shadow ledger invariants.")
 
@@ -152,18 +170,73 @@ def _dispatch(args: argparse.Namespace, settings: Settings) -> int:
                 return 2
             payload = confirm_pilot_start(settings, args.approval)
         elif args.action == "enable-schedule":
-            from nomadquant.shadow.approval import enable_scheduled_shadow_cycles
+            from datetime import UTC, datetime
+
+            from nomadquant.risk.policy import RiskPolicy
+            from nomadquant.shadow.approval import SCHEDULE_OPT_IN, enable_scheduled_shadow_cycles
             from nomadquant.shadow.store import ShadowStore
 
-            enable_scheduled_shadow_cycles(ShadowStore(settings.shadow_path))
+            if args.confirm != SCHEDULE_OPT_IN or not args.until:
+                print(
+                    "error: enable-schedule requires "
+                    "--confirm ENABLE_INTERNAL_SHADOW_SCHEDULE --until ISO-TIME",
+                    file=sys.stderr,
+                )
+                return 2
+            try:
+                expires = datetime.fromisoformat(args.until)
+            except ValueError:
+                print("error: --until is not an ISO timestamp", file=sys.stderr)
+                return 2
+            if expires.tzinfo is None:
+                print("error: --until must include a timezone", file=sys.stderr)
+                return 2
+            try:
+                record = enable_scheduled_shadow_cycles(
+                    ShadowStore(settings.shadow_path),
+                    now=datetime.now(UTC),
+                    confirm=args.confirm,
+                    expires_at=expires,
+                    policy=RiskPolicy(),
+                )
+            except ValueError as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                return 1
             payload = {
                 "status": "SCHEDULE_ENABLED",
-                "scope": "internal_shadow_simulation_only",
+                "scope": record["scope"],
+                "expires_at": record["expires_at"],
                 "broker_orders": False,
                 "note": (
-                    "Later forward shadow-apply cycles may proceed without a new "
+                    "Later internal shadow cycles may proceed until expiry without a new "
                     "one-time token. This is not an Alpaca order authorization."
                 ),
+            }
+        elif args.action == "disable-schedule":
+            from datetime import UTC, datetime
+
+            from nomadquant.shadow.approval import SCHEDULE_OPT_OUT, disable_scheduled_shadow_cycles
+            from nomadquant.shadow.store import ShadowStore
+
+            if args.confirm != SCHEDULE_OPT_OUT:
+                print(
+                    "error: disable-schedule requires --confirm DISABLE_INTERNAL_SHADOW_SCHEDULE",
+                    file=sys.stderr,
+                )
+                return 2
+            try:
+                disable_scheduled_shadow_cycles(
+                    ShadowStore(settings.shadow_path),
+                    now=datetime.now(UTC),
+                    confirm=args.confirm,
+                )
+            except ValueError as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                return 1
+            payload = {
+                "status": "SCHEDULE_DISABLED",
+                "scope": "internal_shadow_simulation_only",
+                "broker_orders": False,
             }
         else:
             payload = forward_pilot_report(settings, verify_limit=5)

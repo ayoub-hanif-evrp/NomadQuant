@@ -224,6 +224,48 @@ def test_restore_uses_settings_paths_not_manifest_paths(tmp_path: Path) -> None:
     connection.close()
 
 
+def test_first_artifact_failure_restores_the_live_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = _settings(tmp_path)
+    manifest = backup_local(settings, tmp_path / "first")
+    connection = sqlite3.connect(settings.database_path)
+    connection.execute("UPDATE sample SET body = 'live'")
+    connection.commit()
+    connection.close()
+    real = backup_module._install
+
+    def fail_current(archive: Path, target: Path) -> None:
+        if target.name == "nomadquant.db":
+            target.write_bytes(b"damaged")
+            raise RuntimeError("first artifact failed")
+        real(archive, target)
+
+    monkeypatch.setattr(backup_module, "_install", fail_current)
+    with pytest.raises(BackupError, match="safety copy"):
+        restore_local(settings, tmp_path / "first", confirm=manifest["confirm_token"])
+    connection = sqlite3.connect(settings.database_path)
+    assert connection.execute("SELECT body FROM sample").fetchone()[0] == "live"
+    connection.close()
+
+
+def test_backup_refuses_a_live_writer_or_worker_lock(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    run = Path(settings.database_path).parent / "run"
+    run.mkdir()
+    (run / "nomadquant.pids.json").write_text(
+        json.dumps({"pids": [__import__("os").getpid()]}),
+        encoding="utf-8",
+    )
+    with pytest.raises(BackupError, match="shadow worker"):
+        backup_local(settings, tmp_path / "busy")
+    (run / "nomadquant.pids.json").write_text(json.dumps({"pids": []}), encoding="utf-8")
+    lock = Path(settings.database_path).parent / "shadow_worker.lock"
+    lock.write_text("worker", encoding="utf-8")
+    with pytest.raises(BackupError, match="shadow worker"):
+        backup_local(settings, tmp_path / "locked")
+
+
 def test_wal_backup_includes_committed_rows(tmp_path: Path) -> None:
     settings = _settings(tmp_path)
     writer = sqlite3.connect(settings.market_data_path)

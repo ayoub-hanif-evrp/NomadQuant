@@ -53,7 +53,12 @@ def resume_pending_intents(
         raise ValueError(mode)
     results: list[dict[str, Any]] = []
     market = MarketStore(market_path)
+    from nomadquant.shadow.approval import intent_authorized
+
     for intent in shadow.list_pending_intents():
+        if mode == "apply" and label == "forward_shadow":
+            if not intent_authorized(shadow, intent, now=now, policy=policy or RiskPolicy()):
+                continue
         state = intent.get("state")
         if state not in {"PENDING_DATA", "RISK_APPROVED", "SIGNAL_RECORDED"}:
             # RESERVED is handled by explicit recover / fill path, not silent resume.

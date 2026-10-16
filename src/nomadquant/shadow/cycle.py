@@ -62,9 +62,11 @@ def _require_forward_approval(
 ) -> dict[str, Any] | None:
     """Block a new forward apply unless a matching one-time approval or schedule exists."""
     from nomadquant.shadow.approval import (
+        SCOPE,
         approval_decision,
         current_binding,
         market_fingerprint,
+        record_authorization_denial,
     )
 
     active = shadow.get_meta("shadow_apply_approval")
@@ -83,6 +85,7 @@ def _require_forward_approval(
     decision = approval_decision(shadow, binding, now=now)
     shadow.approval_checked_at = now
     if not decision["allowed"]:
+        record_authorization_denial(shadow, str(decision["reason"]), now=now)
         return {
             "id": None,
             "cycle_key": "blocked:missing_shadow_approval",
@@ -108,6 +111,19 @@ def _require_forward_approval(
         }
     if decision["consume"]:
         shadow.pending_approval_binding = binding
+        shadow.authorization_grant = {
+            "source": "one_time",
+            "grant_id": decision.get("grant_id"),
+            "scope": SCOPE,
+            "broker_orders": False,
+        }
+    elif decision["reason"] == "scheduled_policy":
+        shadow.authorization_grant = {
+            "source": "schedule",
+            "schedule_id": decision.get("schedule_id"),
+            "scope": SCOPE,
+            "broker_orders": False,
+        }
     return None
 
 
@@ -237,10 +253,18 @@ def run_shadow_cycle(
     # Recovery is explicit (`nomadquant-shadow recover` / worker recover).
     # Apply must not silently release another worker's reservation.
 
+    from nomadquant.shadow.approval import intent_authorized
     from nomadquant.shadow.outbox import deliver_outbox
     from nomadquant.shadow.pending import awaited_fill_session, resume_pending_intents
 
-    continuing = mode == "apply" and label == LABEL_FORWARD and bool(shadow.list_pending_intents())
+    authorized_pending = []
+    if mode == "apply" and label == LABEL_FORWARD:
+        authorized_pending = [
+            row
+            for row in shadow.list_pending_intents()
+            if intent_authorized(shadow, row, now=now, policy=policy or RiskPolicy())
+        ]
+    continuing = bool(authorized_pending)
     if mode == "apply" and label == LABEL_FORWARD and not continuing:
         refused = _require_forward_approval(shadow, Path(market_path), policy, now, started)
         if refused is not None:
@@ -456,6 +480,9 @@ def run_shadow_cycle(
         "shadow_db": str(db_path),
         "evaluation_context": context or label,
     }
+    grant = getattr(shadow, "authorization_grant", None)
+    if mode == "apply" and label == LABEL_FORWARD and isinstance(grant, dict):
+        evidence["authorization"] = grant
 
     intent_id = f"intent:{cycle_key}"
     if intent in {"hold"} or not is_rebalance:
