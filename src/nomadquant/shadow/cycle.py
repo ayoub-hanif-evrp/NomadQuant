@@ -52,6 +52,55 @@ _ONE = Decimal("1")
 _FORWARD_SIGNAL_MAX_AGE = timedelta(days=5)
 
 
+def _forward_apply_guard(
+    market_path: str | Path,
+    shadow_path: str | Path,
+    risk_path: str | Path,
+    started: float,
+) -> dict[str, Any] | None:
+    """Fail closed before any forward apply, including direct Python calls."""
+    from nomadquant.config import Settings
+    from nomadquant.shadow.gate import application_guard
+
+    guard = application_guard(
+        Settings(
+            market_data_path=str(market_path),
+            shadow_path=str(shadow_path),
+            risk_path=str(risk_path),
+        )
+    )
+    if guard["allowed"]:
+        return None
+    return {
+        "id": None,
+        "cycle_key": "blocked:forward_apply_guard",
+        "created_at": datetime.now(UTC).isoformat(),
+        "mode": "apply",
+        "label": LABEL_FORWARD,
+        "status": "blocked",
+        "intent": "no_trade",
+        "warnings": ["Forward apply refused by the application guard."],
+        "evidence": {
+            "reason": "application_guard_refused",
+            "gate_reasons": guard["reasons"],
+        },
+        "evidence_hash": "",
+        "error_safe": "application_guard_refused",
+        "feed": FEED,
+        "symbol": SYMBOL,
+        "risk_reasons": [],
+        "ledger_before": {},
+        "ledger_after": {},
+        "duration_ms": _ms(started),
+        "gate": {
+            "allowed": False,
+            "reasons": guard["reasons"],
+            "preflight_status": guard["preflight_status"],
+            "reconcile_ok": guard["reconcile_ok"],
+        },
+    }
+
+
 def run_shadow_cycle(
     *,
     market_path: str | Path,
@@ -83,6 +132,11 @@ def run_shadow_cycle(
         raise ValueError(f"Unknown label {label!r}.")
     if mode not in {"dry-run", "apply"}:
         raise ValueError(f"Unknown mode {mode!r}.")
+
+    if mode == "apply" and label == LABEL_FORWARD:
+        refused = _forward_apply_guard(market_path, shadow_path, risk_path, started)
+        if refused is not None:
+            return refused
 
     # Chronology gate: forward + past signal_session override is not prospective.
     if label == LABEL_FORWARD and signal_session is not None:
@@ -365,7 +419,8 @@ def run_shadow_cycle(
 
     open_bar = ohlc.get(fill_day)
     open_price = None if open_bar is None else open_bar[0]
-    if open_price is None:
+    stored_bar = market.session_bar(SYMBOL, FEED, fill_day)
+    if open_price is None or stored_bar is None:
         evidence["execution_model"] = "pending_observation"
         evidence["fill_session"] = fill_day.isoformat()
         evidence["awaited_fill_session"] = fill_day.isoformat()
@@ -383,7 +438,7 @@ def run_shadow_cycle(
                 fill_session=fill_day.isoformat(),
                 target_weight=str(target),
                 from_state="SIGNAL_RECORDED",
-                reason="Open price not yet available",
+                reason="Open price or bar provenance not yet available",
                 ledger_version=before["version"],
             )
         return _finish(
@@ -393,7 +448,9 @@ def run_shadow_cycle(
             before=before,
             status="pending_data",
             intent=intent,
-            warnings=[f"Open price for fill session {fill_day} is not available."],
+            warnings=[
+                f"Open price or stored provenance for fill session {fill_day} is not available."
+            ],
             evidence=evidence,
             duration_ms=_ms(started),
             mutate=False,
@@ -403,33 +460,63 @@ def run_shadow_cycle(
             target_weight=target,
         )
 
-    # Observation: we retrieve a stored daily open NOW. This is a delayed
-    # observation-based simulation — NOT a claim we executed at the open live.
-    observation_retrieved_at = now
-    # Earliest the open could exist as a completed session: session open bell.
-    # We still label delayed because local SQLite has no live tick provenance.
-    session_open_ny = datetime(
-        fill_day.year, fill_day.month, fill_day.day, 9, 30, tzinfo=_NY
-    ).astimezone(UTC)
-    observation_as_of = max(session_open_ny, observation_retrieved_at)
-    # Never stamp earlier than signal availability either.
-    signal_avail = modeled_available_at(signal_day)
-    if observation_as_of <= signal_avail:
-        observation_as_of = observation_retrieved_at
-        if observation_as_of <= signal_avail:
-            observation_as_of = signal_avail + timedelta(seconds=1)
+    from nomadquant.shadow.provenance import provenance_dict
 
-    evidence["execution_model"] = "delayed_observation_simulation"
+    bar_provenance = provenance_dict(stored_bar, evaluated_at=now)
+    # The stored retrieval time is the evidence. Do not invent a clock stamp.
+    if stored_bar.first_retrieved_at > now and label == LABEL_FORWARD:
+        evidence["execution_model"] = "missing_evidence"
+        evidence["bar_provenance"] = bar_provenance
+        evidence["fill_session"] = fill_day.isoformat()
+        evidence["evidence_gaps"] = list(bar_provenance["evidence_gaps"])
+        if mode == "apply":
+            shadow.upsert_intent(
+                intent_id=intent_id,
+                cycle_key=cycle_key,
+                state="PENDING_DATA",
+                strategy_id=STRATEGY_ID,
+                feed=FEED,
+                symbol=SYMBOL,
+                evidence=evidence,
+                evidence_hash=_hash(evidence),
+                signal_session=signal_day.isoformat(),
+                fill_session=fill_day.isoformat(),
+                target_weight=str(target),
+                from_state="SIGNAL_RECORDED",
+                reason="Bar retrieved after evaluation clock",
+                ledger_version=before["version"],
+            )
+        return _finish(
+            shadow,
+            mode=mode,
+            label=label,
+            before=before,
+            status="pending_data",
+            intent=intent,
+            warnings=[
+                "Stored bar was first retrieved after the evaluation clock. "
+                "Forward fill refused; this is not real-time executable evidence."
+            ],
+            evidence=evidence,
+            duration_ms=_ms(started),
+            mutate=False,
+            signal_session=signal_day,
+            fill_session=fill_day,
+            momentum=mom,
+            target_weight=target,
+        )
+
+    observation_retrieved_at = stored_bar.first_retrieved_at
+    observation_as_of = observation_retrieved_at
+    evidence["execution_model"] = bar_provenance["execution_assumption"]
     evidence["observation_retrieved_at"] = observation_retrieved_at.isoformat()
     evidence["observation_as_of"] = observation_as_of.isoformat()
     evidence["price_as_of"] = observation_as_of.isoformat()
     evidence["fill_session"] = fill_day.isoformat()
     evidence["open_price"] = str(open_price)
-    evidence["observation_note"] = (
-        "Stored daily OHLC open retrieved for delayed simulation. "
-        "Not proof of real-time open availability at signal time. "
-        "16:30 NY daily-bar model does not establish next-session open timing."
-    )
+    evidence["bar_provenance"] = bar_provenance
+    evidence["realtime_executable"] = False
+    evidence["observation_note"] = bar_provenance["note"]
 
     costs = CostModel(
         commission_usd=Decimal("0"),

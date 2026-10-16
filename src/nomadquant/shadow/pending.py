@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, date, datetime, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
-from zoneinfo import ZoneInfo
 
 from nomadquant.marketdata.calendar import sessions_between
 from nomadquant.marketdata.store import MarketStore
@@ -20,10 +19,10 @@ from nomadquant.risk import (
     RiskPolicy,
     RiskStore,
 )
+from nomadquant.shadow.provenance import provenance_dict
 from nomadquant.shadow.sizing import size_policy_aware
 from nomadquant.shadow.store import ShadowStore
 
-_NY = ZoneInfo("America/New_York")
 _ZERO = Decimal("0")
 SYMBOL = "SPY"
 FEED = "sip"
@@ -129,11 +128,22 @@ def _resume_one(
         }
 
     open_price = Decimal(str(rows[0][1]))  # session, o, h, l, c
-    observation_retrieved_at = now
-    session_open_ny = datetime(
-        fill_day.year, fill_day.month, fill_day.day, 9, 30, tzinfo=_NY
-    ).astimezone(UTC)
-    observation_as_of = max(session_open_ny, observation_retrieved_at)
+    stored_bar = market.session_bar(SYMBOL, FEED, fill_day)
+    if stored_bar is None or stored_bar.first_retrieved_at > now:
+        return {
+            "status": "pending_data",
+            "intent_id": intent_id,
+            "signal_session": signal_day.isoformat(),
+            "fill_session": fill_day.isoformat(),
+            "warnings": [
+                "Bar provenance is missing or was retrieved after the evaluation clock. "
+                "Pending intent kept; not a real-time fill."
+            ],
+            "evidence_gaps": ["missing_or_late_bar_provenance"],
+        }
+    observation_retrieved_at = stored_bar.first_retrieved_at
+    observation_as_of = observation_retrieved_at
+    bar_evidence = provenance_dict(stored_bar, evaluated_at=now)
 
     before = shadow.snapshot()
     target = Decimal(str(intent.get("target_weight") or evidence.get("target_weight") or "1"))
@@ -157,12 +167,14 @@ def _resume_one(
     evidence = {
         **evidence,
         "resumed_at": now.isoformat(),
-        "execution_model": "delayed_observation_simulation",
+        "execution_model": bar_evidence["execution_assumption"],
+        "realtime_executable": False,
         "observation_retrieved_at": observation_retrieved_at.isoformat(),
         "observation_as_of": observation_as_of.isoformat(),
         "price_as_of": observation_as_of.isoformat(),
         "fill_session": fill_day.isoformat(),
         "open_price": str(open_price),
+        "bar_provenance": bar_evidence,
         "sizing": {
             "desired_target_weight": str(sized.desired_target_weight),
             "feasible_weight": str(sized.feasible_weight),

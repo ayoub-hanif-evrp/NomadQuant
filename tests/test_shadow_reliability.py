@@ -107,7 +107,8 @@ def test_open_price_not_stamped_with_signal_session_availability(tmp_path: Path)
     obs = datetime.fromisoformat(str(price_as_of))
     signal_avail = datetime.fromisoformat(str(evidence.get("signal_available_at")))
     assert obs > signal_avail, "Open observation cannot be stamped at signal availability"
-    assert evidence.get("execution_model") == "delayed_observation_simulation"
+    assert evidence.get("execution_model") == "delayed_hypothetical_daily_open"
+    assert evidence.get("realtime_executable") is False
 
 
 # --- 1.3 Forward vs retrospective isolation ---

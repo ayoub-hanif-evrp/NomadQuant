@@ -41,6 +41,19 @@ def _extend_market(path: Path, end: date) -> None:
     base = len(existing)
     closes = [str(100 + (base + i) * 0.1) for i in range(len(missing))]
     _fill_market(path, missing, closes)
+    # Retrieval must precede the evaluation clock. The shared fixture stamps
+    # 2024-01-01, which is after a 2020 as_of and must not authorize a fill.
+    store = MarketStore(path)
+    with store._connect() as connection:
+        for session in missing:
+            retrieved = datetime(session.year, session.month, session.day, 21, 0, tzinfo=UTC)
+            connection.execute(
+                """
+                UPDATE bars SET first_retrieved_at = ?
+                WHERE symbol = 'SPY' AND session_date = ?
+                """,
+                (retrieved.isoformat(), session.isoformat()),
+            )
 
 
 # --- 0.1 Mandatory: Monday pending → Tuesday resume without --signal-session ---

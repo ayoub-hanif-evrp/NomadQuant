@@ -1,64 +1,169 @@
-"""Read-only market-data readiness for the shadow worker. No order paths."""
+"""Market-data check and opt-in incremental sync. Read-only toward the broker."""
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from nomadquant.config import Settings
-from nomadquant.marketdata.availability import modeled_available_at
+from nomadquant.marketdata.availability import latest_safe_session, modeled_available_at
 from nomadquant.marketdata.calendar import sessions_between
+from nomadquant.marketdata.errors import MarketDataError, SipNotEntitled
 from nomadquant.marketdata.store import MarketStore
-from nomadquant.shadow.cycle import FEED, LOOKBACK, SKIP, SYMBOL
+from nomadquant.marketdata.sync import Fetcher, sync_daily_bars
+from nomadquant.shadow.cycle import FEED, LOOKBACK, SKIP
+
+SYMBOLS = ("SPY", "QQQ")
+_WARMUP = LOOKBACK + SKIP + 5
 
 
 def data_check(
     settings: Settings, *, feed: str = FEED, as_of: datetime | None = None
 ) -> dict[str, Any]:
-    """Report missing completed sessions for the configured feed. No download."""
+    """Report missing sessions inside the strategy warm-up window. No download."""
     now = as_of or datetime.now(UTC)
-    path = Path(settings.market_data_path)
     if feed not in {"sip", "iex"}:
         return {"status": "ERROR", "reason": f"unsupported feed {feed}"}
+    path = Path(settings.market_data_path)
+    end = latest_safe_session(now, feed)
+    window = _required_window(end)
     if not path.exists():
         return {
             "status": "WAITING_FOR_DATA",
             "feed": feed,
+            "symbols": {},
             "reason": "market database missing",
-            "missing_sessions": [],
+            "eligible_end": end.isoformat(),
+            "required_start": window[0].isoformat() if window else None,
+            "missing_sessions": [s.isoformat() for s in window[:30]],
+            "missing_count": len(window) * len(SYMBOLS),
         }
-    market = MarketStore(path)
-    if not market.has_symbol(SYMBOL, feed):
+    market = MarketStore.open_readonly(path)
+    if market is None:
         return {
             "status": "WAITING_FOR_DATA",
             "feed": feed,
-            "symbol": SYMBOL,
-            "reason": f"no {SYMBOL}/{feed} bars",
+            "symbols": {},
+            "reason": "market database missing",
             "missing_sessions": [],
         }
-    stored = sorted(market.sessions(SYMBOL, feed))
-    today = now.astimezone(UTC).date() if now.tzinfo else date.today()
-    cal = sessions_between(stored[0], today) if stored else []
-    eligible = [s for s in cal if modeled_available_at(s) <= now]
-    eligible_end = eligible[-1] if eligible else stored[-1]
-    expected = sessions_between(stored[0], eligible_end) if stored else []
-    stored_set = set(stored)
-    missing = [s.isoformat() for s in expected if s not in stored_set]
-    warmup_ok = len(stored) >= LOOKBACK + SKIP + 5
+    per_symbol: dict[str, Any] = {}
+    any_missing = False
+    for symbol in SYMBOLS:
+        stored = market.sessions(symbol, feed) if market.has_symbol(symbol, feed) else set()
+        missing = [s for s in window if s not in stored]
+        any_missing = any_missing or bool(missing)
+        per_symbol[symbol] = {
+            "stored_sessions": len(stored),
+            "latest_stored": None if not stored else max(stored).isoformat(),
+            "missing_count": len(missing),
+            "missing_sessions": [s.isoformat() for s in missing[:30]],
+            "warmup_complete": len(missing) == 0 and len(stored) >= _WARMUP,
+        }
     return {
-        "status": "OK" if not missing and warmup_ok else "WAITING_FOR_DATA",
+        "status": "OK" if not any_missing else "WAITING_FOR_DATA",
         "feed": feed,
-        "symbol": SYMBOL,
-        "stored_sessions": len(stored),
-        "earliest": None if not stored else stored[0].isoformat(),
-        "latest_stored": None if not stored else stored[-1].isoformat(),
-        "eligible_end": eligible_end.isoformat(),
-        "missing_count": len(missing),
-        "missing_sessions": missing[-20:],
-        "warmup_ok": warmup_ok,
+        "symbol": "SPY",
+        "symbols": per_symbol,
+        "eligible_end": end.isoformat(),
+        "required_start": window[0].isoformat() if window else None,
+        "required_end": window[-1].isoformat() if window else None,
+        "missing_count": sum(int(v["missing_count"]) for v in per_symbol.values()),
+        "missing_sessions": per_symbol.get("SPY", {}).get("missing_sessions", []),
+        "warmup_ok": all(v["warmup_complete"] for v in per_symbol.values()),
         "note": (
-            "Check only. Sync is opt-in and read-only. "
-            "Never mixes SIP and IEX. Incomplete current session is excluded."
+            "Check only. Sync is opt-in. Never mixes SIP and IEX. "
+            "Window is the strategy warm-up through the latest safe completed session."
         ),
     }
+
+
+def data_sync(
+    settings: Settings,
+    *,
+    feed: str = FEED,
+    fetcher: Fetcher | None = None,
+    as_of: datetime | None = None,
+) -> dict[str, Any]:
+    """Download only missing sessions in the required window for one feed."""
+    now = as_of or datetime.now(UTC)
+    report = data_check(settings, feed=feed, as_of=now)
+    if report.get("status") == "ERROR":
+        return report
+    end = latest_safe_session(now, feed)
+    window = _required_window(end)
+    if not window:
+        return {**report, "sync": "noop", "inserted": 0, "reason": "empty_required_window"}
+    if report.get("missing_count", 0) == 0 and Path(settings.market_data_path).exists():
+        return {**report, "sync": "noop", "inserted": 0}
+    if fetcher is None:
+        try:
+            fetcher = _live_fetcher(settings)
+        except RuntimeError as exc:
+            return {
+                **report,
+                "status": "ERROR",
+                "sync": "failed",
+                "error_code": "missing_credentials",
+                "feed_used": feed,
+                "remediation": str(exc),
+            }
+    start = window[0]
+    store = MarketStore(settings.market_data_path)
+    try:
+        result = sync_daily_bars(store, fetcher, list(SYMBOLS), start, end, feed, now=now)
+    except SipNotEntitled:
+        return {
+            **report,
+            "status": "ERROR",
+            "sync": "failed",
+            "error_code": "entitlement",
+            "feed_used": feed,
+            "remediation": (
+                "This account cannot read SIP history. The shadow hypothesis stays on SIP. "
+                "Do not switch the strategy feed automatically. "
+                "Obtain SIP entitlement, or run an explicit separate dataset with --feed iex."
+            ),
+        }
+    except MarketDataError as exc:
+        return {
+            **report,
+            "status": "ERROR",
+            "sync": "failed",
+            "error_code": "provider",
+            "feed_used": feed,
+            "remediation": str(exc),
+        }
+    after = data_check(settings, feed=feed, as_of=now)
+    return {
+        **after,
+        "sync": result.status,
+        "inserted": result.counts.inserted,
+        "unchanged": result.counts.unchanged,
+        "conflicts": result.counts.conflicts,
+        "warnings": result.warnings,
+        "feed_used": feed,
+        "note": "Read-only market data sync. No trading client. No feed fallback.",
+    }
+
+
+def _required_window(end: date) -> list[date]:
+    cal = sessions_between(end - timedelta(days=900), end)
+    eligible = [s for s in cal if modeled_available_at(s) <= modeled_available_at(end)]
+    if len(eligible) <= _WARMUP:
+        return eligible
+    return eligible[-_WARMUP:]
+
+
+def _live_fetcher(settings: Settings) -> Fetcher:
+    key = settings.alpaca_api_key
+    secret = settings.alpaca_api_secret
+    if key is None or secret is None:
+        raise RuntimeError(
+            "Alpaca credentials are not configured. data-sync is opt-in and read-only."
+        )
+    from nomadquant.marketdata.alpaca_bars import AlpacaDailyBars
+
+    client = AlpacaDailyBars(key.get_secret_value(), secret.get_secret_value())
+    return client.fetch

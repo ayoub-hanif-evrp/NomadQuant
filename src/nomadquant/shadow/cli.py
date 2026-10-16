@@ -10,7 +10,8 @@ from typing import Any
 
 from nomadquant.config import Settings, get_settings
 from nomadquant.shadow.cycle import LABEL_FORWARD, LABEL_RETRO, run_shadow_cycle
-from nomadquant.shadow.data_ops import data_check
+from nomadquant.shadow.data_ops import data_check, data_sync
+from nomadquant.shadow.gate import application_guard
 from nomadquant.shadow.marks import value_forward_portfolio
 from nomadquant.shadow.preflight import run_preflight, run_reconcile
 from nomadquant.shadow.store import ShadowStore, shadow_path_for_label
@@ -38,6 +39,8 @@ def main(argv: list[str] | None = None) -> None:
     sub.add_parser("status", help="Show shadow ledger and valuation.")
     data = sub.add_parser("data-check", help="Report missing completed daily sessions.")
     data.add_argument("--feed", choices=["sip", "iex"], default="sip")
+    sync = sub.add_parser("data-sync", help="Opt-in read-only incremental bar download.")
+    sync.add_argument("--feed", choices=["sip", "iex"], required=True)
 
     sub.add_parser("preflight", help="Forward cycle readiness checks.")
     sub.add_parser("reconcile", help="Reconcile shadow ledger invariants.")
@@ -72,6 +75,14 @@ def _dispatch(args: argparse.Namespace, settings: Settings) -> int:
     if args.command == "data-check":
         _print(data_check(settings, feed=args.feed))
         return 0
+    if args.command == "data-sync":
+        try:
+            payload = data_sync(settings, feed=args.feed)
+        except Exception as exc:  # noqa: BLE001
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        _print(payload)
+        return 0 if payload.get("status") != "ERROR" else 1
     if args.command == "preflight":
         _print(run_preflight(settings))
         return 0
@@ -126,6 +137,19 @@ def _dispatch(args: argparse.Namespace, settings: Settings) -> int:
                 "note: forward --signal-session overrides older than 5 days are blocked.",
                 file=sys.stderr,
             )
+        if args.mode == "apply" and args.label == LABEL_FORWARD:
+            guard = application_guard(settings)
+            if not guard["allowed"]:
+                _print(
+                    {
+                        "status": "blocked",
+                        "label": args.label,
+                        "mode": args.mode,
+                        "gate": guard,
+                        "error_safe": "application_guard_refused",
+                    }
+                )
+                return 1
         detail = run_shadow_cycle(
             market_path=settings.market_data_path,
             shadow_path=settings.shadow_path,

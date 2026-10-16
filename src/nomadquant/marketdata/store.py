@@ -122,13 +122,28 @@ def content_hash(bar: StoredBar) -> str:
 class MarketStore:
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
+        self._readonly = False
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as connection:
             connection.executescript(SCHEMA)
             _migrate(connection)
 
+    @classmethod
+    def open_readonly(cls, path: str | Path) -> "MarketStore | None":
+        """Inspect an existing database. Does not create directories or schema."""
+        candidate = Path(path)
+        if not candidate.is_file():
+            return None
+        store = cls.__new__(cls)
+        store.path = candidate
+        store._readonly = True
+        return store
+
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.path)
+        if getattr(self, "_readonly", False):
+            connection = sqlite3.connect(f"{self.path.resolve().as_uri()}?mode=ro", uri=True)
+        else:
+            connection = sqlite3.connect(self.path)
         connection.row_factory = sqlite3.Row
         return connection
 
@@ -320,6 +335,20 @@ class MarketStore:
                 (symbol, feed, start.isoformat(), end.isoformat()),
             ).fetchall()
         return [(date.fromisoformat(row["session_date"]), str(row["content_hash"])) for row in rows]
+
+    def session_bar(self, symbol: str, feed: str, session: date) -> StoredBar | None:
+        """One stored bar with retrieval provenance. None if missing."""
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM bars
+                WHERE symbol = ? AND feed = ? AND session_date = ?
+                ORDER BY first_retrieved_at ASC
+                LIMIT 1
+                """,
+                (symbol, feed, session.isoformat()),
+            ).fetchone()
+        return None if row is None else _stored(row)
 
     def session_ohlc(
         self, symbol: str, feed: str, start: date, end: date
