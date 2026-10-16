@@ -121,7 +121,9 @@ CREATE TABLE IF NOT EXISTS shadow_outbox (
     kind TEXT NOT NULL,
     payload_json TEXT NOT NULL,
     created_at TEXT NOT NULL,
-    projected_at TEXT
+    projected_at TEXT,
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT NOT NULL DEFAULT ''
 );
 """
 
@@ -164,6 +166,7 @@ class ShadowStore:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as conn:
             conn.executescript(SCHEMA)
+            _ensure_outbox_columns(conn)
             row = conn.execute("SELECT id FROM shadow_ledger WHERE id = 1").fetchone()
             if row is None:
                 now = datetime.now(UTC).isoformat()
@@ -226,17 +229,36 @@ class ShadowStore:
             ).fetchone()
         return None if row is None else _cycle_row(row)
 
-    def list_cycles(self, limit: int = 50, offset: int = 0) -> list[dict[str, Any]]:
+    def list_cycles(
+        self,
+        limit: int = 50,
+        offset: int = 0,
+        *,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
         with self._connect() as conn:
-            rows = conn.execute(
-                "SELECT * FROM shadow_cycles ORDER BY id DESC LIMIT ? OFFSET ?",
-                (limit, offset),
-            ).fetchall()
+            if status:
+                rows = conn.execute(
+                    "SELECT * FROM shadow_cycles WHERE status = ? "
+                    "ORDER BY id DESC LIMIT ? OFFSET ?",
+                    (status, limit, offset),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM shadow_cycles ORDER BY id DESC LIMIT ? OFFSET ?",
+                    (limit, offset),
+                ).fetchall()
         return [_cycle_row(row) for row in rows]
 
-    def count_cycles(self) -> int:
+    def count_cycles(self, *, status: str | None = None) -> int:
         with self._connect() as conn:
-            row = conn.execute("SELECT COUNT(*) AS n FROM shadow_cycles").fetchone()
+            if status:
+                row = conn.execute(
+                    "SELECT COUNT(*) AS n FROM shadow_cycles WHERE status = ?",
+                    (status,),
+                ).fetchone()
+            else:
+                row = conn.execute("SELECT COUNT(*) AS n FROM shadow_cycles").fetchone()
         return int(row["n"])
 
     def equity_history(self, limit: int = 500) -> list[dict[str, Any]]:
@@ -633,12 +655,86 @@ class ShadowStore:
         return [dict(r) for r in rows]
 
     def pending_intents(self) -> list[dict[str, Any]]:
+        return self.list_pending_intents()
+
+    def list_pending_intents(self) -> list[dict[str, Any]]:
+        """Unresolved intents, oldest first (chronological resume order)."""
         with self._connect() as conn:
             rows = conn.execute(
                 "SELECT * FROM shadow_intents WHERE state IN "
-                "('PENDING_DATA', 'RESERVED', 'RISK_APPROVED', 'SIGNAL_RECORDED')"
+                "('PENDING_DATA', 'RESERVED', 'RISK_APPROVED', 'SIGNAL_RECORDED') "
+                "ORDER BY created_at ASC, intent_id ASC"
             ).fetchall()
         return [dict(r) for r in rows]
+
+    def get_intent(self, intent_id: str) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM shadow_intents WHERE intent_id = ?", (intent_id,)
+            ).fetchone()
+        return None if row is None else dict(row)
+
+    def recovery_status(self) -> dict[str, Any]:
+        """Pure inspection — never mutates reservations or ledger."""
+        active = self.list_active_reservations()
+        pending = self.list_pending_intents()
+        undelivered = self.list_outbox(undelivered_only=True, limit=1000)
+        return {
+            "recovery_required": len(active) > 0,
+            "active_reservations": active,
+            "pending_intent_count": len(pending),
+            "pending_intents": pending,
+            "outbox_backlog": len(undelivered),
+        }
+
+    def list_outbox(
+        self, *, undelivered_only: bool = False, limit: int = 100
+    ) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            if undelivered_only:
+                rows = conn.execute(
+                    "SELECT * FROM shadow_outbox WHERE projected_at IS NULL "
+                    "ORDER BY id ASC LIMIT ?",
+                    (limit,),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM shadow_outbox ORDER BY id ASC LIMIT ?",
+                    (limit,),
+                ).fetchall()
+        out: list[dict[str, Any]] = []
+        for r in rows:
+            payload = json.loads(r["payload_json"])
+            out.append(
+                {
+                    "id": r["id"],
+                    "kind": r["kind"],
+                    "payload": payload,
+                    "payload_json": r["payload_json"],
+                    "created_at": r["created_at"],
+                    "projected_at": r["projected_at"],
+                    "attempt_count": r["attempt_count"] if "attempt_count" in r.keys() else 0,
+                    "last_error": r["last_error"] if "last_error" in r.keys() else "",
+                }
+            )
+        return out
+
+    def mark_outbox_delivered(self, outbox_id: int) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE shadow_outbox SET projected_at = ?, last_error = '' WHERE id = ?",
+                (datetime.now(UTC).isoformat(), outbox_id),
+            )
+            conn.commit()
+
+    def mark_outbox_attempt(self, outbox_id: int, *, error: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE shadow_outbox SET attempt_count = attempt_count + 1, "
+                "last_error = ? WHERE id = ?",
+                (error[:500], outbox_id),
+            )
+            conn.commit()
 
     def upsert_intent(
         self,
@@ -808,6 +904,16 @@ class ShadowStore:
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
         return conn
+
+
+def _ensure_outbox_columns(conn: sqlite3.Connection) -> None:
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(shadow_outbox)").fetchall()}
+    if "attempt_count" not in cols:
+        conn.execute(
+            "ALTER TABLE shadow_outbox ADD COLUMN attempt_count INTEGER NOT NULL DEFAULT 0"
+        )
+    if "last_error" not in cols:
+        conn.execute("ALTER TABLE shadow_outbox ADD COLUMN last_error TEXT NOT NULL DEFAULT ''")
 
 
 def _ledger_row(conn: sqlite3.Connection) -> sqlite3.Row:

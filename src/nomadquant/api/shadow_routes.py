@@ -11,6 +11,7 @@ from nomadquant.shadow.marks import value_forward_portfolio
 from nomadquant.shadow.preflight import run_preflight, run_reconcile
 from nomadquant.shadow.store import ShadowStore
 from nomadquant.shadow.valuation import PortfolioValuation
+from nomadquant.shadow.worker import outbox_backlog_count, read_last_worker_run, recovery_required
 
 router = APIRouter(prefix="/api/shadow")
 
@@ -113,7 +114,9 @@ def shadow_ops(request: Request) -> dict[str, Any]:
     }
     if market_path.exists():
         try:
+            from nomadquant.marketdata.report import market_data_status
             from nomadquant.marketdata.store import MarketStore
+            from nomadquant.shadow.cycle import LOOKBACK, SKIP
 
             market = MarketStore(market_path)
             sessions = (
@@ -124,21 +127,52 @@ def shadow_ops(request: Request) -> dict[str, Any]:
                     "earliest_session": None if not sessions else sessions[0].isoformat(),
                     "latest_session": None if not sessions else sessions[-1].isoformat(),
                     "bar_count": len(sessions),
-                    "coverage_complete": len(sessions) > 300,
-                    "suitable_for_research": len(sessions) > 300,
                 }
             )
-            if len(sessions) < 300:
-                market_info["warnings"].append("Insufficient SPY/SIP history for full warm-up.")
+            if len(sessions) >= LOOKBACK + SKIP + 5:
+                warm_start = sessions[-(LOOKBACK + SKIP + 5)]
+                md = market_data_status(
+                    str(market_path),
+                    start=warm_start,
+                    end=sessions[-1],
+                    symbols=["SPY"],
+                    feed="sip",
+                )
+                market_info.update(
+                    {
+                        "coverage_complete": md.coverage_complete,
+                        "suitable_for_research": md.suitable_for_research,
+                        "requested_start": md.requested_start,
+                        "requested_end": md.requested_end,
+                        "warnings": list(md.warnings),
+                        "coverage": [c.model_dump() for c in md.coverage],
+                        "last_successful_ingestion": md.last_successful_ingestion,
+                        "readiness": "OK" if md.suitable_for_research else "INCOMPLETE",
+                    }
+                )
+                if not md.suitable_for_research:
+                    alerts.append(
+                        {
+                            "level": "warning",
+                            "source": "market",
+                            "message": "Coverage INCOMPLETE vs strategy warm-up calendar.",
+                        }
+                    )
+            else:
+                market_info["coverage_complete"] = False
+                market_info["suitable_for_research"] = False
+                market_info["readiness"] = "INCOMPLETE"
+                market_info["warnings"].append("Insufficient sessions for strategy warm-up.")
                 alerts.append(
                     {
                         "level": "warning",
                         "source": "market",
-                        "message": "SPY/SIP coverage may be incomplete for strategy warm-up.",
+                        "message": "SPY/SIP warm-up window incomplete.",
                     }
                 )
         except Exception as exc:  # noqa: BLE001
             market_info["warnings"].append(f"Market inspect failed: {exc}")
+            market_info["readiness"] = "INCOMPLETE"
             alerts.append(
                 {"level": "error", "source": "market", "message": "Market database unreadable."}
             )
@@ -150,9 +184,12 @@ def shadow_ops(request: Request) -> dict[str, Any]:
     pending: list[dict[str, Any]] = []
     last_cycle = None
     cycle_count = 0
+    recovery_flag = False
+    outbox_backlog: int | None = None
     if store is not None:
-        store.recover_interrupted()
+        recovery_flag = recovery_required(store)
         pending = store.pending_intents()
+        outbox_backlog = outbox_backlog_count(store)
         cycles = store.list_cycles(limit=1)
         last_cycle = cycles[0] if cycles else None
         cycle_count = store.count_cycles()
@@ -192,9 +229,16 @@ def shadow_ops(request: Request) -> dict[str, Any]:
             }
         )
 
+    log_dir = Path(settings.shadow_path).parent / "shadow_logs"
+    last_worker = read_last_worker_run(log_dir)
+
     return {
         "market": market_info,
         "pending_intents": pending,
+        "pending_intent_count": len(pending),
+        "recovery_required": recovery_flag,
+        "outbox_backlog": outbox_backlog,
+        "last_worker_run": last_worker,
         "alerts": alerts,
         "last_cycle": last_cycle,
         "cycle_count": cycle_count,
@@ -211,9 +255,9 @@ def shadow_timeline(
     store = _store(request)
     if store is None:
         return {"items": [], "total": 0, "limit": limit, "offset": offset}
-    items = store.list_cycles(limit=limit, offset=offset)
-    if status:
-        items = [c for c in items if c.get("status") == status]
+    status_filter = status or None
+    items = store.list_cycles(limit=limit, offset=offset, status=status_filter)
+    total = store.count_cycles(status=status_filter)
     enriched = []
     for c in items:
         intent_id = f"intent:{c['cycle_key']}"
@@ -248,7 +292,7 @@ def shadow_timeline(
         )
     return {
         "items": enriched,
-        "total": store.count_cycles(),
+        "total": total,
         "limit": limit,
         "offset": offset,
     }

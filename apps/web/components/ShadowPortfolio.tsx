@@ -226,6 +226,67 @@ export function ShadowPortfolio() {
       ) : null}
 
       {status.isLoading ? <Skeleton className="h-20 w-full" lines={2} /> : null}
+      <Panel>
+        <h2 className="mb-3 text-sm font-semibold">Daily operations status</h2>
+        {ops.isLoading ? <Skeleton lines={4} /> : null}
+        {!ops.isLoading && ops.data ? (
+          <dl className="grid gap-2 text-xs font-mono">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <dt className="text-[var(--muted)]">Recovery required</dt>
+              <dd>
+                {typeof ops.data.recovery_required === "boolean" ? (
+                  <Badge tone={ops.data.recovery_required ? "warn" : "ok"}>
+                    {ops.data.recovery_required ? "yes" : "no"}
+                  </Badge>
+                ) : (
+                  "—"
+                )}
+              </dd>
+            </div>
+            <div className="flex justify-between gap-4">
+              <dt className="text-[var(--muted)]">Pending intents</dt>
+              <dd>
+                {typeof ops.data.pending_intent_count === "number"
+                  ? String(ops.data.pending_intent_count)
+                  : ops.data.pending_intents.length > 0
+                    ? String(ops.data.pending_intents.length)
+                    : "—"}
+              </dd>
+            </div>
+            <div className="flex justify-between gap-4">
+              <dt className="text-[var(--muted)]">Outbox backlog</dt>
+              <dd>
+                {typeof ops.data.outbox_backlog === "number"
+                  ? String(ops.data.outbox_backlog)
+                  : "—"}
+              </dd>
+            </div>
+            <div className="flex justify-between gap-4">
+              <dt className="text-[var(--muted)]">Last worker run</dt>
+              <dd className="text-right text-[11px]">
+                {ops.data.last_worker_run?.finished_at ??
+                  ops.data.last_worker_run?.started_at ??
+                  "—"}
+              </dd>
+            </div>
+            {ops.data.last_worker_run?.worker_status ? (
+              <div className="flex justify-between gap-4">
+                <dt className="text-[var(--muted)]">Worker status</dt>
+                <dd>
+                  <Badge tone={toneFor(ops.data.last_worker_run.worker_status)}>
+                    {ops.data.last_worker_run.worker_status}
+                  </Badge>
+                </dd>
+              </div>
+            ) : null}
+            <p className="mt-1 text-[10px] text-[var(--muted)]">
+              From /api/shadow/ops when reported. Run{" "}
+              <code className="text-[var(--cyan)]">nomadquant-shadow worker</code> locally; never broker orders.
+            </p>
+          </dl>
+        ) : null}
+      </Panel>
+
       {status.data ? (
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
           <MetricCard

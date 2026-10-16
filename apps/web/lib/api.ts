@@ -1652,6 +1652,13 @@ export type ShadowOpsAlert = {
   cycle_id?: number;
 };
 
+export type ShadowWorkerRunSummary = {
+  worker_status?: string;
+  mode?: string;
+  started_at?: string;
+  finished_at?: string;
+};
+
 export type ShadowOps = {
   market: {
     database_present: boolean;
@@ -1671,6 +1678,10 @@ export type ShadowOps = {
     caveat: string;
   };
   pending_intents: Array<Record<string, unknown>>;
+  pending_intent_count?: number;
+  recovery_required?: boolean;
+  outbox_backlog?: number | null;
+  last_worker_run?: ShadowWorkerRunSummary | null;
   alerts: ShadowOpsAlert[];
   last_cycle: ShadowCycle | null;
   cycle_count: number;

@@ -1,11 +1,14 @@
-# Opt-in daily forward shadow check. Never submits broker orders.
+# Opt-in daily forward shadow worker. Never submits broker orders.
 # Does not launch Ollama. Safe to schedule via Task Scheduler after install.
+param(
+    [switch]$ShadowApply,
+    [switch]$DryRun
+)
+
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $PSScriptRoot
 Set-Location $Root
 
-$LockDir = Join-Path $Root "data"
-$LockFile = Join-Path $LockDir "shadow_cycle.lock"
 $LogDir = Join-Path $Root "data\shadow_logs"
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 
@@ -18,40 +21,23 @@ function Write-Log([string]$msg) {
     Write-Host $line
 }
 
-# America/New_York weekday + holiday awareness is delegated to preflight/cycle
-# (NYSE calendar in Python). This wrapper only avoids overlapping runs.
-
-if (Test-Path $LockFile) {
-    $age = (Get-Date) - (Get-Item $LockFile).LastWriteTime
-    if ($age.TotalHours -lt 2) {
-        Write-Log "SKIP: lock held ($LockFile age=$($age.TotalMinutes)m)"
-        exit 0
-    }
-    Write-Log "WARN: stale lock removed"
-    Remove-Item $LockFile -Force
+# Default: inspect (preflight + reconcile only). -DryRun runs cycle dry-run.
+# -ShadowApply opts into simulated ledger apply + outbox — still no broker orders.
+if ($ShadowApply -and $DryRun) {
+    throw "Use either -DryRun or -ShadowApply, not both."
 }
+$Mode = if ($ShadowApply) { "shadow-apply" } elseif ($DryRun) { "dry-run" } else { "inspect" }
 
-New-Item -ItemType File -Path $LockFile -Force | Out-Null
-try {
-    Write-Log "preflight"
-    uv run --no-sync nomadquant-shadow preflight *>> $LogFile
-    if ($LASTEXITCODE -ne 0) { throw "preflight exit $LASTEXITCODE" }
-
-    Write-Log "cycle dry-run"
-    uv run --no-sync nomadquant-shadow cycle --mode dry-run *>> $LogFile
-    if ($LASTEXITCODE -ne 0) { throw "dry-run exit $LASTEXITCODE" }
-
-    Write-Log "reconcile"
-    uv run --no-sync nomadquant-shadow reconcile *>> $LogFile
-    if ($LASTEXITCODE -ne 0) { throw "reconcile exit $LASTEXITCODE" }
-
-    Write-Log "OK"
-    exit 0
+Write-Log "worker --mode $Mode (ShadowApply=$ShadowApply)"
+uv run --no-sync nomadquant-shadow worker --mode $Mode *>> $LogFile
+$code = $LASTEXITCODE
+if ($code -eq 2) {
+    Write-Log "RECOVERY_REQUIRED: run nomadquant-shadow recover before shadow-apply"
+    exit 2
 }
-catch {
-    Write-Log "ERROR: $_"
-    exit 1
+if ($code -ne 0) {
+    Write-Log "ERROR: worker exit $code"
+    exit $code
 }
-finally {
-    if (Test-Path $LockFile) { Remove-Item $LockFile -Force }
-}
+Write-Log "OK"
+exit 0

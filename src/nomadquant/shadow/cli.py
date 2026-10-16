@@ -13,6 +13,7 @@ from nomadquant.shadow.cycle import LABEL_FORWARD, LABEL_RETRO, run_shadow_cycle
 from nomadquant.shadow.marks import value_forward_portfolio
 from nomadquant.shadow.preflight import run_preflight, run_reconcile
 from nomadquant.shadow.store import ShadowStore, shadow_path_for_label
+from nomadquant.shadow.worker import run_daily_worker
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -37,6 +38,19 @@ def main(argv: list[str] | None = None) -> None:
     sub.add_parser("preflight", help="Forward cycle readiness checks.")
     sub.add_parser("reconcile", help="Reconcile shadow ledger invariants.")
 
+    sub.add_parser(
+        "recover",
+        help="Release interrupted reservations and deliver shadow outbox (explicit).",
+    )
+
+    worker = sub.add_parser("worker", help="Daily shadow worker (inspect / dry-run / apply).")
+    worker.add_argument(
+        "--mode",
+        choices=["inspect", "dry-run", "shadow-apply"],
+        default="inspect",
+        help="inspect=no mutations; dry-run=cycle dry-run; shadow-apply=apply+outbox.",
+    )
+
     history = sub.add_parser("history", help="List shadow cycles.")
     history.add_argument("--limit", type=int, default=20)
 
@@ -58,6 +72,12 @@ def _dispatch(args: argparse.Namespace, settings: Settings) -> int:
         result = run_reconcile(settings)
         _print(result)
         return 0 if result.get("ok") else 1
+    if args.command == "recover":
+        return _run_recover(settings)
+    if args.command == "worker":
+        code, payload = run_daily_worker(settings, mode=args.mode)
+        _print(payload)
+        return code
     if args.command == "status":
         store = ShadowStore(settings.shadow_path, namespace="forward")
         snap = store.snapshot()
@@ -115,6 +135,30 @@ def _dispatch(args: argparse.Namespace, settings: Settings) -> int:
         _print(detail)
         return 0 if detail.get("status") not in {"error", "blocked"} else 1
     return 2
+
+
+def _run_recover(settings: Settings) -> int:
+    store = ShadowStore(settings.shadow_path, namespace="forward")
+    released = store.recover_interrupted()
+    outbox: dict[str, Any] | None = None
+    try:
+        from nomadquant.shadow.outbox import deliver_outbox
+
+        outbox = deliver_outbox(store, settings.risk_path)
+    except Exception as exc:  # noqa: BLE001
+        outbox = {"skipped": True, "reason": str(exc)}
+    _print(
+        {
+            "trading_state": "SHADOW_ONLY",
+            "allow_order_submission": False,
+            "recovery": released,
+            "outbox": outbox,
+            "note": "Explicit recovery only. Never submits broker orders.",
+        }
+    )
+    if outbox and outbox.get("errors"):
+        return 1
+    return 0
 
 
 def _print(payload: Any) -> None:

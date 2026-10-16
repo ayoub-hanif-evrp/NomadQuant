@@ -119,12 +119,34 @@ def run_shadow_cycle(
 
     db_path = shadow_path_for_label(shadow_path, label)
     shadow = ShadowStore(db_path, namespace=namespace_for_label(label))
+    # Recovery is an explicit apply/worker action — never a GET side effect.
     if mode == "apply":
         shadow.recover_interrupted()
+
+    from nomadquant.shadow.outbox import deliver_outbox
+    from nomadquant.shadow.pending import awaited_fill_session, resume_pending_intents
+
+    # 0.1 — Resume unresolved intents chronologically before any new signal.
+    resumed = resume_pending_intents(
+        shadow=shadow,
+        market_path=market_path,
+        risk_path=risk_path,
+        mode=mode,
+        now=now,
+        label=label,
+        policy=policy,
+    )
+    if mode == "apply" and resumed:
+        deliver_outbox(shadow, risk_path)
+
     before = shadow.snapshot()
     warnings: list[str] = []
+    if resumed:
+        warnings.append(f"Resumed {len(resumed)} pending intent(s) before new signal.")
     market = MarketStore(market_path)
     if not market.has_symbol(SYMBOL, FEED):
+        if resumed:
+            return {**resumed[-1], "prior_resumes": resumed, "warnings": warnings}
         return _finish(
             shadow,
             mode=mode,
@@ -140,6 +162,8 @@ def run_shadow_cycle(
 
     stored_sessions = sorted(market.sessions(SYMBOL, FEED))
     if not stored_sessions:
+        if resumed:
+            return {**resumed[-1], "prior_resumes": resumed, "warnings": warnings}
         return _finish(
             shadow,
             mode=mode,
@@ -156,6 +180,8 @@ def run_shadow_cycle(
     sessions = sessions_between(stored_sessions[0], stored_sessions[-1])
     signal_day = signal_session or _latest_eligible_signal_session(sessions, now)
     if signal_day is None:
+        if resumed:
+            return {**resumed[-1], "prior_resumes": resumed, "warnings": warnings}
         return _finish(
             shadow,
             mode=mode,
@@ -176,6 +202,8 @@ def run_shadow_cycle(
         existing["warnings"] = list(existing.get("warnings") or []) + [
             "Duplicate apply prevented; returning prior cycle."
         ]
+        if resumed:
+            existing["prior_resumes"] = resumed
         return existing
 
     ohlc = {
@@ -186,6 +214,29 @@ def run_shadow_cycle(
     }
     closes = {session: close for session, (_o, _h, _l, close) in ohlc.items()}
     mom = momentum_return(closes, sessions, signal_day, LOOKBACK, SKIP)
+    if mom is None:
+        return _finish(
+            shadow,
+            mode=mode,
+            label=label,
+            before=before,
+            status="insufficient_data",
+            intent="no_trade",
+            warnings=[
+                f"INSUFFICIENT_DATA: momentum_return requires lookback={LOOKBACK} "
+                f"+ skip={SKIP} sessions; warm-up incomplete for {signal_day}."
+            ],
+            evidence={
+                "reason": "insufficient_momentum_window",
+                "signal_session": signal_day.isoformat(),
+                "lookback_sessions": LOOKBACK,
+                "skip_sessions": SKIP,
+                "prior_resumes": resumed,
+            },
+            duration_ms=_ms(started),
+            mutate=False,
+            signal_session=signal_day,
+        )
     target = target_from_momentum(mom)
     is_rebalance = _is_month_start(signal_day, sessions)
     current_qty = before["holdings"].get(SYMBOL, _ZERO)
@@ -277,7 +328,8 @@ def run_shadow_cycle(
             mark_price=mark,
         )
 
-    fill_day = _next_session(sessions, signal_day)
+    # Await next NYSE session even when its bars are not stored yet.
+    fill_day = awaited_fill_session(signal_day) or _next_session(sessions, signal_day)
     if fill_day is None:
         evidence["execution_model"] = "pending_observation"
         if mode == "apply":
@@ -293,7 +345,7 @@ def run_shadow_cycle(
                 signal_session=signal_day.isoformat(),
                 target_weight=str(target),
                 from_state="SIGNAL_RECORDED",
-                reason="Next session not in store",
+                reason="Next session calendar unavailable",
                 ledger_version=before["version"],
             )
         return _finish(
@@ -303,7 +355,7 @@ def run_shadow_cycle(
             before=before,
             status="pending_data",
             intent=intent,
-            warnings=["Next session after signal is not in the local store."],
+            warnings=["Next session after signal cannot be determined."],
             evidence=evidence,
             duration_ms=_ms(started),
             mutate=False,
@@ -317,6 +369,7 @@ def run_shadow_cycle(
     if open_price is None:
         evidence["execution_model"] = "pending_observation"
         evidence["fill_session"] = fill_day.isoformat()
+        evidence["awaited_fill_session"] = fill_day.isoformat()
         if mode == "apply":
             shadow.upsert_intent(
                 intent_id=intent_id,
@@ -386,13 +439,27 @@ def run_shadow_cycle(
         min_notional_usd=Decimal("1"),
         quantity_precision=6,
     )
-    proposal_qty, side = _delta_quantity(
-        cash=before["cash_usd"] - before["reserved_cash_usd"],
+    from nomadquant.shadow.sizing import size_policy_aware
+
+    active_policy = policy or RiskPolicy()
+    sized = size_policy_aware(
+        cash=before["cash_usd"],
+        reserved=before["reserved_cash_usd"],
         qty=current_qty,
         target_weight=target,
         price=open_price,
         costs=costs,
+        policy=active_policy,
     )
+    evidence["sizing"] = {
+        "desired_target_weight": str(sized.desired_target_weight),
+        "feasible_weight": str(sized.feasible_weight),
+        "residual_target_weight": str(sized.residual_target_weight),
+        "quantity": str(sized.quantity),
+        "is_partial": sized.is_partial,
+        "reason": sized.reason,
+    }
+    proposal_qty, side = sized.quantity, sized.side
     if proposal_qty <= 0 or side is None:
         return _finish(
             shadow,
@@ -401,7 +468,7 @@ def run_shadow_cycle(
             before=before,
             status="no_trade",
             intent="no_trade",
-            warnings=warnings + ["Delta below minimum notional after sizing."],
+            warnings=warnings + [sized.reason],
             evidence=evidence,
             duration_ms=_ms(started),
             mutate=mode == "apply",
@@ -415,6 +482,8 @@ def run_shadow_cycle(
 
     if side not in {"buy", "sell"}:
         raise RuntimeError("internal: unexpected trade side")
+    if sized.is_partial:
+        warnings.append(sized.reason)
     proposal = Proposal(
         id=f"shadow:{cycle_key}:{side}:{proposal_qty}",
         source="shadow_cycle",
@@ -601,15 +670,30 @@ def run_shadow_cycle(
     # Clear reserve into the fill cash path (buy already debits full cash).
     after["reserved_cash_usd"] = _ZERO
     evidence["fill"] = fill_meta
-    evidence["outbox_note"] = "Risk-store projection is derived via outbox; not cross-DB atomic."
-
-    # Best-effort risk history (derived); authority is shadow DB.
-    try:
-        risk_store.record(proposal, risk)
-    except Exception:  # noqa: BLE001
-        warnings.append("Risk-store projection failed; shadow ledger remains authoritative.")
-
-    return _finish(
+    evidence["outbox_note"] = (
+        "Risk audit is projected via shadow_outbox only AFTER shadow commit. "
+        "Risk DB is not financial truth."
+    )
+    outbox = {
+        "kind": "risk_evaluation",
+        "payload": {
+            "proposal_id": proposal.id,
+            "source": "shadow_cycle",
+            "symbol": SYMBOL,
+            "side": side,
+            "quantity": str(proposal_qty),
+            "verdict": risk.verdict,
+            "reasons": risk.reasons,
+            "policy_version": risk.policy_version,
+            "policy_hash": risk.policy_hash,
+            "notional_usd": None if risk.notional_usd is None else str(risk.notional_usd),
+            "proposal_as_of": observation_as_of.isoformat(),
+            "evaluated_at": now.isoformat(),
+            "cycle_key": cycle_key,
+        },
+    }
+    # Do NOT write risk_store before shadow commit — outbox delivers after.
+    detail = _finish(
         shadow,
         mode=mode,
         label=label,
@@ -637,15 +721,10 @@ def run_shadow_cycle(
         cycle_key=cycle_key,
         expected_version=before["version"],
         commit_reservation_intent_id=intent_id if reserve_amt > 0 else None,
-        outbox={
-            "kind": "risk_evaluation",
-            "payload": {
-                "proposal_id": proposal.id,
-                "verdict": risk.verdict,
-                "cycle_key": cycle_key,
-            },
-        },
+        outbox=outbox,
     )
+    deliver_outbox(shadow, risk_path)
+    return detail
 
 
 def _simulate_fill(

@@ -210,6 +210,64 @@ class RiskStore:
                 connection.rollback()
                 raise
 
+    def record_projection(self, payload: dict[str, Any]) -> int | None:
+        """Idempotent derived audit row from shadow outbox. Not financial truth."""
+        proposal_id = str(payload.get("proposal_id") or "")
+        if not proposal_id:
+            raise RiskStoreError("outbox payload missing proposal_id")
+        if self.seen(proposal_id) or self.get(proposal_id) is not None:
+            return None
+        with self._connect() as connection:
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                if connection.execute(
+                    "SELECT 1 FROM risk_evaluations WHERE proposal_id = ?",
+                    (proposal_id,),
+                ).fetchone():
+                    connection.commit()
+                    return None
+                cursor = connection.execute(
+                    """
+                    INSERT INTO risk_evaluations (
+                        proposal_id, created_at, source, symbol, side, quantity,
+                        limit_price, proposal_as_of, agent_run_id, verdict, reasons_json,
+                        rule_verdicts_json, policy_version, policy_hash, notional_usd,
+                        projected_cash_usd, evaluated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        proposal_id,
+                        _now(),
+                        str(payload.get("source") or "shadow_outbox"),
+                        str(payload.get("symbol") or "SPY"),
+                        str(payload.get("side") or "buy"),
+                        str(payload.get("quantity") or "0"),
+                        payload.get("limit_price"),
+                        str(payload.get("proposal_as_of") or _now()),
+                        payload.get("agent_run_id"),
+                        str(payload.get("verdict") or "APPROVE"),
+                        json.dumps(payload.get("reasons") or ["shadow_outbox_projection"]),
+                        json.dumps(payload.get("rule_verdicts") or []),
+                        str(payload.get("policy_version") or "projected"),
+                        str(payload.get("policy_hash") or "projected"),
+                        None
+                        if payload.get("notional_usd") is None
+                        else str(payload.get("notional_usd")),
+                        None
+                        if payload.get("projected_cash_usd") is None
+                        else str(payload.get("projected_cash_usd")),
+                        str(payload.get("evaluated_at") or _now()),
+                    ),
+                )
+                connection.commit()
+                return int(cursor.lastrowid or 0)
+            except sqlite3.IntegrityError:
+                connection.rollback()
+                return None
+            except Exception:
+                connection.rollback()
+                raise
+
     def get(self, proposal_id: str) -> dict[str, Any] | None:
         with self._connect() as connection:
             row = connection.execute(
