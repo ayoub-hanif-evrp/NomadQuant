@@ -28,6 +28,16 @@ if ($ShadowApply -and $DryRun) {
 }
 $Mode = if ($ShadowApply) { "shadow-apply" } elseif ($DryRun) { "dry-run" } else { "inspect" }
 
+$env:PYTHONPATH = Join-Path $Root "src"
+$gateJson = uv run --no-sync python -c "import json; from datetime import UTC, datetime; from nomadquant.shadow.schedule import ny_daily_gate; print(json.dumps(ny_daily_gate(datetime.now(UTC))))"
+if ($LASTEXITCODE -ne 0) { throw "NY schedule gate failed" }
+$gate = $gateJson | ConvertFrom-Json
+Write-Log "ny_gate eligible=$($gate.eligible) reason=$($gate.reason) ny=$($gate.ny_local)"
+if (-not $gate.eligible) {
+    Write-Log "SKIP: not an eligible America/New_York daily window"
+    exit 0
+}
+
 Write-Log "worker --mode $Mode (ShadowApply=$ShadowApply)"
 uv run --no-sync nomadquant-shadow worker --mode $Mode *>> $LogFile
 $code = $LASTEXITCODE

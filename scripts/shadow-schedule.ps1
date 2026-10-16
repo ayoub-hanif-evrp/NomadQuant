@@ -13,38 +13,27 @@ $TaskName = "NomadQuantShadowDaily"
 $Root = Split-Path -Parent $PSScriptRoot
 $Script = Join-Path $PSScriptRoot "shadow-daily.ps1"
 
-function Get-NextWeekday1745EasternLocal {
-    # Target: next Mon–Fri 17:45 America/New_York, converted to local time for Task Scheduler.
-    $easternId = "Eastern Standard Time"
-    $eastern = [TimeZoneInfo]::FindSystemTimeZoneById($easternId)
-    $utcNow = [DateTime]::UtcNow
-    $etNow = [TimeZoneInfo]::ConvertTimeFromUtc($utcNow, $eastern)
-
-    $candidate = $etNow.Date.AddHours(17).AddMinutes(45)
-    if ($etNow -ge $candidate) {
-        $candidate = $candidate.AddDays(1)
-    }
-    while ($candidate.DayOfWeek -eq [DayOfWeek]::Saturday -or $candidate.DayOfWeek -eq [DayOfWeek]::Sunday) {
-        $candidate = $candidate.AddDays(1)
-    }
-
-    $local = [TimeZoneInfo]::ConvertTime($candidate, $eastern, [TimeZoneInfo]::Local)
-    return @{
-        EasternAt   = $candidate
-        LocalAt     = $local
-        LocalTime   = $local.TimeOfDay
-    }
+function Get-NextNyWindow {
+    # Authoritative next 17:45 America/New_York on an NYSE session.
+    # Host local time is display-only; the daily script re-checks the gate.
+    $env:PYTHONPATH = Join-Path $Root "src"
+    $json = uv run --no-sync python -c "import json; from datetime import UTC, datetime; from nomadquant.shadow.schedule import next_ny_window; print(json.dumps(next_ny_window(datetime.now(UTC))))"
+    if ($LASTEXITCODE -ne 0) { throw "Could not compute the next America/New_York window." }
+    return $json | ConvertFrom-Json
 }
 
 switch ($Action) {
     "install" {
-        $when = Get-NextWeekday1745EasternLocal
+        $when = Get-NextNyWindow
         $dailyArgs = "-NoProfile -ExecutionPolicy Bypass -File `"$Script`""
         if ($ShadowApply) { $dailyArgs += " -ShadowApply" }
         elseif ($DryRun) { $dailyArgs += " -DryRun" }
         $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $dailyArgs
-        $atLocal = $when.LocalAt.ToString("HH:mm")
-        $trigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Monday,Tuesday,Wednesday,Thursday,Friday -At $atLocal
+        # Repeat through the day. shadow-daily.ps1 applies the NYSE/New York gate,
+        # so daylight-saving changes do not freeze a host-local 17:45.
+        $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).Date.AddMinutes(5) `
+            -RepetitionInterval (New-TimeSpan -Minutes 30) `
+            -RepetitionDuration (New-TimeSpan -Days 999)
         $settings = New-ScheduledTaskSettingsSet `
             -AllowStartIfOnBatteries `
             -DontStopIfGoingOnBatteries `
@@ -59,7 +48,8 @@ switch ($Action) {
         }
         Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger `
             -Settings $settings -Description "NomadQuant shadow daily worker: $modeNote — no broker orders" -Force
-        Write-Host "Installed task '$TaskName' at local $atLocal (maps to next 17:45 America/New_York ≈ $($when.EasternAt.ToString('yyyy-MM-dd HH:mm')) ET)."
+        Write-Host "Installed task '$TaskName' every 30 minutes. The script skips until the NY gate is due."
+        Write-Host "Next NYSE 17:45 America/New_York: $($when.ny_local) (UTC $($when.utc))."
         Write-Host "Default mode is inspect unless you passed -ShadowApply. Disable: .\scripts\shadow-schedule.ps1 -Action disable"
     }
     "status" {
@@ -67,8 +57,8 @@ switch ($Action) {
             Format-List TaskName, State, Description
         Get-ScheduledTaskInfo -TaskName $TaskName -ErrorAction SilentlyContinue |
             Format-List LastRunTime, LastTaskResult, NextRunTime
-        $when = Get-NextWeekday1745EasternLocal
-        Write-Host "Next 17:45 ET → local $($when.LocalAt.ToString('yyyy-MM-dd HH:mm')) ($($when.LocalTime))"
+        $when = Get-NextNyWindow
+        Write-Host "Next NYSE 17:45 America/New_York: $($when.ny_local) (UTC $($when.utc)). Host timezone is not the gate."
     }
     "disable" {
         Disable-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue

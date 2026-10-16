@@ -58,7 +58,11 @@ def market_data_status(
         return MarketDataStatus(
             warnings=["No local market database yet. Run nomadquant-data sync."]
         )
-    store = MarketStore(path)
+    store = MarketStore.open_readonly(path)
+    if store is None:
+        return MarketDataStatus(
+            warnings=["No local market database yet. Run nomadquant-data sync."]
+        )
     success = store.last_success()
     request = _request_window(store, start, end, symbols, feed)
     if request is None:

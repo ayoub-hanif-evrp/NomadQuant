@@ -49,6 +49,26 @@ def run_preflight(settings: Settings, *, as_of: datetime | None = None) -> dict[
     if not paper_ok:
         status = "BLOCKED"
 
+    shadow_file = Path(settings.shadow_path)
+    if not shadow_file.exists():
+        add("shadow_account", False, "shadow ledger not initialized")
+        return {
+            "status": "WAITING_FOR_DATA" if status != "BLOCKED" else "BLOCKED",
+            "as_of": now.isoformat(),
+            "checks": checks,
+            "signal_session": None,
+            "ledger_version": None,
+            "cash_usd": None,
+            "cycle_count": 0,
+            "recovery_required": False,
+            "pending_intent_count": 0,
+            "outbox_backlog": 0,
+            "trading_state": "SHADOW_ONLY",
+            "allow_order_submission": False,
+            "initialized": False,
+            "note": "Shadow ledger is not created. GET inspection does not initialize it.",
+        }
+
     store = ShadowStore(settings.shadow_path, namespace="forward")
     recovery = store.recovery_status()
     snap = store.snapshot()
@@ -180,6 +200,18 @@ def run_preflight(settings: Settings, *, as_of: datetime | None = None) -> dict[
 
 def run_reconcile(settings: Settings) -> dict[str, Any]:
     """Inspect-only reconcile. Does not release reservations or mutate ledger."""
+    if not Path(settings.shadow_path).exists():
+        return {
+            "ok": False,
+            "issues": ["shadow_uninitialized"],
+            "recovery_required": False,
+            "snapshot": None,
+            "valuation": None,
+            "active_reservations": [],
+            "outbox_backlog": 0,
+            "initialized": False,
+            "note": "Shadow ledger is not created. Inspection does not initialize it.",
+        }
     store = ShadowStore(settings.shadow_path, namespace="forward")
     recovery = store.recovery_status()
     snap = store.snapshot()

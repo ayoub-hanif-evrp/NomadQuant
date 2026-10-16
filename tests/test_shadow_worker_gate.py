@@ -21,11 +21,11 @@ def test_blocked_preflight_does_not_run_cycle_or_mutate(
     calls: list[str] = []
 
     monkeypatch.setattr(
-        "nomadquant.shadow.worker.run_preflight",
+        "nomadquant.shadow.gate.run_preflight",
         lambda _settings, **_kwargs: {"status": "BLOCKED", "checks": []},
     )
     monkeypatch.setattr(
-        "nomadquant.shadow.worker.run_reconcile",
+        "nomadquant.shadow.gate.run_reconcile",
         lambda _settings: {"ok": True, "issues": [], "recovery_required": False},
     )
 
@@ -56,11 +56,11 @@ def test_failed_reconcile_blocks_shadow_apply(
     calls: list[str] = []
 
     monkeypatch.setattr(
-        "nomadquant.shadow.worker.run_preflight",
+        "nomadquant.shadow.gate.run_preflight",
         lambda _settings, **_kwargs: {"status": "READY", "checks": []},
     )
     monkeypatch.setattr(
-        "nomadquant.shadow.worker.run_reconcile",
+        "nomadquant.shadow.gate.run_reconcile",
         lambda _settings: {
             "ok": False,
             "issues": ["recovery_required"],
@@ -103,3 +103,31 @@ def test_recovery_required_blocks_new_fill(tmp_path: Path, monkeypatch: pytest.M
     assert code == 2
     assert after["version"] == version
     assert after["reserved_cash_usd"] == Decimal("5")
+
+
+def test_post_apply_reconcile_failure_is_not_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = make_settings(tmp_path)
+    ShadowStore(settings.shadow_path, namespace="forward")
+    monkeypatch.setattr(
+        "nomadquant.shadow.gate.run_preflight",
+        lambda _settings, **_kwargs: {"status": "READY", "checks": []},
+    )
+    monkeypatch.setattr(
+        "nomadquant.shadow.gate.run_reconcile",
+        lambda _settings: {"ok": True, "issues": [], "recovery_required": False},
+    )
+    monkeypatch.setattr(
+        "nomadquant.shadow.worker.run_shadow_cycle",
+        lambda **_kwargs: {"status": "filled"},
+    )
+    monkeypatch.setattr(
+        "nomadquant.shadow.worker.run_reconcile",
+        lambda _settings: {"ok": False, "issues": ["equity_mismatch"], "recovery_required": False},
+    )
+    code, outcome = run_daily_worker(settings, mode="shadow-apply", data_dir=tmp_path)
+    assert outcome["worker_status"] == "FAILED"
+    assert outcome["error"] == "post_apply_reconcile_failed"
+    assert code == 1
+    assert outcome["reconcile_after"]["ok"] is False

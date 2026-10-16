@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -11,7 +12,8 @@ from typing import Any, Literal
 
 from nomadquant.config import Settings
 from nomadquant.shadow.cycle import LABEL_FORWARD, run_shadow_cycle
-from nomadquant.shadow.preflight import run_preflight, run_reconcile
+from nomadquant.shadow.gate import application_guard
+from nomadquant.shadow.preflight import run_reconcile
 from nomadquant.shadow.store import ShadowStore
 
 WorkerMode = Literal["inspect", "dry-run", "shadow-apply"]
@@ -79,6 +81,8 @@ def run_daily_worker(
     exit_code = 1
     try:
         store = ShadowStore(settings.shadow_path, namespace="forward")
+        before = store.snapshot()
+        outcome["ledger_before"] = _ledger_view(before)
         active = store.list_active_reservations()
         pending = _pending_intents(store)
         recovery = {
@@ -87,18 +91,23 @@ def run_daily_worker(
             "reservation_intent_ids": [r["intent_id"] for r in active],
         }
         outcome["recovery_inspect"] = recovery
+        guard = application_guard(settings)
+        outcome["preflight"] = guard["preflight"]
+        outcome["reconcile"] = guard["reconcile"]
+        outcome["gate"] = {
+            "allowed": guard["allowed"],
+            "reasons": guard["reasons"],
+            "preflight_status": guard["preflight_status"],
+            "reconcile_ok": guard["reconcile_ok"],
+        }
 
-        if active:
-            # Any mode: stuck reservations block new fills. Recover explicitly.
+        if active or "active_reservations" in guard["reasons"]:
             outcome["worker_status"] = "RECOVERY_REQUIRED"
             outcome["finished_at"] = datetime.now(UTC).isoformat()
             _write_outcome(log_dir, outcome)
             return 2, outcome
 
-        outcome["preflight"] = run_preflight(settings)
-        outcome["reconcile"] = run_reconcile(settings)
-
-        preflight_status = str(outcome["preflight"].get("status", ""))
+        preflight_status = str(guard.get("preflight_status") or "")
         if preflight_status == "BLOCKED":
             outcome["worker_status"] = "FAILED"
         elif preflight_status in {"WAITING_FOR_DATA", "NO_REBALANCE_DUE"}:
@@ -111,22 +120,19 @@ def run_daily_worker(
             outcome["worker_status"] = "HEALTHY"
 
         if mode == "inspect":
-            if outcome["worker_status"] == "HEALTHY" and not outcome["reconcile"].get("ok"):
+            if outcome["worker_status"] == "HEALTHY" and not guard["reconcile_ok"]:
                 outcome["worker_status"] = "FAILED"
             exit_code = _exit_for_status(outcome["worker_status"])
             outcome["finished_at"] = datetime.now(UTC).isoformat()
             _write_outcome(log_dir, outcome)
             return exit_code, outcome
 
-        # Hard gate: never mutate on BLOCKED, failed reconcile, or recovery.
-        reconcile_ok = bool(outcome["reconcile"].get("ok"))
-        if preflight_status == "BLOCKED" or not reconcile_ok:
-            if outcome["reconcile"].get("recovery_required"):
+        if not guard["allowed"]:
+            if guard["reconcile"].get("recovery_required"):
                 outcome["worker_status"] = "RECOVERY_REQUIRED"
             else:
                 outcome["worker_status"] = "FAILED"
             outcome["cycle"] = None
-            outcome["gate"] = "blocked_before_cycle"
             exit_code = _exit_for_status(outcome["worker_status"])
             outcome["finished_at"] = datetime.now(UTC).isoformat()
             _write_outcome(log_dir, outcome)
@@ -147,8 +153,18 @@ def run_daily_worker(
             pending_count=len(_pending_intents(store)),
         )
 
+        after = store.snapshot()
+        outcome["ledger_after"] = _ledger_view(after)
+        outcome["pending_intents_resolved"] = len(pending) - len(_pending_intents(store))
+
         if mode == "shadow-apply":
             outcome["outbox"] = _deliver_outbox_safe(store, settings.risk_path)
+            outcome["reconcile_after"] = run_reconcile(settings)
+            after_ok = bool(outcome["reconcile_after"].get("ok"))
+            if not after_ok:
+                outcome["worker_status"] = "FAILED"
+                outcome["error"] = "post_apply_reconcile_failed"
+                outcome["gate"] = {**outcome["gate"], "post_apply": "blocked_pending_investigation"}
 
         if not outcome["reconcile"].get("ok") and outcome["worker_status"] == "HEALTHY":
             outcome["worker_status"] = "FAILED"
@@ -159,12 +175,40 @@ def run_daily_worker(
         return exit_code, outcome
     except Exception as exc:  # noqa: BLE001
         outcome["worker_status"] = "FAILED"
-        outcome["error"] = str(exc)
+        outcome["error"] = _sanitize(str(exc))
         outcome["finished_at"] = datetime.now(UTC).isoformat()
         _write_outcome(log_dir, outcome)
         return 1, outcome
     finally:
         _release_lock(lock_path)
+
+
+def list_worker_runs(log_dir: Path | str, *, limit: int = 20, offset: int = 0) -> dict[str, Any]:
+    """Paginate durable worker outcomes. Corrupt files are reported, not overwritten."""
+    directory = Path(log_dir)
+    if not directory.is_dir():
+        return {"items": [], "total": 0, "corrupt": [], "limit": limit, "offset": offset}
+    files = sorted(directory.glob(f"{_OUTCOME_PREFIX}*.json"), key=lambda p: p.stat().st_mtime)
+    items: list[dict[str, Any]] = []
+    corrupt: list[str] = []
+    for path in reversed(files):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            corrupt.append(path.name)
+            continue
+        if isinstance(payload, dict) and payload.get("run_id") and payload.get("finished_at"):
+            items.append(payload)
+        else:
+            corrupt.append(path.name)
+    page = items[offset : offset + limit]
+    return {
+        "items": page,
+        "total": len(items),
+        "corrupt": corrupt,
+        "limit": limit,
+        "offset": offset,
+    }
 
 
 def read_last_worker_run(log_dir: Path | str) -> dict[str, Any] | None:
@@ -270,10 +314,30 @@ def _release_lock(lock_path: Path) -> None:
     lock_path.unlink(missing_ok=True)
 
 
+def _ledger_view(snap: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "version": snap.get("version"),
+        "cash_usd": str(snap.get("cash_usd")),
+        "reserved_cash_usd": str(snap.get("reserved_cash_usd")),
+        "holdings": {k: str(v) for k, v in dict(snap.get("holdings") or {}).items()},
+    }
+
+
+def _sanitize(text: str) -> str:
+    redacted = re.sub(
+        r"(?i)(api[_-]?key|secret|token|authorization|bearer)\s*[:=]\s*\S+",
+        r"\1=[redacted]",
+        text,
+    )
+    return redacted[:500]
+
+
 def _write_outcome(log_dir: Path, outcome: dict[str, Any]) -> Path:
     run_id = str(outcome.get("run_id") or uuid.uuid4().hex)
     outcome["run_id"] = run_id
     path = log_dir / f"{_OUTCOME_PREFIX}{run_id}.json"
+    if path.exists():
+        raise FileExistsError(f"worker outcome already exists: {path.name}")
     tmp = path.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(outcome, indent=2, default=str), encoding="utf-8")
     tmp.replace(path)

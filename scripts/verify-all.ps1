@@ -39,15 +39,21 @@ from fastapi.testclient import TestClient
 from nomadquant.api.app import create_app
 from tests.conftest import make_settings
 from pathlib import Path
+import gc
+import shutil
 import tempfile
-with tempfile.TemporaryDirectory() as tmp:
-    app = create_app(make_settings(Path(tmp)))
+tmp = Path(tempfile.mkdtemp())
+try:
+    app = create_app(make_settings(tmp))
     with TestClient(app) as client:
         paths = client.app.openapi()['paths']
     for path, ops in paths.items():
         assert 'order' not in path.lower()
         assert set(ops).intersection({'get','post','put','patch','delete'}) == {'get'}
     print('PASS no order routes; GET-only API')
+finally:
+    gc.collect()
+    shutil.rmtree(tmp, ignore_errors=True)
 "@
 } "route safety"
 
