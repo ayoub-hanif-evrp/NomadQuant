@@ -41,6 +41,11 @@ def main(argv: list[str] | None = None) -> None:
     data.add_argument("--feed", choices=["sip", "iex"], default="sip")
     sync = sub.add_parser("data-sync", help="Opt-in read-only incremental bar download.")
     sync.add_argument("--feed", choices=["sip", "iex"], required=True)
+    sync.add_argument(
+        "--revision-audit",
+        action="store_true",
+        help="Re-fetch the warm-up window to detect revisions. Not the missing-data path.",
+    )
 
     sub.add_parser("preflight", help="Forward cycle readiness checks.")
     sub.add_parser("reconcile", help="Reconcile shadow ledger invariants.")
@@ -77,7 +82,9 @@ def _dispatch(args: argparse.Namespace, settings: Settings) -> int:
         return 0
     if args.command == "data-sync":
         try:
-            payload = data_sync(settings, feed=args.feed)
+            payload = data_sync(
+                settings, feed=args.feed, revision_audit=bool(args.revision_audit)
+            )
         except Exception as exc:  # noqa: BLE001
             print(f"error: {exc}", file=sys.stderr)
             return 1

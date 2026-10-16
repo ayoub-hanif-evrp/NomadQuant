@@ -133,6 +133,32 @@ def test_unfinished_session_is_not_required(tmp_path) -> None:
     assert report.get("eligible_end") != "2020-06-15"
 
 
+def test_one_missing_spy_session_does_not_redownload_qqq(tmp_path) -> None:
+    settings = make_settings(tmp_path)
+    as_of = datetime(2020, 6, 15, 22, tzinfo=UTC)
+    seeded = data_sync(settings, feed="sip", fetcher=_fetcher, as_of=as_of)
+    assert seeded["inserted"] > 100
+    store = MarketStore(settings.market_data_path)
+    spy = sorted(store.sessions("SPY", "sip"))
+    dropped = spy[-1]
+    with store._connect() as connection:
+        connection.execute(
+            "DELETE FROM bars WHERE symbol = 'SPY' AND session_date = ?",
+            (dropped.isoformat(),),
+        )
+    calls: list[tuple[tuple[str, ...], object, object]] = []
+
+    def _recording(symbols: list[str], start, end, feed: str) -> list[FetchedBar]:
+        calls.append((tuple(symbols), start, end))
+        return _fetcher(symbols, start, end, feed)
+
+    result = data_sync(settings, feed="sip", fetcher=_recording, as_of=as_of)
+    assert result["inserted"] == 1
+    assert result["provider_requests"] == 1
+    assert calls == [(("SPY",), dropped, dropped)]
+    assert "QQQ" not in calls[0][0]
+
+
 def test_provenance_is_not_realtime_when_retrieved_late() -> None:
     bar = StoredBar(
         symbol="SPY",

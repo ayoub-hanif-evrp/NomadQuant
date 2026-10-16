@@ -231,7 +231,42 @@ def run_shadow_cycle(
         )
 
     sessions = sessions_between(stored_sessions[0], stored_sessions[-1])
+    from nomadquant.shadow.missed import (
+        classify_scheduled_signals,
+        missed_signal_sessions,
+        persist_missed_signals,
+    )
+
+    scheduled = classify_scheduled_signals(
+        shadow,
+        sessions,
+        now,
+        label=label,
+        persist_pilot_start=mode == "apply",
+    )
+    missed_written = persist_missed_signals(
+        shadow, scheduled, mode=mode, label=label, before=before
+    )
+    if missed_written:
+        warnings.append(
+            "Missed month-start rebalance recorded without a historical fill: "
+            + ", ".join(row["signal_session"] for row in missed_written)
+        )
     signal_day = signal_session or _latest_eligible_signal_session(sessions, now)
+    if signal_session is None and signal_day in missed_signal_sessions(scheduled):
+        detail = (
+            missed_written[-1]
+            if missed_written
+            else {
+                "status": "missed_signal",
+                "signal_session": signal_day.isoformat(),
+                "intent": "no_trade",
+                "warnings": warnings,
+                "evidence": {"classification": "missed_signal", "not_backfilled": True},
+            }
+        )
+        detail = {**detail, "warnings": list(detail.get("warnings") or []) + warnings}
+        return detail
     if signal_day is None:
         if resumed:
             return {**resumed[-1], "prior_resumes": resumed, "warnings": warnings}

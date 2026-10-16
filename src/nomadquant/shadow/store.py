@@ -210,6 +210,34 @@ class ShadowStore:
             "namespace": self.namespace,
         }
 
+    def get_meta(self, key: str) -> str | None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT value FROM shadow_meta WHERE key = ?", (key,)).fetchone()
+        return None if row is None else str(row["value"])
+
+    def set_meta(self, key: str, value: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO shadow_meta (key, value) VALUES (?, ?)",
+                (key, value),
+            )
+
+    def cycles_for_signal(self, signal_session: str) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM shadow_cycles WHERE signal_session = ? ORDER BY id ASC",
+                (signal_session,),
+            ).fetchall()
+        return [_cycle_row(row) for row in rows]
+
+    def intents_for_signal(self, signal_session: str) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM shadow_intents WHERE signal_session = ? ORDER BY created_at ASC",
+                (signal_session,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def cycle_exists(self, cycle_key: str) -> bool:
         with self._connect() as conn:
             row = conn.execute(
