@@ -26,6 +26,7 @@ import {
   Skeleton,
   toneFor,
 } from "@/components/ui";
+import { ForwardPilot } from "@/components/ForwardPilot";
 import type { ShadowCycle, ShadowValuation } from "@/lib/api";
 import {
   loadShadowCycle,
@@ -331,6 +332,8 @@ export function ShadowPortfolio() {
           </dl>
         ) : null}
       </Panel>
+
+      <ForwardPilot />
 
       {status.data ? (
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">

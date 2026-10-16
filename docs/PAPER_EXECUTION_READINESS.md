@@ -127,6 +127,29 @@ These are observed results, not a completed forward fill.
 | Ollama | Models are installed locally. `ollama ps` showed no running model. Daily worker did not call Ollama. |
 | Real-time executable evidence | No. The new bars are delayed daily OHLC. |
 
+## Prompt 15 local evidence (2026-10-16, this workstation)
+
+These are observed results. They are not a completed forward fill and not a confirmation of the pre-registered momentum hypothesis.
+
+| Check | Result |
+|-------|--------|
+| SIP coverage | SPY and QQQ each have 2209 sessions. Latest stored session 2026-10-15. Warm-up window 2025-09-09 through 2026-10-15 is complete (`missing_count=0`). 2026-10-16 was not a completed session at inspection time. |
+| Incremental sync | A missing-data sync on this coverage is a noop: `provider_requests=0`. The same warm-up window is 278 sessions, 556 symbol-rows. The previous live sync fetched 556 rows to insert 2. A revision audit still re-fetches that window and was not run. The regression test deletes one stored SPY session and expects one SPY-only provider call, with QQQ omitted. |
+| Missed month-start | Live ledger has no `missed_signal` row. The pilot clock is unset because `shadow-apply` was not run, so earlier months are not backfilled as operational misses. Tests cover a shutdown on the first session of February 2020, a two-day outage, a weekend month change, a pending intent that resumes, duplicate detection, and first contact that does not invent a historical fill. |
+| Preflight / reconcile | `NO_REBALANCE_DUE`. Reconcile `ok=true`. Cash 100, reserved 0, holdings empty, ledger version 1. |
+| Worker inspect | run `70ab4b4348c54f6cbb0335fa2339960f`, `WAITING_FOR_SESSION`. No new cycle. |
+| Worker dry-run | run `6a1a56b949254bea95aad5f2736124bb`, `COMPLETED_NO_TRADE`. Reused cycle 2 for 2026-10-15. Ledger stayed version 1. |
+| Daily inspect | operation `4c54213e5b334bf0a3b3469a844c7768`, `COMPLETED`. Sync skipped. |
+| Daily dry-run | operation `08637b32e4c74626b9614bff26ec30fe`, `COMPLETED`. Sync skipped. Worker run `2de7126b00f04df4aca07adfa3a5e25c`. |
+| Prospective records | 2 dry-run `no_trade` cycles (2026-10-14 and 2026-10-15). Creation timestamps were left unchanged. |
+| Hypothetical fills | 0. Fill model remains `delayed_hypothetical_daily_open` and is `NOT_EVALUABLE` until a fill exists. |
+| Independent verify | Cycles 1 and 2 both `PASS`. Evidence hash, momentum, bar hash, future-bar exclusion, retrieval cutoff, and unchanged cash recomputed. A tampered hash fails in tests. |
+| Baseline | Inconclusive. Cash baseline stays 100. No SPY buy-and-hold comparison is claimed against shadow fills, because there are no fills. Raw closes are not total returns. |
+| Shadow-apply | Not run. |
+| Task Scheduler install | Not run. |
+| Alpaca orders | None. No data-sync and no order client were invoked. |
+| Ollama | One review of research run 2 with installed `qwen3.5:9b`. Agent run 5 succeeded in 68s (11:49:10Z to 11:50:18Z). Researcher, skeptic, and reviewer stages completed. Deterministic verification overrode the model: 5 numerical claims did not match stored test-window metrics. Verdict `verification_failed`. Not a trading decision and not a broker order. No new model was downloaded. Memory was not sampled. |
+
 ## Go / no-go checklist
 
 | Item | Go? |

@@ -1804,6 +1804,71 @@ export async function loadShadowOps(): Promise<ShadowOps> {
   return value as ShadowOps;
 }
 
+export type ForwardPilotReport = {
+  initialized?: boolean;
+  status?: string;
+  pilot_started_at?: string | null;
+  days_since_start?: number | null;
+  eligible_sessions?: number;
+  sessions_processed?: number;
+  sessions_missed?: number;
+  sessions_awaiting_data?: number;
+  failed_cycles?: number;
+  pending_intents?: number;
+  reconciliation_ok?: boolean;
+  verified_cycles?: number;
+  verification_failures?: number;
+  equity_usd?: string | null;
+  cash_usd?: string;
+  hypothetical_fills?: number;
+  prospective_decisions?: number;
+  fill_assumption?: string;
+  caveat?: string;
+  baseline?: {
+    status?: string;
+    reason?: string;
+    spy_raw_close_return?: string | null;
+    from_session?: string;
+    to_session?: string;
+  };
+  hypothesis?: { comparison?: string; note?: string; cash_baseline_usd?: string };
+  equity_history?: Array<{ session?: string | null; recorded_at?: string; equity_usd?: string | number }>;
+  drawdown_fraction?: string | null;
+  decisions?: Array<{
+    id?: number;
+    signal_session?: string | null;
+    status?: string;
+    intent?: string | null;
+    created_at?: string;
+    fill_price?: string | null;
+    forward_created?: boolean;
+  }>;
+};
+
+export type CycleVerification = {
+  cycle_id: number;
+  status: string;
+  verified: boolean;
+  checks: Array<{ name: string; status: string; detail: string }>;
+  note: string;
+};
+
+export async function loadForwardPilot(): Promise<ForwardPilotReport> {
+  const value = await readJson("/api/shadow/pilot");
+  if (!isRecord(value)) {
+    throw new Error("Unexpected forward pilot report");
+  }
+  return value as ForwardPilotReport;
+}
+
+export async function loadCycleVerification(cycleId: number): Promise<CycleVerification> {
+  const value = await readJson(`/api/shadow/cycles/${cycleId}/verification`);
+  if (!isRecord(value) || !Array.isArray(value.checks)) {
+    throw new Error("Unexpected cycle verification");
+  }
+  return value as CycleVerification;
+}
+
 export async function loadShadowTimeline(
   query = "?limit=50&offset=0",
 ): Promise<{ items: ShadowTimelineItem[]; total: number; limit: number; offset: number }> {

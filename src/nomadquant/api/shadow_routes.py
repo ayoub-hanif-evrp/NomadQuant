@@ -351,6 +351,20 @@ def shadow_equity(
     return {"items": store.equity_history(limit=limit)}
 
 
+@router.get("/pilot")
+def shadow_pilot(request: Request) -> dict[str, Any]:
+    from nomadquant.shadow.pilot import forward_pilot_report
+
+    return forward_pilot_report(request.app.state.settings)
+
+
+@router.get("/cycles/{cycle_id}/verification")
+def shadow_cycle_verification(cycle_id: int, request: Request) -> dict[str, Any]:
+    from nomadquant.shadow.verify import verify_cycle
+
+    return verify_cycle(request.app.state.settings, cycle_id)
+
+
 @router.get("/preflight")
 def shadow_preflight(request: Request) -> dict[str, Any]:
     return run_preflight(request.app.state.settings)

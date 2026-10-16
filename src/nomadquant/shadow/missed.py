@@ -92,9 +92,7 @@ def persist_missed_signals(
             before=before,
             status="missed_signal",
             intent="no_trade",
-            warnings=[
-                f"MISSED_SIGNAL {session.isoformat()}: not backfilled."
-            ],
+            warnings=[f"MISSED_SIGNAL {session.isoformat()}: not backfilled."],
             evidence=evidence,
             duration_ms=0,
             mutate=False,

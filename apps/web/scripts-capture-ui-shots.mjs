@@ -45,6 +45,25 @@ try {
       const file = path.join(outDir, `${target.name}-${viewport.name}.png`);
       await page.screenshot({ path: file, fullPage: true });
       console.log("wrote", file);
+      if (target.name === "shadow-operations") {
+        const heading = page.getByRole("heading", { name: "Forward Pilot" });
+        if (await heading.count()) {
+          await heading.scrollIntoViewIfNeeded();
+          await page.waitForTimeout(500);
+          const pilotFile = path.join(outDir, `forward-pilot-${viewport.name}.png`);
+          await page.screenshot({ path: pilotFile, fullPage: false });
+          console.log("wrote", pilotFile);
+        }
+        const decision = page.getByRole("button", { name: /no_trade|missed_signal|filled|dry_run/ }).first();
+        if (await decision.count()) {
+          await decision.click();
+          await page.waitForTimeout(1500);
+          const verifyFile = path.join(outDir, `forward-verify-${viewport.name}.png`);
+          await page.screenshot({ path: verifyFile, fullPage: false });
+          console.log("wrote", verifyFile);
+          await page.keyboard.press("Escape");
+        }
+      }
     }
     if (viewport.name === "390x844") {
       await page.goto("http://127.0.0.1:3000/", { waitUntil: "networkidle" });

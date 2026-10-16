@@ -7,6 +7,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from nomadquant.shadow.daily import run_daily_operation
+from nomadquant.shadow.pilot import forward_pilot_report
 from nomadquant.shadow.store import ShadowStore
 from nomadquant.shadow.verify import verify_cycle
 from tests.conftest import make_settings
@@ -62,3 +63,29 @@ def test_verifier_rejects_a_tampered_evidence_hash(tmp_path: Path) -> None:
     tampered = verify_cycle(settings, int(missed["id"]))
     assert tampered["status"] == "FAIL"
     assert tampered["verified"] is False
+
+
+def test_pilot_report_is_inconclusive_without_a_fill(tmp_path: Path) -> None:
+    settings = make_settings(tmp_path)
+    assert forward_pilot_report(settings)["initialized"] is False
+    assert not Path(settings.shadow_path).exists()
+    market = Path(settings.market_data_path)
+    _market(market, date(2019, 11, 1), date(2020, 2, 5))
+    shadow = ShadowStore(settings.shadow_path, namespace="forward")
+    shadow.set_meta("forward_pilot_started_at", "2020-01-15T00:00:00+00:00")
+    from nomadquant.shadow.cycle import run_shadow_cycle
+
+    run_shadow_cycle(
+        market_path=market,
+        shadow_path=settings.shadow_path,
+        risk_path=settings.risk_path,
+        mode="apply",
+        as_of=datetime(2020, 2, 5, 22, tzinfo=UTC),
+    )
+    report = forward_pilot_report(settings, verify_limit=3)
+    assert report["hypothetical_fills"] == 0
+    assert report["status"] == "INCONCLUSIVE"
+    assert report["sessions_missed"] >= 1
+    assert report["hypothesis"]["comparison"] == "inconclusive"
+    assert report["baseline"]["comparable_to_shadow_fills"] is False
+    assert report["cash_usd"] == "100"

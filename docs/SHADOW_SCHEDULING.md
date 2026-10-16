@@ -38,6 +38,11 @@ uv run nomadquant-shadow data-sync --feed sip   # explicit; not run by the sched
 uv run nomadquant-shadow worker --mode inspect
 uv run nomadquant-shadow worker --mode dry-run
 uv run nomadquant-shadow worker --mode shadow-apply
+uv run nomadquant-shadow daily --mode inspect
+uv run nomadquant-shadow daily --mode dry-run
+uv run nomadquant-shadow daily --mode inspect --sync   # explicit authenticated sync
+uv run nomadquant-shadow daily --mode shadow-apply     # separate opt-in; still no broker orders
+uv run nomadquant-shadow verify --cycle-id 1
 uv run nomadquant-shadow recover   # explicit reservation recovery + outbox
 ```
 
