@@ -112,6 +112,9 @@ class MetricSet(BaseModel):
     total_costs: Decimal
     sample_sessions: int
     unavailable: list[str] = Field(default_factory=list)
+    metric_method: str = "legacy_unversioned"
+    gross_return_definition: str = ""
+    cost_free_return: Decimal | None = None
 
 
 class StrategyResult(BaseModel):

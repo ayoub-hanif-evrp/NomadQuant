@@ -8,6 +8,11 @@ from nomadquant.research.models import EquityPoint, MetricSet, SimulatedTrade
 _ZERO = Decimal("0")
 _ONE = Decimal("1")
 TRADING_DAYS = Decimal("252")
+METRIC_METHOD = "window_local_v2"
+GROSS_RETURN_DEFINITION = (
+    "ending_equity_plus_attributed_spread_slippage_and_commission_over_start_capital. "
+    "This is not a separately replayed cost-free path."
+)
 
 
 def compute_metrics(
@@ -57,14 +62,17 @@ def compute_metrics(
         )
 
     end_capital = equity[-1].equity
-    net_return = (end_capital / start_capital) - _ONE
+    opening = opening_equity if opening_equity is not None else start_capital
+    net_return = (end_capital / opening) - _ONE if opening > 0 else None
     costs = sum((trade.commission + trade.spread_cost + trade.slippage_cost) for trade in trades)
-    gross_return = ((end_capital + costs) / start_capital) - _ONE
-    max_dd = max((point.drawdown for point in equity), default=_ZERO)
+    # Legacy name kept so old reports still have a field. It adds attributed
+    # costs back onto ending equity. It is not a second, cost-free simulation.
+    gross_return = ((end_capital + costs) / opening) - _ONE if opening > 0 else None
+    max_dd = _window_drawdown(equity, opening)
+    if net_return is None:
+        unavailable.append("net_return")
 
-    returns = _daily_returns(
-        equity, opening_equity if opening_equity is not None else start_capital
-    )
+    returns = _daily_returns(equity, opening)
     vol = _annualized_vol(returns)
     sharpe = _sharpe(returns, vol)
     sortino = _sortino(returns)
@@ -94,8 +102,23 @@ def compute_metrics(
         trade_count=len(trades),
         total_costs=costs if isinstance(costs, Decimal) else Decimal(str(costs)),
         sample_sessions=len(equity),
-        unavailable=unavailable,
+        unavailable=[*unavailable, "cost_free_replay_not_run"],
+        metric_method=METRIC_METHOD,
+        gross_return_definition=GROSS_RETURN_DEFINITION,
+        cost_free_return=None,
     )
+
+
+def _window_drawdown(equity: list[EquityPoint], opening: Decimal) -> Decimal:
+    """Peak-to-trough inside this window. Does not inherit an earlier peak."""
+    peak = opening
+    worst = _ZERO
+    for point in equity:
+        if point.equity > peak:
+            peak = point.equity
+        if peak > 0:
+            worst = max(worst, (peak - point.equity) / peak)
+    return worst
 
 
 def _daily_returns(equity: list[EquityPoint], opening: Decimal) -> list[Decimal]:

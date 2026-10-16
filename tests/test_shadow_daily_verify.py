@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -63,6 +64,46 @@ def test_verifier_rejects_a_tampered_evidence_hash(tmp_path: Path) -> None:
     tampered = verify_cycle(settings, int(missed["id"]))
     assert tampered["status"] == "FAIL"
     assert tampered["verified"] is False
+
+
+def test_verifier_scopes_do_not_pass_a_missing_cutoff_or_a_no_fill(tmp_path: Path) -> None:
+    settings = make_settings(tmp_path)
+    market = Path(settings.market_data_path)
+    _market(market, date(2019, 11, 1), date(2020, 2, 5))
+    shadow = ShadowStore(settings.shadow_path, namespace="forward")
+    shadow.set_meta("forward_pilot_started_at", "2020-01-15T00:00:00+00:00")
+    from nomadquant.shadow.cycle import run_shadow_cycle
+
+    run_shadow_cycle(
+        market_path=market,
+        shadow_path=settings.shadow_path,
+        risk_path=settings.risk_path,
+        mode="apply",
+        as_of=datetime(2020, 2, 5, 22, tzinfo=UTC),
+    )
+    store = ShadowStore(settings.shadow_path, namespace="forward")
+    missed = next(row for row in store.list_cycles(limit=10) if row["status"] == "missed_signal")
+    report = verify_cycle(settings, int(missed["id"]))
+    assert report["scopes"]["full_cycle"] == "PASS"
+    assert any(
+        row["name"] == "fill_assumption" and row["status"] == "NOT_APPLICABLE"
+        for row in report["checks"]
+    )
+    evidence = dict(missed["evidence"])
+    evidence["signal_available_at"] = "1999-01-01T00:00:00+00:00"
+    after = dict(missed["ledger_after"])
+    after["cash_usd"] = "50"
+    with store._connect() as connection:
+        connection.execute(
+            "UPDATE shadow_cycles SET evidence_json = ?, ledger_after_json = ? WHERE id = ?",
+            (json.dumps(evidence), json.dumps(after), missed["id"]),
+        )
+    cutoff = verify_cycle(settings, int(missed["id"]))
+    by_name = {row["name"]: row["status"] for row in cutoff["checks"]}
+    assert by_name["information_cutoff"] == "FAIL"
+    assert by_name["cash_unchanged_without_fill"] == "FAIL"
+    assert by_name["evidence_hash"] == "FAIL"
+    assert cutoff["verified"] is False
 
 
 def test_pilot_report_is_inconclusive_without_a_fill(tmp_path: Path) -> None:

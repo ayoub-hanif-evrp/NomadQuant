@@ -37,7 +37,14 @@ def momentum_return(
     end_date = available[end_index]
     start_price = closes.get(start_date)
     end_price = closes.get(end_date)
-    if start_price is None or end_price is None or start_price <= 0:
+    if (
+        start_price is None
+        or end_price is None
+        or not start_price.is_finite()
+        or not end_price.is_finite()
+        or start_price <= 0
+        or end_price <= 0
+    ):
         return None
     return (end_price / start_price) - _ONE
 
