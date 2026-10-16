@@ -51,7 +51,15 @@ def main(argv: list[str] | None = None) -> None:
 
     sub.add_parser("preflight", help="Forward cycle readiness checks.")
     pilot = sub.add_parser("pilot", help="Read-only supervised forward-pilot checks.")
-    pilot.add_argument("action", choices=["preflight", "status", "report"])
+    pilot.add_argument(
+        "action",
+        choices=["preflight", "status", "report", "preview", "confirm"],
+    )
+    pilot.add_argument(
+        "--approval",
+        default="",
+        help="Exact preview hash. confirm does not apply a fill.",
+    )
     sub.add_parser("reconcile", help="Reconcile shadow ledger invariants.")
 
     sub.add_parser(
@@ -125,16 +133,30 @@ def _dispatch(args: argparse.Namespace, settings: Settings) -> int:
         _print(run_preflight(settings))
         return 0
     if args.command == "pilot":
-        from nomadquant.shadow.pilot import forward_pilot_report, supervised_readiness
+        from nomadquant.shadow.pilot import (
+            confirm_pilot_start,
+            forward_pilot_report,
+            pilot_start_preview,
+            supervised_readiness,
+        )
 
         if args.action == "preflight":
             payload = run_preflight(settings)
         elif args.action == "status":
             payload = supervised_readiness(settings)
+        elif args.action == "preview":
+            payload = pilot_start_preview(settings)
+        elif args.action == "confirm":
+            if not args.approval:
+                print("error: confirm requires --approval PREVIEW_HASH", file=sys.stderr)
+                return 2
+            payload = confirm_pilot_start(settings, args.approval)
         else:
             payload = forward_pilot_report(settings, verify_limit=5)
         payload = {**payload, "mutates_forward_ledger": False, "broker_orders": False}
         _print(payload)
+        if args.action == "confirm" and payload.get("status") == "REJECTED":
+            return 1
         return 0
     if args.command == "reconcile":
         result = run_reconcile(settings)

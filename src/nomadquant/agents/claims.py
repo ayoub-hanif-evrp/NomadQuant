@@ -38,6 +38,86 @@ _STRATEGY_REF = re.compile(
 )
 
 
+def offline_claim_benchmark() -> dict[str, Any]:
+    """Fixed claims against one metric row. No model and no network."""
+    metrics = [
+        {
+            "strategy_id": "spy_tsmom_12_1",
+            "window": "test",
+            "net_return": "0.0123",
+            "sharpe": "0.80",
+            "max_drawdown": "0.05",
+            "trade_count": "12",
+            "total_costs": "1.25",
+        }
+    ]
+    cases = [
+        (
+            "percent matches decimal",
+            {
+                "name": "net_return",
+                "value": "1.23",
+                "unit": "percent",
+                "evidence_ref": "run:7",
+                "window": "test",
+            },
+            "PASS",
+        ),
+        (
+            "decimal return",
+            {
+                "name": "net_return",
+                "value": "0.0123",
+                "unit": "fraction",
+                "evidence_ref": "run:7",
+                "window": "test",
+            },
+            "PASS",
+        ),
+        (
+            "wrong percent",
+            {
+                "name": "net_return",
+                "value": "12.3",
+                "unit": "percent",
+                "evidence_ref": "run:7",
+                "window": "test",
+            },
+            "FAIL",
+        ),
+        (
+            "missing reference",
+            {
+                "name": "sharpe",
+                "value": "0.80",
+                "unit": "ratio",
+                "evidence_ref": " ",
+                "window": "test",
+            },
+            "FAIL",
+        ),
+        (
+            "unknown name",
+            {"name": "alpha", "value": "1", "unit": "", "evidence_ref": "run:7", "window": "test"},
+            "FAIL",
+        ),
+    ]
+    rows = []
+    for label, raw, expected in cases:
+        claim = Claim.model_validate(raw)
+        result = _check(claim, claim.model_dump(mode="json"), 7, "spy_tsmom_12_1", metrics)
+        rows.append({"label": label, "expected": expected, "verdict": result["verdict"]})
+    matched = sum(1 for row in rows if row["verdict"] == row["expected"])
+    return {
+        "cases": rows,
+        "matched": matched,
+        "total": len(rows),
+        "pass": matched == len(rows),
+        "models_called": False,
+        "note": "This scores the checker, not a language model's forecasting skill.",
+    }
+
+
 def verify_claims(
     claims: Sequence[Claim | dict[str, Any]],
     research_path: str | Path,
@@ -71,6 +151,8 @@ def _check(
     strategy_id: str,
     metrics: list[dict[str, Any]],
 ) -> dict[str, Any]:
+    if not claim.evidence_ref.strip():
+        return _result(shown, "FAIL", "A numerical claim requires an evidence reference.")
     name = CLAIM_ALIASES.get(claim.name.strip(), claim.name.strip())
     if name not in CLAIM_NAMES:
         return _result(shown, "FAIL", f"Unknown claim name {claim.name!r} was rejected.")

@@ -6,6 +6,7 @@ Official sources, retrieved 2026-10-16:
 - https://docs.alpaca.markets/us/docs/working-with-orders
 - https://docs.alpaca.markets/us/docs/paper-trading
 - https://docs.alpaca.markets/us/reference/postorder
+- https://docs.alpaca.markets/us/reference/getorderbyclientorderid
 
 The user's paper account was not queried and must not be reset. Alpaca's
 default paper balance is not NomadQuant's internal $100 ledger.
@@ -15,7 +16,7 @@ from __future__ import annotations
 
 from typing import Any
 
-PROFILE_VERSION = "alpaca-readonly-2026-10-16"
+PROFILE_VERSION = "alpaca-readonly-2026-10-16-rc1"
 
 
 def broker_capability_profile() -> dict[str, Any]:
@@ -31,6 +32,7 @@ def broker_capability_profile() -> dict[str, Any]:
             "https://docs.alpaca.markets/us/docs/working-with-orders",
             "https://docs.alpaca.markets/us/docs/paper-trading",
             "https://docs.alpaca.markets/us/reference/postorder",
+            "https://docs.alpaca.markets/us/reference/getorderbyclientorderid",
         ],
         "fractional_shares": {
             "documented": (

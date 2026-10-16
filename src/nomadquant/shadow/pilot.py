@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -335,6 +336,89 @@ def _eligible_pending(pending: list[dict[str, Any]], settings: Settings) -> int:
         if session in stored and str(item.get("state")) == "PENDING_DATA":
             count += 1
     return count
+
+
+def pilot_start_preview(settings: Settings) -> dict[str, Any]:
+    """Read-only preview. Does not start the pilot or mutate the ledger."""
+    import hashlib
+
+    readiness = supervised_readiness(settings)
+    path = Path(settings.shadow_path)
+    snapshot: dict[str, Any] | None = None
+    if path.exists():
+        snap = ShadowStore(path, namespace="forward").snapshot()
+        snapshot = {
+            "version": snap["version"],
+            "cash_usd": str(snap["cash_usd"]),
+            "reserved_cash_usd": str(snap["reserved_cash_usd"]),
+            "holdings": {key: str(value) for key, value in snap["holdings"].items()},
+        }
+    from nomadquant.risk.policy import RiskPolicy
+
+    policy = RiskPolicy()
+    body = {
+        "state": readiness["state"],
+        "snapshot": snapshot,
+        "policy_version": policy.version,
+        "policy_hash": policy.policy_hash(),
+        "data_complete": readiness["data_complete"],
+        "pending_intent_count": readiness["pending_intent_count"],
+        "pending_intent_eligible_count": readiness["pending_intent_eligible_count"],
+        "rebalance_scheduled": readiness["rebalance_scheduled"],
+        "signal_eligible": readiness["signal_eligible"],
+        "observation_available": readiness["observation_available"],
+        "execution_model": "delayed_hypothetical_daily_open",
+        "realtime_executable": False,
+        "files_that_would_change": [
+            str(path),
+            str(Path(settings.risk_path)),
+            str(Path(settings.shadow_path).parent / "shadow_logs"),
+        ],
+        "would_create_pilot_clock": readiness["pilot_clock_started"] is False and path.exists(),
+        "recovery": "nomadquant-shadow recover releases an interrupted reservation only.",
+        "cannot_undo": (
+            "A committed simulated fill and the pilot clock are forward history. "
+            "There is no automatic undo."
+        ),
+        "broker_orders": False,
+        "mutates_forward_ledger": False,
+    }
+    encoded = json.dumps(body, sort_keys=True, separators=(",", ":"))
+    body["preview_hash"] = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+    body["approval_token"] = body["preview_hash"]
+    return body
+
+
+def confirm_pilot_start(settings: Settings, approval: str) -> dict[str, Any]:
+    """Accept a token only when it still matches the current preview. Does not apply."""
+    current = pilot_start_preview(settings)
+    if approval != current["preview_hash"]:
+        return {
+            "status": "REJECTED",
+            "reason": "approval token does not match the current preview",
+            "applied": False,
+            "broker_orders": False,
+        }
+    again = pilot_start_preview(settings)
+    if again["preview_hash"] != approval:
+        return {
+            "status": "REJECTED",
+            "reason": "state changed between preview and confirmation",
+            "applied": False,
+            "broker_orders": False,
+        }
+    return {
+        "status": "CONFIRMATION_ACCEPTED",
+        "applied": False,
+        "preview_hash": approval,
+        "state": current["state"],
+        "next_command": "nomadquant-shadow worker --mode shadow-apply",
+        "note": (
+            "Confirmation does not mutate the ledger. "
+            "Run the worker only after you intend to change forward history."
+        ),
+        "broker_orders": False,
+    }
 
 
 def _created_after_signal(row: dict[str, Any]) -> bool:
