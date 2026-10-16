@@ -1824,6 +1824,22 @@ export type ForwardPilotReport = {
   prospective_decisions?: number;
   fill_assumption?: string;
   caveat?: string;
+  supervision?: {
+    readiness?: string;
+    reasons?: string[];
+    data_fresh?: boolean;
+    data_status?: string;
+    rebalance_due?: boolean;
+    pending_can_resume?: boolean;
+    pending_intents?: number;
+    ledger_reconciled?: boolean;
+    application_blocked?: boolean;
+    next_execution?: string;
+    user_decision_required?: boolean;
+    pilot_active?: boolean;
+    cash_usd?: string | null;
+    note?: string;
+  };
   baseline?: {
     status?: string;
     reason?: string;
@@ -1865,6 +1881,8 @@ export type QualityReport = {
     hypothetical_fills?: number;
     sessions_missed?: number;
     sample?: string;
+    readiness?: string;
+    reasons?: string[];
   };
   verifier?: {
     cycles?: Array<{ cycle_id?: number; status?: string; full_cycle?: string; fill?: string }>;

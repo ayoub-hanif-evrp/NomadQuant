@@ -34,6 +34,7 @@ def forward_pilot_report(settings: Settings, *, verify_limit: int = 5) -> dict[s
             "caveat": _CAVEAT,
             "hypothetical_fills": 0,
             "prospective_decisions": 0,
+            "supervision": supervised_readiness(settings),
         }
     store = ShadowStore(path, namespace="forward")
     snap = store.snapshot()
@@ -125,6 +126,81 @@ def forward_pilot_report(settings: Settings, *, verify_limit: int = 5) -> dict[s
         ],
         "equity_history": store.equity_history(limit=500),
         "caveat": _CAVEAT,
+        "supervision": supervised_readiness(settings),
+    }
+
+
+def supervised_readiness(settings: Settings) -> dict[str, Any]:
+    """Read-only answer to whether a forward shadow pilot may be started.
+
+    Does not create a ledger, sync market data, or apply a fill.
+    """
+    from nomadquant.shadow.data_ops import data_check
+    from nomadquant.shadow.gate import application_guard
+    from nomadquant.shadow.preflight import run_preflight
+
+    coverage = data_check(settings, feed="sip")
+    preflight = run_preflight(settings)
+    reconcile = run_reconcile(settings)
+    guard = application_guard(settings)
+    path = Path(settings.shadow_path)
+    pending: list[dict[str, Any]] = []
+    pilot_raw = None
+    cash = None
+    if path.exists():
+        store = ShadowStore(path, namespace="forward")
+        pending = store.pending_intents()
+        pilot_raw = store.get_meta(PILOT_STARTED_KEY)
+        cash = str(store.snapshot()["cash_usd"])
+    data_status = str(coverage.get("status") or "UNKNOWN")
+    data_fresh = data_status in {"OK", "CURRENT", "COMPLETE"}
+    reasons: list[str] = []
+    if not data_fresh:
+        reasons.append(f"market_data:{data_status}")
+    if not reconcile.get("ok"):
+        reasons.append("ledger_not_reconciled")
+    if not guard.get("allowed"):
+        reasons.extend(f"guard:{item}" for item in list(guard.get("reasons") or []))
+    if preflight.get("status") == "BLOCKED":
+        reasons.append("preflight_blocked")
+    if not pilot_raw:
+        reasons.append("pilot_clock_unset")
+    if reasons and (not data_fresh):
+        readiness = "INSUFFICIENT_DATA"
+    elif any(
+        item.startswith("guard:") or item in {"ledger_not_reconciled", "preflight_blocked"}
+        for item in reasons
+    ):
+        readiness = "BLOCKED"
+    elif not pilot_raw:
+        readiness = "READY"
+    else:
+        readiness = "OBSERVING"
+    return {
+        "readiness": readiness,
+        "reasons": reasons,
+        "data_status": data_status,
+        "data_fresh": data_fresh,
+        "rebalance_due": preflight.get("status") not in {"NO_REBALANCE_DUE", "ALREADY_PROCESSED"},
+        "preflight_status": preflight.get("status"),
+        "pending_can_resume": len(pending) > 0,
+        "pending_intents": len(pending),
+        "ledger_reconciled": bool(reconcile.get("ok")),
+        "application_blocked": not bool(guard.get("allowed")),
+        "guard_reasons": list(guard.get("reasons") or []),
+        "next_execution": "delayed_hypothetical",
+        "realtime_executable": False,
+        "user_decision_required": pilot_raw is None,
+        "pilot_started_at": pilot_raw,
+        "pilot_active": pilot_raw is not None,
+        "cash_usd": cash,
+        "mutates_forward_ledger": False,
+        "broker_orders": False,
+        "note": (
+            "READY means the checks that can be answered are clear enough to ask "
+            "for an explicit shadow-apply. It is not an active trading system, "
+            "and this report does not submit an Alpaca order or mutate the ledger."
+        ),
     }
 
 

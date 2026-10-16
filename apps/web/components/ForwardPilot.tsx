@@ -76,9 +76,26 @@ export function ForwardPilot() {
           {data.pilot_started_at ? null : (
             <p className="mb-2 text-[11px] text-[var(--muted)]">
               The operational pilot clock starts on the first shadow-apply. Dry-run rows stay
-              visible and do not backfill earlier months.
+              visible and do not backfill earlier months. This panel is not an active trading system.
             </p>
           )}
+          {data.supervision ? (
+            <div className="mb-3 rounded-xl border border-[var(--line)] p-3 text-xs">
+              <div className="mb-1 font-semibold">
+                Pilot readiness: {data.supervision.readiness ?? "—"}
+              </div>
+              <p className="text-[var(--muted)]">{data.supervision.note}</p>
+              <p className="mt-1 font-mono">
+                data {data.supervision.data_status ?? "—"} · reconcile{" "}
+                {data.supervision.ledger_reconciled ? "ok" : "not ok"} · pending{" "}
+                {data.supervision.pending_intents ?? 0} · next {data.supervision.next_execution} ·
+                user decision {data.supervision.user_decision_required ? "required" : "not required"}
+              </p>
+              {(data.supervision.reasons ?? []).length ? (
+                <p className="mt-1">Why: {(data.supervision.reasons ?? []).join(", ")}</p>
+              ) : null}
+            </div>
+          ) : null}
           <p className="mb-3 text-[11px] text-[var(--muted)]">{data.caveat}</p>
           <p className="mb-2 text-[11px] text-[var(--muted)]">{data.baseline?.reason}</p>
           <p className="mb-2 text-[11px] text-[var(--muted)]">

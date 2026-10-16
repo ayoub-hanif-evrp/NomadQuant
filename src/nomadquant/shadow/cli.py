@@ -50,6 +50,8 @@ def main(argv: list[str] | None = None) -> None:
     )
 
     sub.add_parser("preflight", help="Forward cycle readiness checks.")
+    pilot = sub.add_parser("pilot", help="Read-only supervised forward-pilot checks.")
+    pilot.add_argument("action", choices=["preflight", "status", "report"])
     sub.add_parser("reconcile", help="Reconcile shadow ledger invariants.")
 
     sub.add_parser(
@@ -117,6 +119,18 @@ def _dispatch(args: argparse.Namespace, settings: Settings) -> int:
         return 0 if report["status"] != "FAIL" else 1
     if args.command == "preflight":
         _print(run_preflight(settings))
+        return 0
+    if args.command == "pilot":
+        from nomadquant.shadow.pilot import forward_pilot_report, supervised_readiness
+
+        if args.action == "preflight":
+            payload = run_preflight(settings)
+        elif args.action == "status":
+            payload = supervised_readiness(settings)
+        else:
+            payload = forward_pilot_report(settings, verify_limit=5)
+        payload = {**payload, "mutates_forward_ledger": False, "broker_orders": False}
+        _print(payload)
         return 0
     if args.command == "reconcile":
         result = run_reconcile(settings)

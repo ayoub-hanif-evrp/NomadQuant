@@ -78,7 +78,10 @@ export function RiskPolicyLab() {
         <Panel>
           <h2 className="text-sm font-semibold">Policy limits (documented defaults)</h2>
           <p className="mt-1 text-xs text-[var(--muted)]">
-            Thresholds are conservative placeholders, not empirically optimized.
+            Thresholds are conservative placeholders, not empirically optimized. Price age is
+            measured from the trusted evaluation clock, not from the proposal timestamp. Projected
+            cash uses the shared fill kernel. An APPROVE is not a fill. An untouched $100 cash book
+            is the only case that may start the day at zero realized P&amp;L.
           </p>
           <dl className="mt-3 grid gap-2 text-sm sm:grid-cols-2">
             {Object.entries(status.data.policy).map(([key, value]) => (

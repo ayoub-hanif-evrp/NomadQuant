@@ -21,7 +21,7 @@ import {
   Skeleton,
   VerificationBadge,
 } from "@/components/ui";
-import { formatUsd, loadShadowOps } from "@/lib/api";
+import { formatUsd, loadForwardPilot, loadShadowOps } from "@/lib/api";
 import { connectionState } from "@/lib/connection";
 import {
   useEventHistogramQuery,
@@ -34,6 +34,11 @@ import {
 
 export function Overview() {
   const overview = useOverviewBundle();
+  const pilot = useQuery({
+    queryKey: ["shadow-pilot"],
+    queryFn: loadForwardPilot,
+    refetchInterval: 30_000,
+  });
   const health = useSystemHealth();
   const market = useMarketStatus();
   const activity = useObservabilityOverview();
@@ -114,6 +119,14 @@ export function Overview() {
               <dd className="font-mono">
                 {shadowOps.data.market.latest_session ?? "—"} · {shadowOps.data.market.feed ?? "sip"} ·{" "}
                 {shadowOps.data.market.suitable_for_research ? "coverage ok" : "INCOMPLETE"}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-[var(--muted)]">Forward pilot</dt>
+              <dd>
+                {pilot.data?.supervision?.readiness ?? "—"}
+                {pilot.data?.supervision?.pilot_active ? "" : " · not an active trading system"}
+                {pilot.data?.supervision?.user_decision_required ? " · user decision required" : ""}
               </dd>
             </div>
             <div>

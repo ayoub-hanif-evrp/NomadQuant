@@ -40,6 +40,13 @@ export function ResearchQuality() {
             <dd>{data.accounting_reconciliation_ok ? "ok" : "not ok"}</dd>
           </div>
           <div>
+            <dt className="text-[var(--muted)]">Pilot readiness</dt>
+            <dd>
+              {data.pilot?.readiness ?? "—"}
+              {(data.pilot?.reasons ?? []).length ? ` · ${(data.pilot?.reasons ?? []).join(", ")}` : ""}
+            </dd>
+          </div>
+          <div>
             <dt className="text-[var(--muted)]">Prospective / fills</dt>
             <dd>
               {data.pilot?.prospective_decisions ?? 0} decisions · {data.pilot?.hypothetical_fills ?? 0} fills · sample{" "}

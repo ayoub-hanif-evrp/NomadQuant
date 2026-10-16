@@ -52,6 +52,8 @@ def quality_report(settings: Settings) -> dict[str, Any]:
             "hypothetical_fills": pilot.get("hypothetical_fills"),
             "sessions_missed": pilot.get("sessions_missed"),
             "sample": "insufficient" if not pilot.get("hypothetical_fills") else "observing",
+            "readiness": (pilot.get("supervision") or {}).get("readiness"),
+            "reasons": (pilot.get("supervision") or {}).get("reasons"),
         },
         "verifier": cycles,
         "broker": {
@@ -64,7 +66,7 @@ def quality_report(settings: Settings) -> dict[str, Any]:
             "The forward sample has no hypothetical fill, so performance is inconclusive.",
             "A revision audit of stored bars was not run by this report.",
             "Alpaca paper equity was not read and is not the internal $100 book.",
-            "The risk haircut is a pre-trade estimate and is not the fill kernel.",
+            "A risk APPROVE is not a fill. Projected cash uses the shared fill kernel.",
         ],
     }
 
