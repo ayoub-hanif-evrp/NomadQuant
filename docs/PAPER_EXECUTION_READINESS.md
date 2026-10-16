@@ -105,6 +105,28 @@ Before any Alpaca paper milestone:
 4. Manual single-order submit with human confirmation.  
 5. Reconciliation against Alpaca paper account (still ≠ $100 internal book).
 
+## Prompt 14 local evidence (2026-10-16, this workstation)
+
+These are observed results, not a completed forward fill.
+
+| Check | Result |
+|-------|--------|
+| Feed | SIP only. `has_symbol(SPY, iex)` is false. No automatic SIP→IEX switch. |
+| Coverage before sync | SPY and QQQ each had 2208 sessions through 2026-10-14. Missing completed session: 2026-10-15. |
+| `data-sync --feed sip` | `success`. Inserted 2 rows (SPY and QQQ for 2026-10-15). Unchanged 554. Conflicts 0. Early-close notes for 2025-11-28 and 2025-12-24. |
+| Coverage after sync | 2209 sessions each. Latest stored 2026-10-15. Warm-up complete for the requested window 2025-09-09..2026-10-15. |
+| Retrieval provenance | SPY 2026-10-15 open 766.25 close 771.79, `first_retrieved_at` 2026-10-16T11:00:59Z. QQQ open 718.55 close 728, same retrieval timestamp. Modeled availability remains 2026-10-15T20:30:00Z. This is when the computer stored the daily bar, not a real-time open quote. |
+| Preflight | `NO_REBALANCE_DUE`. Cash 100, ledger version 1, no reservations. Fill session 2026-10-16 open is missing because that session is not finished. |
+| Reconcile before processing | `ok=true`. Equity 100. |
+| Worker inspect | run `19aee933970d44658a98287822c905a3`, status `WAITING_FOR_SESSION`. No cycle. |
+| Worker dry-run | run `533f7970f2af44efbef94c2587a7d328`, status `COMPLETED_NO_TRADE`. Ledger stayed version 1, cash 100, holdings empty, reserved 0. |
+| Pending / outbox | 0 pending intents, outbox backlog 0. |
+| Shadow-apply | Not run. |
+| Task Scheduler install | Not run. |
+| Alpaca orders | None. Sync used the historical bars client only. |
+| Ollama | Models are installed locally. `ollama ps` showed no running model. Daily worker did not call Ollama. |
+| Real-time executable evidence | No. The new bars are delayed daily OHLC. |
+
 ## Go / no-go checklist
 
 | Item | Go? |
@@ -113,7 +135,7 @@ Before any Alpaca paper milestone:
 | Forward ≠ retrospective ledger | Yes |
 | OCC + reservation recovery | Yes |
 | No broker order paths in API | Yes |
-| Real-time open provenance | **No** |
+| Real-time open provenance | **No** — stored daily bars record `first_retrieved_at`; fills stay `delayed_hypothetical_daily_open` |
 | Alpaca fractional confirmation | **No** |
 | Explicit paper-order authorization | **No** |
 | Autonomous execution | **Forbidden** |

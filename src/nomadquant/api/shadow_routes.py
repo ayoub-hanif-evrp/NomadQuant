@@ -11,7 +11,12 @@ from nomadquant.shadow.marks import value_forward_portfolio
 from nomadquant.shadow.preflight import run_preflight, run_reconcile
 from nomadquant.shadow.store import ShadowStore
 from nomadquant.shadow.valuation import PortfolioValuation
-from nomadquant.shadow.worker import outbox_backlog_count, read_last_worker_run, recovery_required
+from nomadquant.shadow.worker import (
+    list_worker_runs,
+    outbox_backlog_count,
+    read_last_worker_run,
+    recovery_required,
+)
 
 router = APIRouter(prefix="/api/shadow")
 
@@ -118,7 +123,9 @@ def shadow_ops(request: Request) -> dict[str, Any]:
             from nomadquant.marketdata.store import MarketStore
             from nomadquant.shadow.cycle import LOOKBACK, SKIP
 
-            market = MarketStore(market_path)
+            market = MarketStore.open_readonly(market_path)
+            if market is None:
+                raise FileNotFoundError(market_path)
             sessions = (
                 sorted(market.sessions("SPY", "sip")) if market.has_symbol("SPY", "sip") else []
             )
@@ -231,6 +238,14 @@ def shadow_ops(request: Request) -> dict[str, Any]:
 
     log_dir = Path(settings.shadow_path).parent / "shadow_logs"
     last_worker = read_last_worker_run(log_dir)
+    worker_history = list_worker_runs(log_dir, limit=8)
+    data_health: dict[str, Any] | None = None
+    try:
+        from nomadquant.shadow.data_ops import data_check
+
+        data_health = data_check(settings, feed="sip")
+    except Exception as exc:  # noqa: BLE001
+        data_health = {"status": "ERROR", "reason": str(exc)[:300]}
 
     return {
         "market": market_info,
@@ -239,6 +254,8 @@ def shadow_ops(request: Request) -> dict[str, Any]:
         "recovery_required": recovery_flag,
         "outbox_backlog": outbox_backlog,
         "last_worker_run": last_worker,
+        "worker_runs": worker_history,
+        "data_health": data_health,
         "alerts": alerts,
         "last_cycle": last_cycle,
         "cycle_count": cycle_count,

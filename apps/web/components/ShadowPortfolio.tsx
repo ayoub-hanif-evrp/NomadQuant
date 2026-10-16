@@ -279,10 +279,55 @@ export function ShadowPortfolio() {
                 </dd>
               </div>
             ) : null}
-            <p className="mt-1 text-[10px] text-[var(--muted)]">
-              From /api/shadow/ops when reported. Run{" "}
-              <code className="text-[var(--cyan)]">nomadquant-shadow worker</code> locally; never broker orders.
-            </p>
+            {ops.data.data_health ? (
+              <div className="flex justify-between gap-4">
+                <dt className="text-[var(--muted)]">Data health</dt>
+                <dd>
+                  {ops.data.data_health.status ?? "—"} · {ops.data.data_health.feed ?? "sip"} · end{" "}
+                  {ops.data.data_health.eligible_end ?? "—"}
+                </dd>
+              </div>
+            ) : null}
+            {ops.data.data_health?.symbols
+              ? Object.entries(ops.data.data_health.symbols).map(([symbol, row]) => (
+                  <div key={symbol} className="flex justify-between gap-4">
+                    <dt className="text-[var(--muted)]">{symbol}</dt>
+                    <dd>
+                      latest {row.latest_stored ?? "—"} · missing {row.missing_count ?? "—"}
+                    </dd>
+                  </div>
+                ))
+              : null}
+            {(ops.data.worker_runs?.items?.length ?? 0) > 0 ? (
+              <div>
+                <dt className="text-[var(--muted)]">Recent worker runs</dt>
+                <dd className="mt-1 space-y-1">
+                  {ops.data.worker_runs?.items?.slice(0, 5).map((run) => (
+                    <div key={run.run_id ?? run.started_at}>
+                      {(run.run_id ?? "").slice(0, 8)} {run.worker_status ?? "—"} {run.mode ?? ""}
+                    </div>
+                  ))}
+                </dd>
+              </div>
+            ) : null}
+            <div className="mt-2 space-y-1 text-[10px] text-[var(--muted)]">
+              <p>Commands are local and opt-in. This page does not place broker orders.</p>
+              {ops.data.data_health?.status === "WAITING_FOR_DATA" ? (
+                <p>
+                  Sync data: <code className="text-[var(--cyan)]">uv run nomadquant-shadow data-sync --feed sip</code>
+                </p>
+              ) : null}
+              {(ops.data.pending_intent_count ?? 0) > 0 ? (
+                <p>
+                  Pending observation: <code className="text-[var(--cyan)]">uv run nomadquant-shadow worker --mode inspect</code>
+                </p>
+              ) : null}
+              {ops.data.recovery_required ? (
+                <p>
+                  Recovery: <code className="text-[var(--cyan)]">uv run nomadquant-shadow recover</code>
+                </p>
+              ) : null}
+            </div>
           </dl>
         ) : null}
       </Panel>

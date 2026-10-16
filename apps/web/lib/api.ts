@@ -1653,6 +1653,7 @@ export type ShadowOpsAlert = {
 };
 
 export type ShadowWorkerRunSummary = {
+  run_id?: string;
   worker_status?: string;
   mode?: string;
   started_at?: string;
@@ -1682,6 +1683,24 @@ export type ShadowOps = {
   recovery_required?: boolean;
   outbox_backlog?: number | null;
   last_worker_run?: ShadowWorkerRunSummary | null;
+  worker_runs?: {
+    items: ShadowWorkerRunSummary[];
+    total: number;
+    corrupt: string[];
+  };
+  data_health?: {
+    status?: string;
+    feed?: string;
+    eligible_end?: string | null;
+    symbols?: Record<
+      string,
+      {
+        latest_stored?: string | null;
+        missing_count?: number;
+        warmup_complete?: boolean;
+      }
+    >;
+  } | null;
   alerts: ShadowOpsAlert[];
   last_cycle: ShadowCycle | null;
   cycle_count: number;

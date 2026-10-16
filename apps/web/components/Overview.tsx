@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useQuery } from "@tanstack/react-query";
 import {
   Bar,
   BarChart,
@@ -20,7 +21,7 @@ import {
   Skeleton,
   VerificationBadge,
 } from "@/components/ui";
-import { formatUsd } from "@/lib/api";
+import { formatUsd, loadShadowOps } from "@/lib/api";
 import { connectionState } from "@/lib/connection";
 import {
   useEventHistogramQuery,
@@ -38,6 +39,11 @@ export function Overview() {
   const activity = useObservabilityOverview();
   const researchRuns = useResearchRunsList();
   const histogram = useEventHistogramQuery("?bucket=day");
+  const shadowOps = useQuery({
+    queryKey: ["shadow-ops-summary"],
+    queryFn: loadShadowOps,
+    refetchInterval: 30_000,
+  });
   const apiState = connectionState({
     isLoading: health.isLoading,
     isError: health.isError,
@@ -91,6 +97,52 @@ export function Overview() {
         title="Command Center"
         note="Operational status for local paper research. Alpaca paper equity and the $100 NomadQuant research allocation are separate — never summed."
       />
+
+      <Panel>
+        <h2 className="mb-2 text-sm font-semibold">Daily operations summary</h2>
+        {shadowOps.isLoading ? <Skeleton lines={3} /> : null}
+        {shadowOps.isError ? (
+          <EmptyState
+            title="Shadow ops unavailable"
+            note="Start the local API. Data check: uv run nomadquant-shadow data-check --feed sip"
+          />
+        ) : null}
+        {shadowOps.data ? (
+          <dl className="grid gap-2 text-xs sm:grid-cols-2">
+            <div>
+              <dt className="text-[var(--muted)]">Market sessions</dt>
+              <dd className="font-mono">
+                {shadowOps.data.market.latest_session ?? "—"} · {shadowOps.data.market.feed ?? "sip"} ·{" "}
+                {shadowOps.data.market.suitable_for_research ? "coverage ok" : "INCOMPLETE"}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-[var(--muted)]">Recovery / outbox</dt>
+              <dd>
+                recovery {shadowOps.data.recovery_required ? "required" : "clear"} · outbox{" "}
+                {shadowOps.data.outbox_backlog ?? "—"} · pending {shadowOps.data.pending_intent_count ?? 0}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-[var(--muted)]">Last worker</dt>
+              <dd className="font-mono">
+                {shadowOps.data.last_worker_run?.worker_status ?? "none"}{" "}
+                {shadowOps.data.last_worker_run?.run_id
+                  ? String(shadowOps.data.last_worker_run.run_id).slice(0, 8)
+                  : ""}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-[var(--muted)]">Next step</dt>
+              <dd>
+                <Link href="/shadow" className="text-[var(--cyan)]">
+                  Open Shadow Operations
+                </Link>
+              </dd>
+            </div>
+          </dl>
+        ) : null}
+      </Panel>
 
       <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-8">
         <StatusChip
