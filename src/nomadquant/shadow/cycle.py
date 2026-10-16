@@ -53,6 +53,64 @@ _ONE = Decimal("1")
 _FORWARD_SIGNAL_MAX_AGE = timedelta(days=5)
 
 
+def _require_forward_approval(
+    shadow: ShadowStore,
+    market_path: Path,
+    policy: RiskPolicy | None,
+    now: datetime,
+    started: float,
+) -> dict[str, Any] | None:
+    """Block a new forward apply unless a matching one-time approval or schedule exists."""
+    from nomadquant.shadow.approval import (
+        approval_decision,
+        current_binding,
+        market_fingerprint,
+    )
+
+    active = shadow.get_meta("shadow_apply_approval")
+    preview_hash = ""
+    if active:
+        try:
+            preview_hash = str(json.loads(active).get("preview_hash") or "")
+        except json.JSONDecodeError:
+            preview_hash = ""
+    binding = current_binding(
+        ledger_version=int(shadow.snapshot()["version"]),
+        policy=policy or RiskPolicy(),
+        market_fingerprint=market_fingerprint(market_path),
+        preview_hash=preview_hash,
+    )
+    decision = approval_decision(shadow, binding, now=now)
+    shadow.approval_checked_at = now
+    if not decision["allowed"]:
+        return {
+            "id": None,
+            "cycle_key": "blocked:missing_shadow_approval",
+            "created_at": now.isoformat(),
+            "mode": "apply",
+            "label": LABEL_FORWARD,
+            "status": "blocked",
+            "intent": "no_trade",
+            "warnings": ["Forward apply requires a current internal-shadow approval."],
+            "evidence": {
+                "reason": decision["reason"],
+                "scope": "internal_shadow_simulation_only",
+                "broker_orders": False,
+            },
+            "evidence_hash": "",
+            "error_safe": decision["reason"],
+            "feed": FEED,
+            "symbol": SYMBOL,
+            "risk_reasons": [],
+            "ledger_before": {},
+            "ledger_after": {},
+            "duration_ms": _ms(started),
+        }
+    if decision["consume"]:
+        shadow.pending_approval_binding = binding
+    return None
+
+
 def _forward_apply_guard(
     market_path: str | Path,
     shadow_path: str | Path,
@@ -175,13 +233,21 @@ def run_shadow_cycle(
 
     db_path = shadow_path_for_label(shadow_path, label)
     shadow = ShadowStore(db_path, namespace=namespace_for_label(label))
+    shadow.pending_approval_binding = None
     # Recovery is explicit (`nomadquant-shadow recover` / worker recover).
     # Apply must not silently release another worker's reservation.
 
     from nomadquant.shadow.outbox import deliver_outbox
     from nomadquant.shadow.pending import awaited_fill_session, resume_pending_intents
 
+    continuing = mode == "apply" and label == LABEL_FORWARD and bool(shadow.list_pending_intents())
+    if mode == "apply" and label == LABEL_FORWARD and not continuing:
+        refused = _require_forward_approval(shadow, Path(market_path), policy, now, started)
+        if refused is not None:
+            return refused
+
     # 0.1 — Resume unresolved intents chronologically before any new signal.
+    # An interrupted application finishes without a second approval token.
     resumed = resume_pending_intents(
         shadow=shadow,
         market_path=market_path,
@@ -193,6 +259,15 @@ def run_shadow_cycle(
     )
     if mode == "apply" and resumed:
         deliver_outbox(shadow, risk_path)
+    if continuing:
+        # Do not open a new cycle on the continuation path unless a fresh
+        # approval or the separate schedule policy allows it.
+        shadow.pending_approval_binding = None
+        fresh = _require_forward_approval(shadow, Path(market_path), policy, now, started)
+        if fresh is not None:
+            if resumed:
+                return {**resumed[-1], "prior_resumes": resumed}
+            return fresh
 
     before = shadow.snapshot()
     warnings: list[str] = []

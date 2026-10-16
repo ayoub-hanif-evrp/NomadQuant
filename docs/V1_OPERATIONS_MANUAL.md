@@ -40,9 +40,12 @@ uv run nomadquant-shadow daily --mode inspect
 ```powershell
 uv run nomadquant-shadow pilot preview
 uv run nomadquant-shadow pilot confirm --approval PREVIEW_HASH
+uv run nomadquant-shadow worker --mode shadow-apply
 ```
 
-Confirmation does not apply a fill. A later `uv run nomadquant-shadow worker --mode shadow-apply` changes the internal ledger only, and only after you intend that. v1 does not start the pilot for you.
+Run these only after you decide to change the forward ledger. `confirm` stores a one-time internal approval when the state is `READY_TO_START` and the preview hash still matches. It expires in 30 minutes, binds the ledger version, policy hash, feed, and market fingerprint, and is consumed by one `shadow-apply`. It does not place a broker order and does not enable later scheduled applies. Blocked, waiting, and failed states cannot be approved. Today the workstation is `WAITING_FOR_SESSION`, so confirm will reject.
+
+A later unattended schedule is a separate command, `nomadquant-shadow pilot enable-schedule`. Do not run it unless you want later internal shadow cycles without a new token. It is not enabled by installation or by `confirm`.
 
 ## Backup and restore
 
@@ -56,7 +59,7 @@ Read `confirm_token` from the new `manifest.json`. Stop the app, then:
 .\scripts\restore-local.ps1 -Source data\backups\<stamp> -Confirm <token>
 ```
 
-A safety copy is written to `data\restore-safety`. If restore stops, copy that safety directory back over `data` and do not delete it until the next backup verifies. A wrong token or a bad checksum does not replace live files. Backups are not uploaded. `.env` is not included.
+Stop the app first so writers are quiesced. Each SQLite file is backed up with the online backup API. That is not one atomic snapshot across every database. A safety copy is written to `data\restore-safety`. If restore stops, the safety copy is copied back automatically; if that fails, copy it back yourself. A wrong token, a bad checksum, a corrupt database, or a path outside the allowlist does not replace live files. The confirm token is a checksum, not a signature. Backups are not uploaded. `.env` is not included.
 
 ## Verify and stop
 

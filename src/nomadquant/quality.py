@@ -78,7 +78,9 @@ def _cycle_scopes(settings: Settings) -> dict[str, Any]:
     path = Path(settings.shadow_path)
     if not path.exists():
         return {"cycles": [], "note": "shadow ledger is absent"}
-    store = ShadowStore(path, namespace="forward")
+    store = ShadowStore.open_readonly(path)
+    if store is None:
+        return {"cycles": [], "note": "shadow ledger is absent"}
     rows = []
     for cycle in store.list_cycles(limit=5):
         report = verify_cycle(settings, int(cycle["id"]))

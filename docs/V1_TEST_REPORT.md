@@ -1,4 +1,12 @@
-# NomadQuant v1.0 test report
+# NomadQuant v1.0.1 test report
+
+v1.0.1 adds approval, backup, and read-only inspection tests on top of the v1.0.0 measurements below.
+
+- `tests/test_shadow_approval.py`: apply without approval stays version 1; replay, expiry, ledger, policy, and feed mismatches are rejected; a schedule flag is separate from confirmation.
+- `tests/test_ops_backup.py`: retrospective ledger, worker logs, and memos round-trip; `.env` is absent; traversal, absolute names, duplicate archives, and a corrupt database are rejected; an interrupted restore leaves the live row unchanged; restore follows settings paths.
+- `tests/test_shadow_readonly.py`: missing ledger is not created; repeated GET leaves the version unchanged; an old schema is not migrated.
+
+## v1.0.0 measurements
 
 Measurements below were taken on this Windows PC on 2026-10-16. They are single observations, not a percentile claim.
 

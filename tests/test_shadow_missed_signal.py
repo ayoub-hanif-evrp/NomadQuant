@@ -10,6 +10,7 @@ from nomadquant.marketdata.calendar import sessions_between
 from nomadquant.marketdata.store import MarketStore, StoredBar, content_hash
 from nomadquant.shadow.cycle import LABEL_FORWARD, run_shadow_cycle
 from nomadquant.shadow.store import ShadowStore
+from tests.shadow_support import grant_forward_approval
 
 
 def _market(path: Path, start: date, end: date) -> None:
@@ -54,6 +55,8 @@ def test_shutdown_on_month_start_is_missed_not_backfilled(tmp_path: Path) -> Non
             ("forward_pilot_started_at", "2020-01-15T00:00:00+00:00"),
         )
     before = shadow.snapshot()
+    as_of = datetime(2020, 2, 5, 22, tzinfo=UTC)
+    grant_forward_approval(shadow_path, market, as_of)
 
     run_shadow_cycle(
         market_path=market,
@@ -61,7 +64,7 @@ def test_shutdown_on_month_start_is_missed_not_backfilled(tmp_path: Path) -> Non
         risk_path=tmp_path / "risk.sqlite",
         mode="apply",
         label=LABEL_FORWARD,
-        as_of=datetime(2020, 2, 5, 22, tzinfo=UTC),
+        as_of=as_of,
     )
 
     missed = [
@@ -90,13 +93,15 @@ def test_two_day_outage_does_not_fill_the_old_open(tmp_path: Path) -> None:
     ShadowStore(shadow_path, namespace="forward").set_meta(
         "forward_pilot_started_at", "2020-01-15T00:00:00+00:00"
     )
+    as_of = datetime(2020, 2, 5, 22, tzinfo=UTC)
+    grant_forward_approval(shadow_path, market, as_of)
     run_shadow_cycle(
         market_path=market,
         shadow_path=shadow_path,
         risk_path=tmp_path / "risk.sqlite",
         mode="apply",
         label=LABEL_FORWARD,
-        as_of=datetime(2020, 2, 5, 22, tzinfo=UTC),
+        as_of=as_of,
     )
     store = ShadowStore(shadow_path, namespace="forward")
     missed = [row for row in store.list_cycles(limit=20) if row["status"] == "missed_signal"]
@@ -113,6 +118,7 @@ def test_month_change_over_weekend_is_the_first_session(tmp_path: Path) -> None:
     ShadowStore(shadow_path, namespace="forward").set_meta(
         "forward_pilot_started_at", "2020-02-15T00:00:00+00:00"
     )
+    grant_forward_approval(shadow_path, market, datetime(2020, 3, 4, 22, tzinfo=UTC))
     run_shadow_cycle(
         market_path=market,
         shadow_path=shadow_path,
@@ -137,6 +143,7 @@ def test_duplicate_detection_does_not_repeat_the_miss(tmp_path: Path) -> None:
     ShadowStore(shadow_path, namespace="forward").set_meta(
         "forward_pilot_started_at", "2020-01-15T00:00:00+00:00"
     )
+    grant_forward_approval(shadow_path, market, datetime(2020, 2, 5, 22, tzinfo=UTC))
     kwargs = {
         "market_path": market,
         "shadow_path": shadow_path,
@@ -159,13 +166,26 @@ def test_first_contact_does_not_backfill_history(tmp_path: Path) -> None:
     market = tmp_path / "market.sqlite"
     shadow_path = tmp_path / "shadow.sqlite"
     _market(market, date(2019, 11, 1), date(2020, 2, 5))
+    as_of = datetime(2020, 2, 5, 22, tzinfo=UTC)
+    blocked = run_shadow_cycle(
+        market_path=market,
+        shadow_path=shadow_path,
+        risk_path=tmp_path / "risk.sqlite",
+        mode="apply",
+        label=LABEL_FORWARD,
+        as_of=as_of,
+    )
+    assert blocked["status"] == "blocked"
+    store = ShadowStore(shadow_path, namespace="forward")
+    assert store.get_meta("forward_pilot_started_at") is None
+    grant_forward_approval(shadow_path, market, as_of)
     run_shadow_cycle(
         market_path=market,
         shadow_path=shadow_path,
         risk_path=tmp_path / "risk.sqlite",
         mode="apply",
         label=LABEL_FORWARD,
-        as_of=datetime(2020, 2, 5, 22, tzinfo=UTC),
+        as_of=as_of,
     )
     store = ShadowStore(shadow_path, namespace="forward")
     assert store.get_meta("forward_pilot_started_at") == "2020-02-05T22:00:00+00:00"
@@ -179,6 +199,7 @@ def test_same_day_month_start_is_prospective_not_missed(tmp_path: Path) -> None:
     ShadowStore(shadow_path, namespace="forward").set_meta(
         "forward_pilot_started_at", "2020-01-15T00:00:00+00:00"
     )
+    grant_forward_approval(shadow_path, market, datetime(2020, 2, 3, 22, tzinfo=UTC))
     result = run_shadow_cycle(
         market_path=market,
         shadow_path=shadow_path,
@@ -200,6 +221,7 @@ def test_pending_month_start_resumes_and_is_not_missed(tmp_path: Path) -> None:
     _market(market, date(2018, 1, 2), date(2020, 2, 3))
     store = ShadowStore(shadow_path, namespace="forward")
     store.set_meta("forward_pilot_started_at", "2020-01-15T00:00:00+00:00")
+    grant_forward_approval(shadow_path, market, datetime(2020, 2, 3, 22, tzinfo=UTC))
     first = run_shadow_cycle(
         market_path=market,
         shadow_path=shadow_path,

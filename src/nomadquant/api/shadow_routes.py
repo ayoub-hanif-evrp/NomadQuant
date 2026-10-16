@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 
 from nomadquant.shadow.marks import value_forward_portfolio
 from nomadquant.shadow.preflight import run_preflight, run_reconcile
-from nomadquant.shadow.store import ShadowStore
+from nomadquant.shadow.store import MigrationRequired, ShadowStore
 from nomadquant.shadow.valuation import PortfolioValuation
 from nomadquant.shadow.worker import (
     list_worker_runs,
@@ -23,7 +23,12 @@ router = APIRouter(prefix="/api/shadow")
 
 def _store(request: Request) -> ShadowStore | None:
     path = Path(request.app.state.settings.shadow_path)
-    return ShadowStore(path, namespace="forward") if path.exists() else None
+    if not path.is_file():
+        return None
+    try:
+        return ShadowStore.open_readonly(path)
+    except MigrationRequired as exc:
+        raise HTTPException(status_code=409, detail="MIGRATION_REQUIRED") from exc
 
 
 def _valuation(request: Request, store: ShadowStore) -> PortfolioValuation:

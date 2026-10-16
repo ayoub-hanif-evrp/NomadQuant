@@ -1,6 +1,6 @@
 # NomadQuant
 
-NomadQuant 1.0.0 is a locally hosted, paper-only research and supervised shadow workstation. It provides configuration locks, a read-only Alpaca paper adapter, a local daily-bar store, an offline Quant Research Lab with verification, and a monitoring dashboard.
+NomadQuant 1.0.1 is a locally hosted, paper-only research and supervised shadow workstation. It provides configuration locks, a read-only Alpaca paper adapter, a local daily-bar store, an offline Quant Research Lab with verification, and a monitoring dashboard.
 
 It does not place orders. Offline backtests are labeled as simulated research, not broker trading. Nothing in this repository is evidence of profit.
 
@@ -203,9 +203,10 @@ One workflow. Installation and tests do not apply shadow fills.
 ```powershell
 uv run nomadquant-shadow pilot preview
 uv run nomadquant-shadow pilot confirm --approval PREVIEW_HASH
+uv run nomadquant-shadow worker --mode shadow-apply
 ```
 
-`confirm` checks that the token still matches the preview. It does not apply a fill. A committed simulated fill has no automatic undo. `recover` only releases an interrupted reservation.
+`confirm` stores a one-time internal-shadow approval only when the pilot state is `READY_TO_START`. It does not apply a fill, does not enable later scheduled applies, and is not an Alpaca order. `worker --mode shadow-apply` consumes that approval. A committed simulated fill has no automatic undo. `recover` only releases an interrupted reservation. Do not run shadow-apply until you intend to change the forward ledger.
 
 Dashboard: `http://127.0.0.1:3000/shadow`. Uses the internal $100 ledger only. No Alpaca orders.
 

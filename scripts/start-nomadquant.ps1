@@ -84,9 +84,18 @@ if (-not (Wait-Url "http://127.0.0.1:3000")) {
     exit 1
 }
 
+function Get-StartStamp($ProcessId) {
+    $cim = Get-CimInstance Win32_Process -Filter "ProcessId=$ProcessId" -ErrorAction SilentlyContinue
+    if ($cim -and $cim.CreationDate) { return $cim.CreationDate.ToUniversalTime().ToString("o") }
+    return ""
+}
 @{
     started_at = (Get-Date).ToUniversalTime().ToString("o")
     pids = @($api.Id, $web.Id)
+    processes = @(
+        @{ pid = $api.Id; started_at = (Get-StartStamp $api.Id) },
+        @{ pid = $web.Id; started_at = (Get-StartStamp $web.Id) }
+    )
     url = "http://127.0.0.1:3000"
 } | ConvertTo-Json | Set-Content -Path $PidFile -Encoding utf8
 

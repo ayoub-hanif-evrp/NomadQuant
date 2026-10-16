@@ -19,7 +19,7 @@ A local program for stored market research, deterministic risk checks, and a sup
 
 ## Operations
 
-- The forward pilot clock is unset. Starting it requires your confirmation and `worker --mode shadow-apply`. v1 does not do that.
+- The forward pilot clock is unset. Starting it requires a `READY_TO_START` preview, `pilot confirm --approval`, and then `worker --mode shadow-apply`. v1.0.1 does not do that for you. Confirmation does not enable unattended scheduled applies.
 - Duplicate-prevention is idempotent in memory and in the cycle key. It is not a separate persisted counter.
 - Schema version 1 can be stamped onto an older file without deleting rows. There is no earlier migration chain.
 - `install-local.ps1` should be run when the API is stopped, because Windows may lock the virtualenv.

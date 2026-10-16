@@ -17,6 +17,7 @@ from nomadquant.shadow.cycle import LABEL_FORWARD, LABEL_RETRO, run_shadow_cycle
 from nomadquant.shadow.sizing import size_policy_aware
 from nomadquant.shadow.store import ShadowStore
 from tests.conftest import make_settings
+from tests.shadow_support import grant_forward_approval
 from tests.test_research import _fill_market
 
 
@@ -68,6 +69,7 @@ def test_pending_month_start_resumes_on_next_cycle_without_override(tmp_path: Pa
     shadow = tmp_path / "shadow.sqlite"
     risk = tmp_path / "risk.sqlite"
     monday_as_of = datetime(2020, 2, 3, 22, 0, tzinfo=UTC)  # after 16:30 NY
+    grant_forward_approval(shadow, market, monday_as_of)
 
     first = run_shadow_cycle(
         market_path=market,

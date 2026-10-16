@@ -53,7 +53,7 @@ def main(argv: list[str] | None = None) -> None:
     pilot = sub.add_parser("pilot", help="Read-only supervised forward-pilot checks.")
     pilot.add_argument(
         "action",
-        choices=["preflight", "status", "report", "preview", "confirm"],
+        choices=["preflight", "status", "report", "preview", "confirm", "enable-schedule"],
     )
     pilot.add_argument(
         "--approval",
@@ -151,6 +151,20 @@ def _dispatch(args: argparse.Namespace, settings: Settings) -> int:
                 print("error: confirm requires --approval PREVIEW_HASH", file=sys.stderr)
                 return 2
             payload = confirm_pilot_start(settings, args.approval)
+        elif args.action == "enable-schedule":
+            from nomadquant.shadow.approval import enable_scheduled_shadow_cycles
+            from nomadquant.shadow.store import ShadowStore
+
+            enable_scheduled_shadow_cycles(ShadowStore(settings.shadow_path))
+            payload = {
+                "status": "SCHEDULE_ENABLED",
+                "scope": "internal_shadow_simulation_only",
+                "broker_orders": False,
+                "note": (
+                    "Later forward shadow-apply cycles may proceed without a new "
+                    "one-time token. This is not an Alpaca order authorization."
+                ),
+            }
         else:
             payload = forward_pilot_report(settings, verify_limit=5)
         payload = {**payload, "mutates_forward_ledger": False, "broker_orders": False}

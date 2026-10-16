@@ -12,6 +12,7 @@ from nomadquant.shadow.pilot import forward_pilot_report
 from nomadquant.shadow.store import ShadowStore
 from nomadquant.shadow.verify import verify_cycle
 from tests.conftest import make_settings
+from tests.shadow_support import grant_forward_approval
 from tests.test_shadow_missed_signal import _market
 
 
@@ -40,12 +41,14 @@ def test_verifier_rejects_a_tampered_evidence_hash(tmp_path: Path) -> None:
     shadow.set_meta("forward_pilot_started_at", "2020-01-15T00:00:00+00:00")
     from nomadquant.shadow.cycle import run_shadow_cycle
 
+    as_of = datetime(2020, 2, 5, 22, tzinfo=UTC)
+    grant_forward_approval(Path(settings.shadow_path), market, as_of)
     run_shadow_cycle(
         market_path=market,
         shadow_path=settings.shadow_path,
         risk_path=settings.risk_path,
         mode="apply",
-        as_of=datetime(2020, 2, 5, 22, tzinfo=UTC),
+        as_of=as_of,
     )
     store = ShadowStore(settings.shadow_path, namespace="forward")
     missed = next(row for row in store.list_cycles(limit=10) if row["status"] == "missed_signal")
@@ -74,12 +77,14 @@ def test_verifier_scopes_do_not_pass_a_missing_cutoff_or_a_no_fill(tmp_path: Pat
     shadow.set_meta("forward_pilot_started_at", "2020-01-15T00:00:00+00:00")
     from nomadquant.shadow.cycle import run_shadow_cycle
 
+    as_of = datetime(2020, 2, 5, 22, tzinfo=UTC)
+    grant_forward_approval(Path(settings.shadow_path), market, as_of)
     run_shadow_cycle(
         market_path=market,
         shadow_path=settings.shadow_path,
         risk_path=settings.risk_path,
         mode="apply",
-        as_of=datetime(2020, 2, 5, 22, tzinfo=UTC),
+        as_of=as_of,
     )
     store = ShadowStore(settings.shadow_path, namespace="forward")
     missed = next(row for row in store.list_cycles(limit=10) if row["status"] == "missed_signal")
@@ -116,12 +121,14 @@ def test_pilot_report_is_inconclusive_without_a_fill(tmp_path: Path) -> None:
     shadow.set_meta("forward_pilot_started_at", "2020-01-15T00:00:00+00:00")
     from nomadquant.shadow.cycle import run_shadow_cycle
 
+    as_of = datetime(2020, 2, 5, 22, tzinfo=UTC)
+    grant_forward_approval(Path(settings.shadow_path), market, as_of)
     run_shadow_cycle(
         market_path=market,
         shadow_path=settings.shadow_path,
         risk_path=settings.risk_path,
         mode="apply",
-        as_of=datetime(2020, 2, 5, 22, tzinfo=UTC),
+        as_of=as_of,
     )
     report = forward_pilot_report(settings, verify_limit=3)
     assert report["hypothetical_fills"] == 0

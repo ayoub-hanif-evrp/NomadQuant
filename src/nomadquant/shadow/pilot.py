@@ -37,7 +37,16 @@ def forward_pilot_report(settings: Settings, *, verify_limit: int = 5) -> dict[s
             "prospective_decisions": 0,
             "supervision": supervised_readiness(settings),
         }
-    store = ShadowStore(path, namespace="forward")
+    store = ShadowStore.open_readonly(path)
+    if store is None:
+        return {
+            "initialized": False,
+            "status": "NOT_STARTED",
+            "caveat": _CAVEAT,
+            "hypothetical_fills": 0,
+            "prospective_decisions": 0,
+            "supervision": supervised_readiness(settings),
+        }
     snap = store.snapshot()
     valuation = value_forward_portfolio(snap, settings.market_data_path)
     reconcile = run_reconcile(settings)
@@ -165,10 +174,11 @@ def supervised_readiness(settings: Settings) -> dict[str, Any]:
     pilot_raw = None
     cash = None
     if path.exists():
-        store = ShadowStore(path, namespace="forward")
-        pending = store.pending_intents()
-        pilot_raw = store.get_meta(PILOT_STARTED_KEY)
-        cash = str(store.snapshot()["cash_usd"])
+        store = ShadowStore.open_readonly(path)
+        if store is not None:
+            pending = store.pending_intents()
+            pilot_raw = store.get_meta(PILOT_STARTED_KEY)
+            cash = str(store.snapshot()["cash_usd"])
     data_status = str(coverage.get("status") or "UNKNOWN")
     data_complete = data_status == "OK" and int(coverage.get("missing_count") or 0) == 0
     data_fresh = data_complete
@@ -192,9 +202,9 @@ def supervised_readiness(settings: Settings) -> dict[str, Any]:
         pilot_running = age < timedelta(hours=2)
     failed_daily = 0
     if path.exists():
-        failed_daily = int(
-            ShadowStore(path, namespace="forward").history_totals()["failed_daily_operations"]
-        )
+        reader = ShadowStore.open_readonly(path)
+        if reader is not None:
+            failed_daily = int(reader.history_totals()["failed_daily_operations"])
     reasons: list[str] = []
     if not path.exists():
         reasons.append("ledger_missing")
@@ -346,13 +356,15 @@ def pilot_start_preview(settings: Settings) -> dict[str, Any]:
     path = Path(settings.shadow_path)
     snapshot: dict[str, Any] | None = None
     if path.exists():
-        snap = ShadowStore(path, namespace="forward").snapshot()
-        snapshot = {
-            "version": snap["version"],
-            "cash_usd": str(snap["cash_usd"]),
-            "reserved_cash_usd": str(snap["reserved_cash_usd"]),
-            "holdings": {key: str(value) for key, value in snap["holdings"].items()},
-        }
+        opened = ShadowStore.open_readonly(path)
+        if opened is not None:
+            snap = opened.snapshot()
+            snapshot = {
+                "version": snap["version"],
+                "cash_usd": str(snap["cash_usd"]),
+                "reserved_cash_usd": str(snap["reserved_cash_usd"]),
+                "holdings": {key: str(value) for key, value in snap["holdings"].items()},
+            }
     from nomadquant.risk.policy import RiskPolicy
 
     policy = RiskPolicy()
@@ -390,34 +402,73 @@ def pilot_start_preview(settings: Settings) -> dict[str, Any]:
 
 
 def confirm_pilot_start(settings: Settings, approval: str) -> dict[str, Any]:
-    """Accept a token only when it still matches the current preview. Does not apply."""
+    """Store a one-time internal-shadow approval. Does not apply a fill or a broker order."""
+    from nomadquant.shadow.approval import (
+        current_binding,
+        issue_shadow_approval,
+        market_fingerprint,
+        state_can_be_approved,
+    )
+
     current = pilot_start_preview(settings)
+    rejected = {
+        "applied": False,
+        "stored": False,
+        "broker_orders": False,
+        "scope": "internal_shadow_simulation_only",
+    }
     if approval != current["preview_hash"]:
         return {
+            **rejected,
             "status": "REJECTED",
             "reason": "approval token does not match the current preview",
-            "applied": False,
-            "broker_orders": False,
+        }
+    if not state_can_be_approved(str(current["state"])):
+        return {
+            **rejected,
+            "status": "REJECTED",
+            "reason": f"state {current['state']} cannot receive execution approval",
+            "state": current["state"],
         }
     again = pilot_start_preview(settings)
     if again["preview_hash"] != approval:
         return {
+            **rejected,
             "status": "REJECTED",
             "reason": "state changed between preview and confirmation",
-            "applied": False,
-            "broker_orders": False,
         }
+    path = Path(settings.shadow_path)
+    if not path.exists():
+        return {**rejected, "status": "REJECTED", "reason": "shadow ledger is not initialized"}
+    store = ShadowStore(path, namespace="forward")
+    from nomadquant.risk.policy import RiskPolicy
+
+    policy = RiskPolicy()
+    snap = store.snapshot()
+    binding = current_binding(
+        ledger_version=int(snap["version"]),
+        policy=policy,
+        market_fingerprint=market_fingerprint(Path(settings.market_data_path)),
+        preview_hash=approval,
+    )
+    try:
+        record = issue_shadow_approval(store, binding, now=datetime.now(UTC))
+    except ValueError as exc:
+        return {**rejected, "status": "REJECTED", "reason": str(exc)}
     return {
         "status": "CONFIRMATION_ACCEPTED",
         "applied": False,
+        "stored": True,
         "preview_hash": approval,
         "state": current["state"],
+        "expires_at": record["expires_at"],
+        "scope": "internal_shadow_simulation_only",
+        "broker_orders": False,
         "next_command": "nomadquant-shadow worker --mode shadow-apply",
         "note": (
-            "Confirmation does not mutate the ledger. "
-            "Run the worker only after you intend to change forward history."
+            "Approval is stored for one internal shadow apply. "
+            "It is not an Alpaca order authorization and it does not enable scheduled applies."
         ),
-        "broker_orders": False,
     }
 
 

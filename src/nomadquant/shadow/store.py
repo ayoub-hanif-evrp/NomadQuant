@@ -141,6 +141,10 @@ class ShadowStoreError(ValueError):
     pass
 
 
+class MigrationRequired(ShadowStoreError):
+    """The file exists but GET inspection must not migrate it."""
+
+
 class ConcurrentModificationError(ShadowStoreError):
     pass
 
@@ -172,6 +176,9 @@ class ShadowStore:
     ) -> None:
         self.namespace = namespace
         self.path = Path(path)
+        self.pending_approval_binding: dict[str, Any] | None = None
+        self.approval_checked_at: datetime | None = None
+        self._readonly = False
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as conn:
             conn.executescript(SCHEMA)
@@ -199,6 +206,39 @@ class ShadowStore:
                     (namespace,),
                 )
                 conn.commit()
+
+    @classmethod
+    def open_readonly(cls, path: str | Path) -> ShadowStore | None:
+        """Open an existing ledger without creating, migrating, or writing."""
+        candidate = Path(path)
+        if not candidate.is_file():
+            return None
+        store = cls.__new__(cls)
+        store.namespace = "forward"
+        store.path = candidate
+        store.pending_approval_binding = None
+        store.approval_checked_at = None
+        store._readonly = True
+        store._assert_readable()
+        return store
+
+    def _assert_readable(self) -> None:
+        connection = self._connect()
+        try:
+            tables = {
+                str(row[0])
+                for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+            }
+            required = {"shadow_ledger", "shadow_cycles", "shadow_meta", "shadow_outbox"}
+            if not required <= tables:
+                raise MigrationRequired("shadow schema is not current")
+            columns = {
+                str(row[1]) for row in connection.execute("PRAGMA table_info(shadow_outbox)")
+            }
+            if "attempt_count" not in columns or "last_error" not in columns:
+                raise MigrationRequired("shadow outbox schema is not current")
+        finally:
+            connection.close()
 
     def snapshot(self) -> dict[str, Any]:
         with self._connect() as conn:
@@ -641,6 +681,17 @@ class ShadowStore:
         with self._connect() as conn:
             try:
                 conn.execute("BEGIN IMMEDIATE")
+                binding = getattr(self, "pending_approval_binding", None)
+                if (
+                    binding is not None
+                    and payload.get("mode") == "apply"
+                    and payload.get("label") == "forward_shadow"
+                ):
+                    from nomadquant.shadow.approval import consume_shadow_approval
+
+                    checked = self.approval_checked_at or datetime.now(UTC)
+                    consume_shadow_approval(conn, binding, now=checked)
+                    self.pending_approval_binding = None
                 if conn.execute(
                     "SELECT 1 FROM shadow_cycles WHERE cycle_key = ?", (cycle_key,)
                 ).fetchone():
@@ -1010,6 +1061,10 @@ class ShadowStore:
         )
 
     def _connect(self) -> sqlite3.Connection:
+        if getattr(self, "_readonly", False):
+            conn = sqlite3.connect(f"file:{self.path}?mode=ro", uri=True)
+            conn.row_factory = sqlite3.Row
+            return conn
         conn = sqlite3.connect(self.path, timeout=30.0)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")

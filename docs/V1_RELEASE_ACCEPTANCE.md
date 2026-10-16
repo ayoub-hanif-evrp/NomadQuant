@@ -1,6 +1,6 @@
 # NomadQuant v1.0 acceptance
 
-Version: `1.0.0`. Scope is frozen: a local research and supervised shadow workstation. An autonomous brokerage bot is not this release.
+Version: `1.0.1`. Scope is frozen: a local research and supervised shadow workstation. An autonomous brokerage bot is not this release. The forward pilot is still not started.
 
 | Feature | Status | Evidence |
 | --- | --- | --- |

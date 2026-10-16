@@ -15,7 +15,18 @@ from nomadquant.marketdata.store import MarketStore
 from nomadquant.shadow.cycle import FEED, LOOKBACK, SKIP, STRATEGY_ID, SYMBOL
 from nomadquant.shadow.marks import value_forward_portfolio
 from nomadquant.shadow.pending import awaited_fill_session
-from nomadquant.shadow.store import LABEL_FORWARD, ShadowStore
+from nomadquant.shadow.store import LABEL_FORWARD, MigrationRequired, ShadowStore
+
+
+def _read_store(path: str) -> ShadowStore:
+    try:
+        store = ShadowStore.open_readonly(path)
+    except MigrationRequired as exc:
+        raise MigrationRequired("MIGRATION_REQUIRED") from exc
+    if store is None:
+        raise MigrationRequired("shadow ledger is missing")
+    return store
+
 
 PreflightStatus = Literal[
     "READY",
@@ -69,7 +80,18 @@ def run_preflight(settings: Settings, *, as_of: datetime | None = None) -> dict[
             "note": "Shadow ledger is not created. GET inspection does not initialize it.",
         }
 
-    store = ShadowStore(settings.shadow_path, namespace="forward")
+    try:
+        store = _read_store(settings.shadow_path)
+    except MigrationRequired:
+        return {
+            "status": "MIGRATION_REQUIRED",
+            "as_of": now.isoformat(),
+            "checks": checks,
+            "initialized": False,
+            "trading_state": "SHADOW_ONLY",
+            "allow_order_submission": False,
+            "note": "Shadow schema is old. Inspection did not migrate it.",
+        }
     recovery = store.recovery_status()
     snap = store.snapshot()
     capital_ok = snap["starting_capital_usd"] == Decimal("100") and snap["cash_usd"] >= 0
@@ -212,7 +234,7 @@ def run_reconcile(settings: Settings) -> dict[str, Any]:
             "initialized": False,
             "note": "Shadow ledger is not created. Inspection does not initialize it.",
         }
-    store = ShadowStore(settings.shadow_path, namespace="forward")
+    store = _read_store(settings.shadow_path)
     recovery = store.recovery_status()
     snap = store.snapshot()
     valuation = value_forward_portfolio(snap, settings.market_data_path)

@@ -21,8 +21,8 @@ def application_guard(settings: Settings) -> dict[str, Any]:
     shadow_file = Path(settings.shadow_path)
     active: list[dict[str, Any]] = []
     if shadow_file.exists():
-        store = ShadowStore(settings.shadow_path, namespace="forward")
-        active = store.list_active_reservations()
+        store = ShadowStore.open_readonly(settings.shadow_path)
+        active = [] if store is None else store.list_active_reservations()
     reasons: list[str] = []
     if preflight.get("status") == "BLOCKED":
         reasons.append("preflight_blocked")

@@ -43,7 +43,9 @@ def verify_cycle(settings: Settings, cycle_id: int) -> dict[str, Any]:
     path = Path(settings.shadow_path)
     if not path.exists():
         return _result(cycle_id, "INVALID_ARTIFACT", [], "shadow ledger is missing")
-    shadow = ShadowStore(path, namespace="forward")
+    shadow = ShadowStore.open_readonly(path)
+    if shadow is None:
+        return _result(cycle_id, "INVALID_ARTIFACT", [], "shadow ledger is missing")
     cycle = shadow.get_cycle(cycle_id)
     if cycle is None:
         return _result(cycle_id, "INVALID_ARTIFACT", [], f"cycle {cycle_id} was not found")
