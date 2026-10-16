@@ -248,9 +248,14 @@ def test_no_order_submission_endpoint(client: TestClient) -> None:
         "/api/risk/evaluations",
         "/api/risk/evaluations/{evaluation_id}",
         "/api/shadow/status",
+        "/api/shadow/valuation",
+        "/api/shadow/ops",
+        "/api/shadow/timeline",
         "/api/shadow/cycles",
         "/api/shadow/cycles/{cycle_id}",
         "/api/shadow/equity",
+        "/api/shadow/preflight",
+        "/api/shadow/reconcile",
     }
     for path, operations in paths.items():
         assert "order" not in path.lower()

@@ -10,7 +10,9 @@ from typing import Any
 
 from nomadquant.config import Settings, get_settings
 from nomadquant.shadow.cycle import LABEL_FORWARD, LABEL_RETRO, run_shadow_cycle
-from nomadquant.shadow.store import ShadowStore
+from nomadquant.shadow.marks import value_forward_portfolio
+from nomadquant.shadow.preflight import run_preflight, run_reconcile
+from nomadquant.shadow.store import ShadowStore, shadow_path_for_label
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -23,11 +25,17 @@ def main(argv: list[str] | None = None) -> None:
         "--label",
         choices=[LABEL_FORWARD, LABEL_RETRO],
         default=LABEL_FORWARD,
-        help="forward_shadow=prospective; retrospective_replay=labeled replay only.",
+        help="forward_shadow=prospective; retrospective_replay=separate ledger only.",
     )
-    cycle.add_argument("--signal-session", default="", help="Optional YYYY-MM-DD override.")
+    cycle.add_argument(
+        "--signal-session",
+        default="",
+        help="Optional YYYY-MM-DD. Forward mode rejects stale overrides.",
+    )
 
-    sub.add_parser("status", help="Show shadow ledger and recent cycles.")
+    sub.add_parser("status", help="Show shadow ledger and valuation.")
+    sub.add_parser("preflight", help="Forward cycle readiness checks.")
+    sub.add_parser("reconcile", help="Reconcile shadow ledger invariants.")
 
     history = sub.add_parser("history", help="List shadow cycles.")
     history.add_argument("--limit", type=int, default=20)
@@ -43,9 +51,17 @@ def main(argv: list[str] | None = None) -> None:
 
 
 def _dispatch(args: argparse.Namespace, settings: Settings) -> int:
+    if args.command == "preflight":
+        _print(run_preflight(settings))
+        return 0
+    if args.command == "reconcile":
+        result = run_reconcile(settings)
+        _print(result)
+        return 0 if result.get("ok") else 1
     if args.command == "status":
-        store = ShadowStore(settings.shadow_path)
+        store = ShadowStore(settings.shadow_path, namespace="forward")
         snap = store.snapshot()
+        valuation = value_forward_portfolio(snap, settings.market_data_path)
         _print(
             {
                 "trading_state": "SHADOW_ONLY",
@@ -59,16 +75,18 @@ def _dispatch(args: argparse.Namespace, settings: Settings) -> int:
                 "peak_equity_usd": str(snap["peak_equity_usd"]),
                 "ledger_version": snap["version"],
                 "cycle_count": store.count_cycles(),
+                "valuation": valuation.as_dict(),
                 "recent": store.list_cycles(limit=5),
+                "note": "Equity from backend valuation only. Not Alpaca.",
             }
         )
         return 0
     if args.command == "history":
-        store = ShadowStore(settings.shadow_path)
+        store = ShadowStore(settings.shadow_path, namespace="forward")
         _print({"items": store.list_cycles(limit=args.limit), "total": store.count_cycles()})
         return 0
     if args.command == "replay":
-        detail = ShadowStore(settings.shadow_path).get_cycle(args.cycle_id)
+        detail = ShadowStore(settings.shadow_path, namespace="forward").get_cycle(args.cycle_id)
         if detail is None:
             print(f"error: cycle {args.cycle_id} not found", file=sys.stderr)
             return 1
@@ -76,6 +94,11 @@ def _dispatch(args: argparse.Namespace, settings: Settings) -> int:
         return 0
     if args.command == "cycle":
         signal = date.fromisoformat(args.signal_session) if args.signal_session else None
+        if args.label == LABEL_FORWARD and signal is not None:
+            print(
+                "note: forward --signal-session overrides older than 5 days are blocked.",
+                file=sys.stderr,
+            )
         detail = run_shadow_cycle(
             market_path=settings.market_data_path,
             shadow_path=settings.shadow_path,
@@ -84,8 +107,13 @@ def _dispatch(args: argparse.Namespace, settings: Settings) -> int:
             signal_session=signal,
             label=args.label,
         )
+        if args.label == LABEL_RETRO:
+            detail = {
+                **detail,
+                "shadow_db": str(shadow_path_for_label(settings.shadow_path, LABEL_RETRO)),
+            }
         _print(detail)
-        return 0 if detail.get("status") not in {"error"} else 1
+        return 0 if detail.get("status") not in {"error", "blocked"} else 1
     return 2
 
 

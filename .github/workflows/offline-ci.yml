@@ -1,0 +1,73 @@
+name: Offline CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  offline:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "0.5.14"
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Sync dependencies
+        run: uv sync --frozen --no-dev || uv sync
+
+      - name: Ruff
+        run: |
+          uv run ruff check .
+          uv run ruff format --check .
+
+      - name: Mypy
+        run: uv run mypy src
+
+      - name: Pytest (offline)
+        run: uv run pytest -q
+        env:
+          TRADING_MODE: paper
+          ALLOW_ORDER_SUBMISSION: "false"
+          INITIAL_VIRTUAL_CAPITAL_USD: "100"
+          API_HOST: 127.0.0.1
+
+      - name: Route safety
+        run: |
+          uv run python -c "
+          from fastapi.testclient import TestClient
+          from nomadquant.api.app import create_app
+          from tests.conftest import make_settings
+          from pathlib import Path
+          import tempfile
+          with tempfile.TemporaryDirectory() as tmp:
+              app = create_app(make_settings(Path(tmp)))
+              with TestClient(app) as client:
+                  paths = client.app.openapi()['paths']
+              for path, ops in paths.items():
+                  assert 'order' not in path.lower()
+                  assert set(ops).intersection({'get','post','put','patch','delete'}) == {'get'}
+              print('PASS')
+          "
+
+      # Frontend is optional in free CI if node setup is heavy; keep Python gate mandatory.
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+
+      - name: Frontend lint / typecheck / build
+        working-directory: apps/web
+        run: |
+          npm ci
+          npm run lint
+          npx tsc --noEmit
+          npm run build

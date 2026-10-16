@@ -7,14 +7,22 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
+from nomadquant.shadow.marks import value_forward_portfolio
+from nomadquant.shadow.preflight import run_preflight, run_reconcile
 from nomadquant.shadow.store import ShadowStore
+from nomadquant.shadow.valuation import PortfolioValuation
 
 router = APIRouter(prefix="/api/shadow")
 
 
 def _store(request: Request) -> ShadowStore | None:
     path = Path(request.app.state.settings.shadow_path)
-    return ShadowStore(path) if path.exists() else None
+    return ShadowStore(path, namespace="forward") if path.exists() else None
+
+
+def _valuation(request: Request, store: ShadowStore) -> PortfolioValuation:
+    settings = request.app.state.settings
+    return value_forward_portfolio(store.snapshot(), settings.market_data_path)
 
 
 @router.get("/status")
@@ -28,9 +36,11 @@ def shadow_status(request: Request) -> dict[str, Any]:
             "starting_capital_usd": "100",
             "initialized": False,
             "cycle_count": 0,
+            "valuation": None,
             "note": "Shadow ledger not created yet. Run nomadquant-shadow cycle.",
         }
     snap = store.snapshot()
+    valuation = _valuation(request, store)
     return {
         "trading_state": "SHADOW_ONLY",
         "allow_order_submission": settings.allow_order_submission,
@@ -46,10 +56,201 @@ def shadow_status(request: Request) -> dict[str, Any]:
         "ledger_version": snap["version"],
         "updated_at": snap["updated_at"],
         "cycle_count": store.count_cycles(),
+        "valuation": valuation.as_dict(),
         "note": (
-            "Internal $100 shadow ledger only. Values are not Alpaca paper profits "
-            "and no broker orders are submitted."
+            "Internal $100 shadow ledger only. Equity from backend valuation "
+            "(cash + qty × mark). Not Alpaca paper profits; no broker orders."
         ),
+    }
+
+
+@router.get("/valuation")
+def shadow_valuation(request: Request) -> dict[str, Any]:
+    store = _store(request)
+    if store is None:
+        return {
+            "status": "valuation_unavailable",
+            "cash_usd": "100",
+            "reserved_cash_usd": "0",
+            "available_cash_usd": "100",
+            "positions": [],
+            "equity_usd": None,
+            "exposure_usd": None,
+            "exposure_fraction": None,
+            "realized_pnl_usd": "0",
+            "unrealized_pnl_usd": None,
+            "total_costs_usd": "0",
+            "starting_capital_usd": "100",
+            "valuation_as_of": None,
+            "reason": "Shadow ledger not initialized.",
+            "ledger_version": 0,
+        }
+    return _valuation(request, store).as_dict()
+
+
+@router.get("/ops")
+def shadow_ops(request: Request) -> dict[str, Any]:
+    settings = request.app.state.settings
+    store = _store(request)
+    alerts: list[dict[str, Any]] = []
+    market_path = Path(settings.market_data_path)
+    market_info: dict[str, Any] = {
+        "database_present": market_path.exists(),
+        "feed": "sip",
+        "symbols": ["SPY", "QQQ"],
+        "feeds": ["sip"],
+        "earliest_session": None,
+        "latest_session": None,
+        "bar_count": 0,
+        "coverage_complete": False,
+        "suitable_for_research": False,
+        "last_successful_ingestion": None,
+        "requested_start": None,
+        "requested_end": None,
+        "warnings": [],
+        "coverage": [],
+        "caveat": "Feed never auto-mixed. SIP entitlement required for SIP history.",
+    }
+    if market_path.exists():
+        try:
+            from nomadquant.marketdata.store import MarketStore
+
+            market = MarketStore(market_path)
+            sessions = (
+                sorted(market.sessions("SPY", "sip")) if market.has_symbol("SPY", "sip") else []
+            )
+            market_info.update(
+                {
+                    "earliest_session": None if not sessions else sessions[0].isoformat(),
+                    "latest_session": None if not sessions else sessions[-1].isoformat(),
+                    "bar_count": len(sessions),
+                    "coverage_complete": len(sessions) > 300,
+                    "suitable_for_research": len(sessions) > 300,
+                }
+            )
+            if len(sessions) < 300:
+                market_info["warnings"].append("Insufficient SPY/SIP history for full warm-up.")
+                alerts.append(
+                    {
+                        "level": "warning",
+                        "source": "market",
+                        "message": "SPY/SIP coverage may be incomplete for strategy warm-up.",
+                    }
+                )
+        except Exception as exc:  # noqa: BLE001
+            market_info["warnings"].append(f"Market inspect failed: {exc}")
+            alerts.append(
+                {"level": "error", "source": "market", "message": "Market database unreadable."}
+            )
+    else:
+        alerts.append(
+            {"level": "warning", "source": "market", "message": "market.sqlite not present."}
+        )
+
+    pending: list[dict[str, Any]] = []
+    last_cycle = None
+    cycle_count = 0
+    if store is not None:
+        store.recover_interrupted()
+        pending = store.pending_intents()
+        cycles = store.list_cycles(limit=1)
+        last_cycle = cycles[0] if cycles else None
+        cycle_count = store.count_cycles()
+        for res in store.list_active_reservations():
+            alerts.append(
+                {
+                    "level": "error",
+                    "source": "reservation",
+                    "message": f"Stuck reservation {res['intent_id']}",
+                }
+            )
+        if last_cycle and last_cycle.get("status") == "error":
+            alerts.append(
+                {
+                    "level": "error",
+                    "source": "cycle",
+                    "message": "Last cycle failed.",
+                    "cycle_id": last_cycle.get("id"),
+                }
+            )
+        val = _valuation(request, store)
+        if val.status != "ok":
+            alerts.append(
+                {
+                    "level": "warning",
+                    "source": "valuation",
+                    "message": val.reason,
+                }
+            )
+
+    if settings.allow_order_submission:
+        alerts.append(
+            {
+                "level": "error",
+                "source": "safety",
+                "message": "ALLOW_ORDER_SUBMISSION must remain false.",
+            }
+        )
+
+    return {
+        "market": market_info,
+        "pending_intents": pending,
+        "alerts": alerts,
+        "last_cycle": last_cycle,
+        "cycle_count": cycle_count,
+    }
+
+
+@router.get("/timeline")
+def shadow_timeline(
+    request: Request,
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    status: str = Query(default=""),
+) -> dict[str, Any]:
+    store = _store(request)
+    if store is None:
+        return {"items": [], "total": 0, "limit": limit, "offset": offset}
+    items = store.list_cycles(limit=limit, offset=offset)
+    if status:
+        items = [c for c in items if c.get("status") == status]
+    enriched = []
+    for c in items:
+        intent_id = f"intent:{c['cycle_key']}"
+        intent_tx = store.list_transitions(intent_id=intent_id, limit=20)
+        transitions = [
+            {"step": t.get("to_state", ""), "at": t.get("recorded_at", "")}
+            for t in reversed(intent_tx)
+        ]
+        enriched.append(
+            {
+                **{
+                    k: c.get(k)
+                    for k in (
+                        "id",
+                        "cycle_key",
+                        "created_at",
+                        "mode",
+                        "label",
+                        "signal_session",
+                        "fill_session",
+                        "feed",
+                        "symbol",
+                        "status",
+                        "intent",
+                        "risk_verdict",
+                        "evidence_hash",
+                        "warnings",
+                    )
+                },
+                "transitions": transitions,
+            }
+        )
+    return {
+        "items": enriched,
+        "total": store.count_cycles(),
+        "limit": limit,
+        "offset": offset,
     }
 
 
@@ -87,3 +288,13 @@ def shadow_equity(
     if store is None:
         return {"items": []}
     return {"items": store.equity_history(limit=limit)}
+
+
+@router.get("/preflight")
+def shadow_preflight(request: Request) -> dict[str, Any]:
+    return run_preflight(request.app.state.settings)
+
+
+@router.get("/reconcile")
+def shadow_reconcile(request: Request) -> dict[str, Any]:
+    return run_reconcile(request.app.state.settings)

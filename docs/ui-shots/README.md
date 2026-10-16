@@ -12,8 +12,10 @@ Captured with Playwright Chromium against the local API (`127.0.0.1:8000`) and N
 | Decision Intelligence | same |
 | Activity / Runs | same |
 | Mobile navigation drawer | 390×844 |
+| Shadow Operations (Prompt 11) | 1920×1080, 1280×800, 390×844 |
 
 Filenames: `{screen}-{viewport}.png` and `mobile-nav-390x844.png`.
+Shadow ops: `shadow-operations-{viewport}.png`.
 
 ## Notes from inspection
 

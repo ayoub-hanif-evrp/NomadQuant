@@ -13,6 +13,7 @@ const pages = [
   { name: "activity", url: "http://127.0.0.1:3000/activity", waitMs: 3000 },
   { name: "runs", url: "http://127.0.0.1:3000/runs", waitMs: 2500 },
   { name: "agents", url: "http://127.0.0.1:3000/agents", waitMs: 3500 },
+  { name: "shadow-operations", url: "http://127.0.0.1:3000/shadow", waitMs: 4000 },
 ];
 
 const viewports = [

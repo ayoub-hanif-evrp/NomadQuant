@@ -1,6 +1,7 @@
-"""Daily shadow research cycle: signal → risk → simulated next-open fill.
+"""Daily shadow research cycle with observation-based chronology.
 
 Never submits broker orders. Uses the internal $100 shadow ledger only.
+Reservations and fills are authoritative in the shadow DB (not cross-DB atomic).
 """
 
 from __future__ import annotations
@@ -8,10 +9,11 @@ from __future__ import annotations
 import hashlib
 import json
 import time
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import ROUND_DOWN, Decimal
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from nomadquant.marketdata.availability import modeled_available_at
 from nomadquant.marketdata.calendar import sessions_between
@@ -26,7 +28,13 @@ from nomadquant.risk import (
     RiskPolicy,
     RiskStore,
 )
-from nomadquant.shadow.store import ShadowStore, ShadowStoreError
+from nomadquant.shadow.store import (
+    ConcurrentModificationError,
+    ShadowStore,
+    ShadowStoreError,
+    namespace_for_label,
+    shadow_path_for_label,
+)
 
 STRATEGY_ID = "spy_tsmom_12_1"
 SYMBOL = "SPY"
@@ -35,9 +43,13 @@ LOOKBACK = 252
 SKIP = 21
 LABEL_FORWARD = "forward_shadow"
 LABEL_RETRO = "retrospective_replay"
+_NY = ZoneInfo("America/New_York")
 
 _ZERO = Decimal("0")
 _ONE = Decimal("1")
+
+# How far in the past a signal_session override may be for forward_shadow.
+_FORWARD_SIGNAL_MAX_AGE = timedelta(days=5)
 
 
 def run_shadow_cycle(
@@ -55,7 +67,13 @@ def run_shadow_cycle(
 
     Modes:
     - dry-run: compute intent + risk; never mutate ledger or record fills
-    - apply: may reserve and simulate a fill only when next-session open exists
+    - apply: may reserve and simulate a fill only when observation exists
+
+    Chronology:
+    1. Signal from eligible completed bars
+    2. Pending intent until next-session open is observed/retrieved
+    3. Risk re-eval with observation timestamp (never backdated to signal)
+    4. Reserve in shadow DB → simulated fill → accounting
     """
     started = time.monotonic()
     now = as_of or datetime.now(UTC)
@@ -66,7 +84,43 @@ def run_shadow_cycle(
     if mode not in {"dry-run", "apply"}:
         raise ValueError(f"Unknown mode {mode!r}.")
 
-    shadow = ShadowStore(shadow_path)
+    # Chronology gate: forward + past signal_session override is not prospective.
+    if label == LABEL_FORWARD and signal_session is not None:
+        signal_avail = modeled_available_at(signal_session)
+        if now - signal_avail > _FORWARD_SIGNAL_MAX_AGE:
+            return {
+                "id": None,
+                "cycle_key": f"blocked:{label}:{signal_session}",
+                "created_at": datetime.now(UTC).isoformat(),
+                "mode": mode,
+                "label": label,
+                "status": "blocked",
+                "intent": "no_trade",
+                "warnings": [
+                    "Forward shadow refuses a past --signal-session override. "
+                    "Use --label retrospective_replay for historical simulation "
+                    "(writes to a separate ledger)."
+                ],
+                "evidence": {
+                    "reason": "chronology_violation",
+                    "signal_session": signal_session.isoformat(),
+                    "signal_available_at": signal_avail.isoformat(),
+                    "as_of": now.isoformat(),
+                },
+                "evidence_hash": "",
+                "error_safe": "chronology_violation",
+                "feed": FEED,
+                "symbol": SYMBOL,
+                "risk_reasons": [],
+                "ledger_before": {},
+                "ledger_after": {},
+                "duration_ms": _ms(started),
+            }
+
+    db_path = shadow_path_for_label(shadow_path, label)
+    shadow = ShadowStore(db_path, namespace=namespace_for_label(label))
+    if mode == "apply":
+        shadow.recover_interrupted()
     before = shadow.snapshot()
     warnings: list[str] = []
     market = MarketStore(market_path)
@@ -165,12 +219,14 @@ def run_shadow_cycle(
     else:
         intent = "hold"
 
+    decision_produced_at = datetime.now(UTC)
     evidence: dict[str, Any] = {
         "strategy_id": STRATEGY_ID,
         "lookback_sessions": LOOKBACK,
         "skip_sessions": SKIP,
         "signal_session": signal_day.isoformat(),
         "signal_available_at": modeled_available_at(signal_day).isoformat(),
+        "decision_produced_at": decision_produced_at.isoformat(),
         "momentum": None if mom is None else str(mom),
         "target_weight": str(target),
         "current_weight": str(current_weight),
@@ -180,9 +236,28 @@ def run_shadow_cycle(
         "mark_close": str(mark),
         "label": label,
         "mode": mode,
+        "namespace": shadow.namespace,
+        "shadow_db": str(db_path),
     }
 
+    intent_id = f"intent:{cycle_key}"
     if intent in {"hold"} or not is_rebalance:
+        if mode == "apply":
+            shadow.upsert_intent(
+                intent_id=intent_id,
+                cycle_key=cycle_key,
+                state="NO_TRADE",
+                strategy_id=STRATEGY_ID,
+                feed=FEED,
+                symbol=SYMBOL,
+                evidence=evidence,
+                evidence_hash=_hash(evidence),
+                signal_session=signal_day.isoformat(),
+                target_weight=str(target),
+                from_state="SIGNAL_RECORDED",
+                reason="No rebalance or hold",
+                ledger_version=before["version"],
+            )
         return _finish(
             shadow,
             mode=mode,
@@ -202,15 +277,31 @@ def run_shadow_cycle(
             mark_price=mark,
         )
 
-    # Need next session open to size/simulate a fill.
     fill_day = _next_session(sessions, signal_day)
     if fill_day is None:
+        evidence["execution_model"] = "pending_observation"
+        if mode == "apply":
+            shadow.upsert_intent(
+                intent_id=intent_id,
+                cycle_key=cycle_key,
+                state="PENDING_DATA",
+                strategy_id=STRATEGY_ID,
+                feed=FEED,
+                symbol=SYMBOL,
+                evidence=evidence,
+                evidence_hash=_hash(evidence),
+                signal_session=signal_day.isoformat(),
+                target_weight=str(target),
+                from_state="SIGNAL_RECORDED",
+                reason="Next session not in store",
+                ledger_version=before["version"],
+            )
         return _finish(
             shadow,
             mode=mode,
             label=label,
             before=before,
-            status="insufficient_data",
+            status="pending_data",
             intent=intent,
             warnings=["Next session after signal is not in the local store."],
             evidence=evidence,
@@ -223,19 +314,35 @@ def run_shadow_cycle(
 
     open_bar = ohlc.get(fill_day)
     open_price = None if open_bar is None else open_bar[0]
-    # Require the fill session's open observation to exist. Do not invent opens
-    # from later closes. Forward mode also requires now past modeled availability
-    # of the signal session (already enforced) and presence of the next open bar.
     if open_price is None:
+        evidence["execution_model"] = "pending_observation"
+        evidence["fill_session"] = fill_day.isoformat()
+        if mode == "apply":
+            shadow.upsert_intent(
+                intent_id=intent_id,
+                cycle_key=cycle_key,
+                state="PENDING_DATA",
+                strategy_id=STRATEGY_ID,
+                feed=FEED,
+                symbol=SYMBOL,
+                evidence=evidence,
+                evidence_hash=_hash(evidence),
+                signal_session=signal_day.isoformat(),
+                fill_session=fill_day.isoformat(),
+                target_weight=str(target),
+                from_state="SIGNAL_RECORDED",
+                reason="Open price not yet available",
+                ledger_version=before["version"],
+            )
         return _finish(
             shadow,
             mode=mode,
             label=label,
             before=before,
-            status="insufficient_data",
+            status="pending_data",
             intent=intent,
             warnings=[f"Open price for fill session {fill_day} is not available."],
-            evidence={**evidence, "fill_session": fill_day.isoformat()},
+            evidence=evidence,
             duration_ms=_ms(started),
             mutate=False,
             signal_session=signal_day,
@@ -243,6 +350,34 @@ def run_shadow_cycle(
             momentum=mom,
             target_weight=target,
         )
+
+    # Observation: we retrieve a stored daily open NOW. This is a delayed
+    # observation-based simulation — NOT a claim we executed at the open live.
+    observation_retrieved_at = now
+    # Earliest the open could exist as a completed session: session open bell.
+    # We still label delayed because local SQLite has no live tick provenance.
+    session_open_ny = datetime(
+        fill_day.year, fill_day.month, fill_day.day, 9, 30, tzinfo=_NY
+    ).astimezone(UTC)
+    observation_as_of = max(session_open_ny, observation_retrieved_at)
+    # Never stamp earlier than signal availability either.
+    signal_avail = modeled_available_at(signal_day)
+    if observation_as_of <= signal_avail:
+        observation_as_of = observation_retrieved_at
+        if observation_as_of <= signal_avail:
+            observation_as_of = signal_avail + timedelta(seconds=1)
+
+    evidence["execution_model"] = "delayed_observation_simulation"
+    evidence["observation_retrieved_at"] = observation_retrieved_at.isoformat()
+    evidence["observation_as_of"] = observation_as_of.isoformat()
+    evidence["price_as_of"] = observation_as_of.isoformat()
+    evidence["fill_session"] = fill_day.isoformat()
+    evidence["open_price"] = str(open_price)
+    evidence["observation_note"] = (
+        "Stored daily OHLC open retrieved for delayed simulation. "
+        "Not proof of real-time open availability at signal time. "
+        "16:30 NY daily-bar model does not establish next-session open timing."
+    )
 
     costs = CostModel(
         commission_usd=Decimal("0"),
@@ -252,7 +387,7 @@ def run_shadow_cycle(
         quantity_precision=6,
     )
     proposal_qty, side = _delta_quantity(
-        cash=before["cash_usd"],
+        cash=before["cash_usd"] - before["reserved_cash_usd"],
         qty=current_qty,
         target_weight=target,
         price=open_price,
@@ -267,7 +402,7 @@ def run_shadow_cycle(
             status="no_trade",
             intent="no_trade",
             warnings=warnings + ["Delta below minimum notional after sizing."],
-            evidence={**evidence, "fill_session": fill_day.isoformat(), "open": str(open_price)},
+            evidence=evidence,
             duration_ms=_ms(started),
             mutate=mode == "apply",
             signal_session=signal_day,
@@ -286,7 +421,7 @@ def run_shadow_cycle(
         symbol=SYMBOL,
         side=side,  # type: ignore[arg-type]
         quantity=proposal_qty,
-        as_of=modeled_available_at(signal_day),
+        as_of=observation_as_of,
     )
     risk_store = RiskStore(risk_path)
     risk_ledger = InternalLedger(
@@ -298,17 +433,10 @@ def run_shadow_cycle(
     prices = {
         SYMBOL: {
             "price": open_price,
-            "as_of": modeled_available_at(signal_day),
+            "as_of": observation_as_of,
             "feed": FEED,
         }
     }
-    # Mark holdings with signal close for valuation completeness if needed
-    if SYMBOL in before["holdings"] and before["holdings"][SYMBOL] > 0:
-        prices[SYMBOL] = {
-            "price": open_price,
-            "as_of": modeled_available_at(signal_day),
-            "feed": FEED,
-        }
     exposure = current_qty * open_price
     account = AccountMetrics(
         realized_pnl_today_usd=_ZERO,
@@ -326,10 +454,28 @@ def run_shadow_cycle(
     evidence["proposal"] = proposal.model_dump(mode="json")
     evidence["risk_verdict"] = risk.verdict
     evidence["risk_reasons"] = risk.reasons
-    evidence["fill_session"] = fill_day.isoformat()
-    evidence["open_price"] = str(open_price)
 
     if risk.verdict != "APPROVE":
+        if mode == "apply":
+            shadow.upsert_intent(
+                intent_id=intent_id,
+                cycle_key=cycle_key,
+                state="RISK_REJECTED",
+                strategy_id=STRATEGY_ID,
+                feed=FEED,
+                symbol=SYMBOL,
+                evidence=evidence,
+                evidence_hash=_hash(evidence),
+                signal_session=signal_day.isoformat(),
+                fill_session=fill_day.isoformat(),
+                target_weight=str(target),
+                from_state="SIGNAL_RECORDED",
+                reason=f"Risk {risk.verdict}",
+                source_price=str(open_price),
+                price_as_of=observation_as_of.isoformat(),
+                risk_verdict=risk.verdict,
+                ledger_version=before["version"],
+            )
         return _finish(
             shadow,
             mode=mode,
@@ -360,7 +506,11 @@ def run_shadow_cycle(
             before=before,
             status="dry_run_approved",
             intent=intent,
-            warnings=warnings + ["Dry-run only; ledger not mutated; no broker order."],
+            warnings=warnings
+            + [
+                "Dry-run only; ledger not mutated; no broker order.",
+                "APPROVE is not an execution.",
+            ],
             evidence=evidence,
             duration_ms=_ms(started),
             mutate=False,
@@ -373,10 +523,60 @@ def run_shadow_cycle(
             risk_reasons=risk.reasons,
         )
 
-    # Apply: reserve → simulate fill → commit atomically via shadow store.
+    # Apply: reserve in shadow DB → simulate fill → commit with OCC.
+    reserve_amt = risk.notional_usd or _ZERO
+    if side == "sell":
+        reserve_amt = _ZERO
     try:
-        risk_store.reserve(proposal, reserved_cash_usd=risk.notional_usd or _ZERO)
-    except Exception as exc:  # noqa: BLE001
+        if reserve_amt > 0:
+            shadow.reserve_cash(
+                intent_id=intent_id,
+                amount=reserve_amt,
+                expected_version=before["version"],
+                cycle_key=cycle_key,
+            )
+            before = shadow.snapshot()
+        else:
+            shadow.upsert_intent(
+                intent_id=intent_id,
+                cycle_key=cycle_key,
+                state="RISK_APPROVED",
+                strategy_id=STRATEGY_ID,
+                feed=FEED,
+                symbol=SYMBOL,
+                evidence=evidence,
+                evidence_hash=_hash(evidence),
+                signal_session=signal_day.isoformat(),
+                fill_session=fill_day.isoformat(),
+                target_weight=str(target),
+                from_state="SIGNAL_RECORDED",
+                reason="Approved sell / zero reserve",
+                source_price=str(open_price),
+                price_as_of=observation_as_of.isoformat(),
+                risk_verdict=risk.verdict,
+                ledger_version=before["version"],
+            )
+    except ConcurrentModificationError as exc:
+        return _finish(
+            shadow,
+            mode=mode,
+            label=label,
+            before=before,
+            status="error",
+            intent=intent,
+            warnings=warnings,
+            evidence=evidence,
+            duration_ms=_ms(started),
+            mutate=False,
+            signal_session=signal_day,
+            fill_session=fill_day,
+            momentum=mom,
+            target_weight=target,
+            proposal_id=proposal.id,
+            risk_verdict=risk.verdict,
+            error_safe=f"OCC conflict on reserve: {exc}",
+        )
+    except ShadowStoreError as exc:
         return _finish(
             shadow,
             mode=mode,
@@ -398,9 +598,17 @@ def run_shadow_cycle(
         )
 
     after, fill_meta = _simulate_fill(before, side, proposal_qty, open_price, costs)
-    risk_store.record(proposal, risk)
-    risk_store.commit_reservation(proposal.id)
+    # Clear reserve into the fill cash path (buy already debits full cash).
+    after["reserved_cash_usd"] = _ZERO
     evidence["fill"] = fill_meta
+    evidence["outbox_note"] = "Risk-store projection is derived via outbox; not cross-DB atomic."
+
+    # Best-effort risk history (derived); authority is shadow DB.
+    try:
+        risk_store.record(proposal, risk)
+    except Exception:  # noqa: BLE001
+        warnings.append("Risk-store projection failed; shadow ledger remains authoritative.")
+
     return _finish(
         shadow,
         mode=mode,
@@ -427,6 +635,16 @@ def run_shadow_cycle(
         record_equity=True,
         mark_price=open_price,
         cycle_key=cycle_key,
+        expected_version=before["version"],
+        commit_reservation_intent_id=intent_id if reserve_amt > 0 else None,
+        outbox={
+            "kind": "risk_evaluation",
+            "payload": {
+                "proposal_id": proposal.id,
+                "verdict": risk.verdict,
+                "cycle_key": cycle_key,
+            },
+        },
     )
 
 
@@ -462,6 +680,8 @@ def _simulate_fill(
         if holdings[SYMBOL] <= 0:
             holdings.pop(SYMBOL, None)
             basis.pop(SYMBOL, None)
+    if cash < 0:
+        raise ValueError("Fill would make cash negative.")
     equity = cash + holdings.get(SYMBOL, _ZERO) * open_price
     after = {
         "cash_usd": cash,
@@ -478,7 +698,10 @@ def _simulate_fill(
         "quantity": str(qty),
         "side": side,
         "costs_usd": str(cost_attr),
-        "note": "Simulated next-session open fill; not an Alpaca order.",
+        "note": (
+            "Simulated delayed next-session open fill; not an Alpaca order. "
+            "Not a claim of real-time execution at the open."
+        ),
     }
     return after, meta
 
@@ -542,14 +765,15 @@ def _finish(
     mark_price: Decimal | None = None,
     error_safe: str = "",
     cycle_key: str | None = None,
+    expected_version: int | None = None,
+    commit_reservation_intent_id: str | None = None,
+    outbox: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     key = cycle_key or (
         f"{label}:{FEED}:{SYMBOL}:"
         f"{(signal_session or date.min).isoformat()}:{STRATEGY_ID}:{status}:{mode}"
     )
-    evidence_hash = hashlib.sha256(
-        json.dumps(evidence, sort_keys=True, default=str).encode()
-    ).hexdigest()
+    evidence_hash = _hash(evidence)
     created = datetime.now(UTC).isoformat()
     ledger_after = after or before
     payload = {
@@ -578,6 +802,7 @@ def _finish(
         "duration_ms": duration_ms,
         "ledger_before": _jsonable(before),
         "ledger_after": _jsonable(ledger_after),
+        "outbox": outbox,
     }
     equity_point = None
     if record_equity and mark_price is not None:
@@ -607,12 +832,29 @@ def _finish(
         return existing
 
     try:
+        will_mutate = mutate and after is not None
         cycle_id = shadow.apply_cycle(
             cycle_key=key,
             payload=payload,
-            ledger_after=ledger_after if mutate and after is not None else None,
-            equity_point=equity_point if (mutate or record_equity) else None,
+            ledger_after=ledger_after if will_mutate else None,
+            equity_point=equity_point if (will_mutate or record_equity) else None,
+            expected_version=(expected_version if will_mutate else None),
+            commit_reservation_intent_id=commit_reservation_intent_id,
         )
+    except ConcurrentModificationError:
+        # Release reservation if we held one and fill commit lost the race.
+        if commit_reservation_intent_id:
+            try:
+                shadow.release_reservation(
+                    commit_reservation_intent_id,
+                    expected_version=shadow.snapshot()["version"],
+                )
+            except Exception:  # noqa: BLE001
+                shadow.recover_interrupted()
+        existing = shadow.get_cycle_by_key(key)
+        if existing is not None:
+            return existing
+        raise
     except ShadowStoreError:
         existing = shadow.get_cycle_by_key(key)
         if existing is not None:
@@ -655,6 +897,10 @@ def _jsonable(snap: dict[str, Any]) -> dict[str, Any]:
         "peak_equity_usd": str(snap["peak_equity_usd"]),
         "starting_capital_usd": "100",
     }
+
+
+def _hash(evidence: dict[str, Any]) -> str:
+    return hashlib.sha256(json.dumps(evidence, sort_keys=True, default=str).encode()).hexdigest()
 
 
 def _ms(started: float) -> int:

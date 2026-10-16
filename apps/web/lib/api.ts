@@ -1595,6 +1595,36 @@ export async function loadRiskEvaluations(
   };
 }
 
+export type ShadowPositionValue = {
+  symbol: string;
+  quantity: string;
+  mark_price: string;
+  market_value_usd: string;
+  cost_basis_usd: string;
+  unrealized_pnl_usd: string;
+  mark_as_of: string;
+  feed: string;
+};
+
+export type ShadowValuation = {
+  status: "ok" | "stale" | "valuation_unavailable";
+  cash_usd: string;
+  reserved_cash_usd: string;
+  available_cash_usd: string;
+  positions: ShadowPositionValue[];
+  equity_usd: string | null;
+  exposure_usd: string | null;
+  exposure_fraction: string | null;
+  realized_pnl_usd: string;
+  unrealized_pnl_usd: string | null;
+  total_costs_usd: string;
+  starting_capital_usd: string;
+  valuation_as_of: string | null;
+  reason: string;
+  ledger_version: number;
+  note?: string;
+};
+
 export type ShadowStatus = {
   trading_state: string;
   allow_order_submission: false | boolean;
@@ -1610,7 +1640,58 @@ export type ShadowStatus = {
   ledger_version?: number;
   updated_at?: string;
   cycle_count: number;
+  valuation?: ShadowValuation | null;
+  valuation_reason?: string | null;
   note: string;
+};
+
+export type ShadowOpsAlert = {
+  level: string;
+  source: string;
+  message: string;
+  cycle_id?: number;
+};
+
+export type ShadowOps = {
+  market: {
+    database_present: boolean;
+    feed: string | null;
+    symbols: string[];
+    feeds: string[];
+    earliest_session: string | null;
+    latest_session: string | null;
+    bar_count: number;
+    coverage_complete: boolean;
+    suitable_for_research: boolean;
+    last_successful_ingestion: string | null;
+    requested_start: string | null;
+    requested_end: string | null;
+    warnings: string[];
+    coverage: Array<Record<string, unknown>>;
+    caveat: string;
+  };
+  pending_intents: Array<Record<string, unknown>>;
+  alerts: ShadowOpsAlert[];
+  last_cycle: ShadowCycle | null;
+  cycle_count: number;
+};
+
+export type ShadowTimelineItem = {
+  id: number;
+  cycle_key: string;
+  created_at: string;
+  mode: string;
+  label: string;
+  signal_session: string | null;
+  fill_session: string | null;
+  feed: string;
+  symbol: string;
+  status: string;
+  intent: string;
+  risk_verdict: string | null;
+  evidence_hash: string;
+  warnings: string[];
+  transitions: Array<{ step: string; at: string }>;
 };
 
 export type ShadowCycle = {
@@ -1637,6 +1718,14 @@ export async function loadShadowStatus(): Promise<ShadowStatus> {
   return value as ShadowStatus;
 }
 
+export async function loadShadowCycle(id: number): Promise<ShadowCycle & Record<string, unknown>> {
+  const value = await readJson(`/api/shadow/cycles/${id}`);
+  if (!isRecord(value) || typeof value.id !== "number") {
+    throw new Error("Unexpected shadow cycle detail");
+  }
+  return value as ShadowCycle & Record<string, unknown>;
+}
+
 export async function loadShadowCycles(
   query = "?limit=50",
 ): Promise<{ items: ShadowCycle[]; total: number }> {
@@ -1658,4 +1747,50 @@ export async function loadShadowEquity(
     throw new Error("Unexpected shadow equity");
   }
   return { items: value.items as Array<Record<string, string | number | null>> };
+}
+
+function isShadowValuation(value: unknown): value is ShadowValuation {
+  return (
+    isRecord(value) &&
+    typeof value.status === "string" &&
+    typeof value.cash_usd === "string" &&
+    Array.isArray(value.positions)
+  );
+}
+
+export async function loadShadowValuation(): Promise<ShadowValuation> {
+  const value = await readJson("/api/shadow/valuation");
+  if (!isShadowValuation(value)) {
+    throw new Error("Unexpected shadow valuation");
+  }
+  return value;
+}
+
+export async function loadShadowOps(): Promise<ShadowOps> {
+  const value = await readJson("/api/shadow/ops");
+  if (!isRecord(value) || !isRecord(value.market) || !Array.isArray(value.alerts)) {
+    throw new Error("Unexpected shadow ops");
+  }
+  return value as ShadowOps;
+}
+
+export async function loadShadowTimeline(
+  query = "?limit=50&offset=0",
+): Promise<{ items: ShadowTimelineItem[]; total: number; limit: number; offset: number }> {
+  const value = await readJson(`/api/shadow/timeline${query}`);
+  if (
+    !isRecord(value) ||
+    !Array.isArray(value.items) ||
+    typeof value.total !== "number" ||
+    typeof value.limit !== "number" ||
+    typeof value.offset !== "number"
+  ) {
+    throw new Error("Unexpected shadow timeline");
+  }
+  return {
+    total: value.total,
+    limit: value.limit,
+    offset: value.offset,
+    items: value.items.filter(isRecord).map((item) => item as ShadowTimelineItem),
+  };
 }

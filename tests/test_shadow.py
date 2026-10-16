@@ -11,7 +11,7 @@ import pytest
 from nomadquant.execution import DryRunExecutionGateway, ExecutionRequest
 from nomadquant.marketdata.calendar import sessions_between
 from nomadquant.shadow.cycle import LABEL_FORWARD, LABEL_RETRO, run_shadow_cycle
-from nomadquant.shadow.store import ShadowStore, ShadowStoreError
+from nomadquant.shadow.store import ShadowStore, ShadowStoreError, shadow_path_for_label
 from tests.test_research import _fill_market
 
 
@@ -73,7 +73,10 @@ def test_duplicate_cycle_key_is_idempotent(tmp_path: Path) -> None:
     first = run_shadow_cycle(**kwargs)
     second = run_shadow_cycle(**kwargs)
     assert first["id"] == second["id"]
-    assert ShadowStore(shadow).count_cycles() == 1
+    retro = shadow_path_for_label(shadow, LABEL_RETRO)
+    assert ShadowStore(retro, namespace="retrospective").count_cycles() == 1
+    # Forward ledger must remain untouched.
+    assert ShadowStore(shadow, namespace="forward").count_cycles() == 0
 
 
 def test_dry_run_gateway_never_sets_broker_order() -> None:
