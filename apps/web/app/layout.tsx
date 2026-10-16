@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import type { ReactNode } from "react";
 import { IBM_Plex_Mono, IBM_Plex_Sans } from "next/font/google";
 import { QueryProvider } from "@/components/providers/QueryProvider";
 import { Shell } from "@/components/Shell";
@@ -21,7 +22,7 @@ export const metadata: Metadata = {
   description: "Local paper-only status for NomadQuant",
 };
 
-export default function RootLayout({ children }: LayoutProps<"/">) {
+export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en" className={`h-full ${plexSans.variable} ${plexMono.variable}`}>
       <body className="min-h-full antialiased">
