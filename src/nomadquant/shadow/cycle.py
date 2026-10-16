@@ -112,6 +112,7 @@ def run_shadow_cycle(
     signal_session: date | None = None,
     label: str = LABEL_FORWARD,
     policy: RiskPolicy | None = None,
+    context: str | None = None,
 ) -> dict[str, Any]:
     """Run one shadow cycle. Idempotent on ``cycle_key``.
 
@@ -378,6 +379,7 @@ def run_shadow_cycle(
         "mode": mode,
         "namespace": shadow.namespace,
         "shadow_db": str(db_path),
+        "evaluation_context": context or label,
     }
 
     intent_id = f"intent:{cycle_key}"
@@ -658,6 +660,14 @@ def run_shadow_cycle(
         clock="historical" if label == LABEL_RETRO else "prospective",
     )
     evidence["proposal"] = proposal.model_dump(mode="json")
+    evidence["cost_model"] = {
+        "commission_usd": str(costs.commission_usd),
+        "spread_bps": str(costs.spread_bps),
+        "slippage_bps": str(costs.slippage_bps),
+        "convention": CONVENTION_ID,
+    }
+    evidence["policy_hash"] = risk.policy_hash
+    evidence["policy_version"] = risk.policy_version
     evidence["risk_verdict"] = risk.verdict
     evidence["risk_reasons"] = risk.reasons
 
@@ -806,6 +816,7 @@ def run_shadow_cycle(
     after, fill_meta = _simulate_fill(before, side, proposal_qty, open_price, costs)
     # Clear reserve into the fill cash path (buy already debits full cash).
     after["reserved_cash_usd"] = _ZERO
+    after["version"] = int(before["version"]) + 1
     evidence["fill"] = fill_meta
     evidence["outbox_note"] = (
         "Risk audit is projected via shadow_outbox only AFTER shadow commit. "
@@ -849,7 +860,7 @@ def run_shadow_cycle(
         proposal_id=proposal.id,
         risk_verdict=risk.verdict,
         risk_reasons=risk.reasons,
-        fill_price=open_price,
+        fill_price=Decimal(fill_meta["fill_price"]),
         fill_qty=proposal_qty,
         fill_side=side,
         costs_usd=Decimal(fill_meta["costs_usd"]),

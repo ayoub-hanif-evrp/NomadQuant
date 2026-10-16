@@ -8,6 +8,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+from nomadquant.finance.execution import CONVENTION_ID
 from nomadquant.marketdata.calendar import sessions_between
 from nomadquant.marketdata.store import MarketStore
 from nomadquant.research.models import CostModel
@@ -272,6 +273,14 @@ def _resume_one(
         cost_basis=dict(before["cost_basis"]),
         clock="prospective",
     )
+    evidence["cost_model"] = {
+        "commission_usd": str(costs.commission_usd),
+        "spread_bps": str(costs.spread_bps),
+        "slippage_bps": str(costs.slippage_bps),
+        "convention": CONVENTION_ID,
+    }
+    evidence["policy_hash"] = risk.policy_hash
+    evidence["policy_version"] = risk.policy_version
     evidence["risk_verdict"] = risk.verdict
     evidence["risk_reasons"] = risk.reasons
     evidence["proposal"] = proposal.model_dump(mode="json")
@@ -353,6 +362,7 @@ def _resume_one(
 
     after, fill_meta = _simulate_fill(before, sized.side, sized.quantity, open_price, costs)
     after["reserved_cash_usd"] = _ZERO
+    after["version"] = int(before["version"]) + 1
     evidence["fill"] = fill_meta
     outbox = {
         "kind": "risk_evaluation",
@@ -390,7 +400,7 @@ def _resume_one(
         proposal_id=proposal.id,
         risk_verdict=risk.verdict,
         risk_reasons=risk.reasons,
-        fill_price=open_price,
+        fill_price=Decimal(fill_meta["fill_price"]),
         fill_qty=sized.quantity,
         fill_side=sized.side,
         costs_usd=Decimal(fill_meta["costs_usd"]),
