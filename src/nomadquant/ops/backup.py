@@ -7,6 +7,7 @@ import json
 import os
 import shutil
 import sqlite3
+import sys
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -401,7 +402,7 @@ def _pid_alive(pid: int) -> bool:
     """
     if pid <= 0:
         return False
-    if os.name == "nt":
+    if sys.platform == "win32":
         import ctypes
 
         kernel = ctypes.WinDLL("kernel32", use_last_error=True)
