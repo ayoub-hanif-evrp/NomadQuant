@@ -119,9 +119,8 @@ def run_shadow_cycle(
 
     db_path = shadow_path_for_label(shadow_path, label)
     shadow = ShadowStore(db_path, namespace=namespace_for_label(label))
-    # Recovery is an explicit apply/worker action — never a GET side effect.
-    if mode == "apply":
-        shadow.recover_interrupted()
+    # Recovery is explicit (`nomadquant-shadow recover` / worker recover).
+    # Apply must not silently release another worker's reservation.
 
     from nomadquant.shadow.outbox import deliver_outbox
     from nomadquant.shadow.pending import awaited_fill_session, resume_pending_intents

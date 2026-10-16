@@ -10,6 +10,7 @@ from typing import Any
 
 from nomadquant.config import Settings, get_settings
 from nomadquant.shadow.cycle import LABEL_FORWARD, LABEL_RETRO, run_shadow_cycle
+from nomadquant.shadow.data_ops import data_check
 from nomadquant.shadow.marks import value_forward_portfolio
 from nomadquant.shadow.preflight import run_preflight, run_reconcile
 from nomadquant.shadow.store import ShadowStore, shadow_path_for_label
@@ -35,6 +36,9 @@ def main(argv: list[str] | None = None) -> None:
     )
 
     sub.add_parser("status", help="Show shadow ledger and valuation.")
+    data = sub.add_parser("data-check", help="Report missing completed daily sessions.")
+    data.add_argument("--feed", choices=["sip", "iex"], default="sip")
+
     sub.add_parser("preflight", help="Forward cycle readiness checks.")
     sub.add_parser("reconcile", help="Reconcile shadow ledger invariants.")
 
@@ -65,6 +69,9 @@ def main(argv: list[str] | None = None) -> None:
 
 
 def _dispatch(args: argparse.Namespace, settings: Settings) -> int:
+    if args.command == "data-check":
+        _print(data_check(settings, feed=args.feed))
+        return 0
     if args.command == "preflight":
         _print(run_preflight(settings))
         return 0

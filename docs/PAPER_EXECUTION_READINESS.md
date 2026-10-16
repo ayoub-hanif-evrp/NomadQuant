@@ -18,6 +18,8 @@
 | Explicit recover CLI | Yes | `nomadquant-shadow recover` |
 | Worker inspect/dry-run/shadow-apply | Yes | Default schedule = inspect |
 | Zero Alpaca orders | Yes | No order routes; gateway dry-run only |
+| Worker hard gate on BLOCKED / failed reconcile | Yes | Prompt 13: no cycle when preflight blocked |
+| Explicit recovery only | Yes | Apply no longer auto-calls recover_interrupted |
 
 ## Current verified guarantees
 

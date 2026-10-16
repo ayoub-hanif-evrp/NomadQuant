@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
@@ -49,7 +50,9 @@ def run_daily_worker(
     log_dir.mkdir(parents=True, exist_ok=True)
     lock_path = root / _LOCK_NAME
     started_at = datetime.now(UTC)
+    run_id = uuid.uuid4().hex
     outcome: dict[str, Any] = {
+        "run_id": run_id,
         "worker_status": "HEALTHY",
         "mode": mode,
         "started_at": started_at.isoformat(),
@@ -85,7 +88,8 @@ def run_daily_worker(
         }
         outcome["recovery_inspect"] = recovery
 
-        if active and mode in {"inspect", "dry-run"}:
+        if active:
+            # Any mode: stuck reservations block new fills. Recover explicitly.
             outcome["worker_status"] = "RECOVERY_REQUIRED"
             outcome["finished_at"] = datetime.now(UTC).isoformat()
             _write_outcome(log_dir, outcome)
@@ -107,10 +111,22 @@ def run_daily_worker(
             outcome["worker_status"] = "HEALTHY"
 
         if mode == "inspect":
-            if active:
-                outcome["worker_status"] = "RECOVERY_REQUIRED"
-            elif outcome["worker_status"] == "HEALTHY" and not outcome["reconcile"].get("ok"):
+            if outcome["worker_status"] == "HEALTHY" and not outcome["reconcile"].get("ok"):
                 outcome["worker_status"] = "FAILED"
+            exit_code = _exit_for_status(outcome["worker_status"])
+            outcome["finished_at"] = datetime.now(UTC).isoformat()
+            _write_outcome(log_dir, outcome)
+            return exit_code, outcome
+
+        # Hard gate: never mutate on BLOCKED, failed reconcile, or recovery.
+        reconcile_ok = bool(outcome["reconcile"].get("ok"))
+        if preflight_status == "BLOCKED" or not reconcile_ok:
+            if outcome["reconcile"].get("recovery_required"):
+                outcome["worker_status"] = "RECOVERY_REQUIRED"
+            else:
+                outcome["worker_status"] = "FAILED"
+            outcome["cycle"] = None
+            outcome["gate"] = "blocked_before_cycle"
             exit_code = _exit_for_status(outcome["worker_status"])
             outcome["finished_at"] = datetime.now(UTC).isoformat()
             _write_outcome(log_dir, outcome)
@@ -255,7 +271,10 @@ def _release_lock(lock_path: Path) -> None:
 
 
 def _write_outcome(log_dir: Path, outcome: dict[str, Any]) -> Path:
-    stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
-    path = log_dir / f"{_OUTCOME_PREFIX}{stamp}.json"
-    path.write_text(json.dumps(outcome, indent=2, default=str), encoding="utf-8")
+    run_id = str(outcome.get("run_id") or uuid.uuid4().hex)
+    outcome["run_id"] = run_id
+    path = log_dir / f"{_OUTCOME_PREFIX}{run_id}.json"
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(outcome, indent=2, default=str), encoding="utf-8")
+    tmp.replace(path)
     return path
