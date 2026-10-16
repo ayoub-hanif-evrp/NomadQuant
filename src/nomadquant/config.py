@@ -69,6 +69,16 @@ class Settings(BaseSettings):
     agent_benchmark_path: str = "data/agent-benchmarks.sqlite"
     risk_path: str = "data/risk.sqlite"
     shadow_path: str = "data/shadow.sqlite"
+    approval_path: str = "data/approvals.sqlite"
+    approval_outbox_dir: str = "data/approval-outbox"
+    approval_ttl_minutes: int = 60
+    approval_email_to: str = ""
+    approval_email_from: str = "nomadquant@localhost"
+    approval_public_base_url: str = "http://127.0.0.1:3000"
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_username: str = ""
+    smtp_password: SecretStr | None = None
 
     @field_validator("ollama_base_url")
     @classmethod
@@ -110,7 +120,7 @@ class Settings(BaseSettings):
             )
         return False
 
-    @field_validator("alpaca_api_key", "alpaca_api_secret", mode="before")
+    @field_validator("alpaca_api_key", "alpaca_api_secret", "smtp_password", mode="before")
     @classmethod
     def blank_secret_is_absent(cls, value: object) -> object:
         if value is None:
@@ -159,7 +169,7 @@ class Settings(BaseSettings):
     @property
     def secret_values(self) -> list[str]:
         values: list[str] = []
-        for secret in (self.alpaca_api_key, self.alpaca_api_secret):
+        for secret in (self.alpaca_api_key, self.alpaca_api_secret, self.smtp_password):
             if secret is None:
                 continue
             raw = secret.get_secret_value().strip()
