@@ -116,6 +116,13 @@ CREATE TABLE IF NOT EXISTS shadow_transitions (
     payload_json TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS shadow_transitions_intent ON shadow_transitions (intent_id, id);
+CREATE TABLE IF NOT EXISTS shadow_daily_ops (
+    operation_id TEXT PRIMARY KEY,
+    created_at TEXT NOT NULL,
+    mode TEXT NOT NULL,
+    status TEXT NOT NULL,
+    payload_json TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS shadow_outbox (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     kind TEXT NOT NULL,
@@ -214,6 +221,31 @@ class ShadowStore:
         with self._connect() as conn:
             row = conn.execute("SELECT value FROM shadow_meta WHERE key = ?", (key,)).fetchone()
         return None if row is None else str(row["value"])
+
+    def save_daily_operation(self, operation_id: str, payload: dict[str, Any]) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO shadow_daily_ops (
+                    operation_id, created_at, mode, status, payload_json
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    operation_id,
+                    str(payload.get("started_at")),
+                    str(payload.get("mode")),
+                    str(payload.get("status")),
+                    json.dumps(payload, default=str),
+                ),
+            )
+
+    def list_daily_operations(self, limit: int = 20) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT payload_json FROM shadow_daily_ops ORDER BY created_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [json.loads(row["payload_json"]) for row in rows]
 
     def set_meta(self, key: str, value: str) -> None:
         with self._connect() as conn:

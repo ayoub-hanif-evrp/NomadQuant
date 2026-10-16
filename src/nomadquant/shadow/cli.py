@@ -10,11 +10,13 @@ from typing import Any
 
 from nomadquant.config import Settings, get_settings
 from nomadquant.shadow.cycle import LABEL_FORWARD, LABEL_RETRO, run_shadow_cycle
+from nomadquant.shadow.daily import run_daily_operation
 from nomadquant.shadow.data_ops import data_check, data_sync
 from nomadquant.shadow.gate import application_guard
 from nomadquant.shadow.marks import value_forward_portfolio
 from nomadquant.shadow.preflight import run_preflight, run_reconcile
 from nomadquant.shadow.store import ShadowStore, shadow_path_for_label
+from nomadquant.shadow.verify import verify_cycle
 from nomadquant.shadow.worker import run_daily_worker
 
 
@@ -55,6 +57,18 @@ def main(argv: list[str] | None = None) -> None:
         help="Release interrupted reservations and deliver shadow outbox (explicit).",
     )
 
+    daily = sub.add_parser("daily", help="Supervised daily procedure. Default is inspect.")
+    daily.add_argument("--mode", choices=["inspect", "dry-run", "shadow-apply"], default="inspect")
+    daily.add_argument(
+        "--sync",
+        action="store_true",
+        help="Opt in to authenticated historical data sync. Off by default.",
+    )
+    daily.add_argument("--feed", choices=["sip", "iex"], default="sip")
+
+    verify = sub.add_parser("verify", help="Independently check one stored shadow cycle.")
+    verify.add_argument("--cycle-id", type=int, required=True)
+
     worker = sub.add_parser("worker", help="Daily shadow worker (inspect / dry-run / apply).")
     worker.add_argument(
         "--mode",
@@ -82,14 +96,25 @@ def _dispatch(args: argparse.Namespace, settings: Settings) -> int:
         return 0
     if args.command == "data-sync":
         try:
-            payload = data_sync(
-                settings, feed=args.feed, revision_audit=bool(args.revision_audit)
-            )
+            payload = data_sync(settings, feed=args.feed, revision_audit=bool(args.revision_audit))
         except Exception as exc:  # noqa: BLE001
             print(f"error: {exc}", file=sys.stderr)
             return 1
         _print(payload)
         return 0 if payload.get("status") != "ERROR" else 1
+    if args.command == "daily":
+        code, payload = run_daily_operation(
+            settings,
+            mode=args.mode,
+            sync=bool(args.sync),
+            feed=args.feed,
+        )
+        _print(payload)
+        return code
+    if args.command == "verify":
+        report = verify_cycle(settings, args.cycle_id)
+        _print(report)
+        return 0 if report["status"] != "FAIL" else 1
     if args.command == "preflight":
         _print(run_preflight(settings))
         return 0
