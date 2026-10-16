@@ -16,7 +16,9 @@ def test_missing_ledger_is_insufficient_and_not_created(tmp_path: Path) -> None:
     report = supervised_readiness(settings)
     assert report["mutates_forward_ledger"] is False
     assert report["broker_orders"] is False
-    assert report["readiness"] == "INSUFFICIENT_DATA"
+    assert report["readiness"] == "NOT_CONFIGURED"
+    assert report["pilot_running"] is False
+    assert report["rebalance_scheduled"] is False
     assert report["user_decision_required"] is True
     assert report["pilot_active"] is False
     assert shadow.exists() is False

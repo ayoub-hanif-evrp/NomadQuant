@@ -143,19 +143,29 @@ class RiskEngine:
         if run(trade_price_outcome):
             return finalize("INSUFFICIENT_DATA")
 
-        if run(_session_clock(prices.get(proposal.symbol), trade_as_of)):
+        quote = prices.get(proposal.symbol)
+        if run(_session_clock(quote, trade_as_of)):
             return finalize("INSUFFICIENT_DATA")
-        anchor = _freshness_anchor(prices.get(proposal.symbol), trade_as_of)
+        if run(_session_matches_market(quote, trade_as_of)):
+            return finalize("INSUFFICIENT_DATA")
+        if run(_feed_consistent(quote)):
+            return finalize("INSUFFICIENT_DATA")
+        retrieval = _retrieval_clock(quote, evaluated_at)
+        if retrieval is not None and run(retrieval):
+            return finalize("INSUFFICIENT_DATA")
+        if run(_availability_clock(quote, evaluated_at)):
+            return finalize("INSUFFICIENT_DATA")
+        if run(_future_quote(trade_as_of, evaluated_at)):
+            return finalize("INSUFFICIENT_DATA")
+        anchor = _freshness_anchor(quote, trade_as_of)
         if anchor is None:
             rule_verdicts.append(
                 RuleVerdict(
-                    rule="stale_price",
+                    rule="retrieval_timestamp",
                     verdict="INSUFFICIENT_DATA",
                     reason="Price retrieval timestamp is naive.",
                 )
             )
-            return finalize("INSUFFICIENT_DATA")
-        if run(_future_quote(anchor, evaluated_at)):
             return finalize("INSUFFICIENT_DATA")
         if run(_stale_price(anchor, evaluated_at, policy)):
             return finalize("INSUFFICIENT_DATA")
@@ -578,6 +588,115 @@ def _session_clock(quote: Any, price_as_of: datetime) -> _RuleOutcome:
             f"{session_day.isoformat()} is not an NYSE session.",
         )
     return ("exchange_session", "PASS", f"{session_day.isoformat()} is an NYSE session.")
+
+
+def _quote_raw(quote: Any, name: str) -> Any:
+    if isinstance(quote, dict):
+        return quote.get(name)
+    return getattr(quote, name, None)
+
+
+def _session_matches_market(quote: Any, price_as_of: datetime) -> _RuleOutcome:
+    raw = _quote_raw(quote, "session_date")
+    if raw is None:
+        return ("session_timestamp", "PASS", "No separate session date was claimed.")
+    if isinstance(raw, str):
+        claimed = date.fromisoformat(raw[:10])
+    elif isinstance(raw, date) and not isinstance(raw, datetime):
+        claimed = raw
+    else:
+        return ("session_timestamp", "INSUFFICIENT_DATA", "Claimed session date is malformed.")
+    observed = price_as_of.astimezone(ZoneInfo("America/New_York")).date()
+    if claimed != observed:
+        return (
+            "session_timestamp",
+            "INSUFFICIENT_DATA",
+            f"Market timestamp falls on {observed.isoformat()}, "
+            f"not claimed session {claimed.isoformat()}.",
+        )
+    return ("session_timestamp", "PASS", f"Market timestamp matches session {claimed.isoformat()}.")
+
+
+def _feed_consistent(quote: Any) -> _RuleOutcome:
+    feed = str(_quote_raw(quote, "feed") or "")
+    source = _quote_raw(quote, "source")
+    if source is not None and str(source) != feed:
+        return (
+            "feed_provenance",
+            "INSUFFICIENT_DATA",
+            f"Quote feed {feed or 'missing'} disagrees with source {source}.",
+        )
+    return ("feed_provenance", "PASS", f"Feed label {feed or 'missing'} is consistent.")
+
+
+def _retrieval_clock(quote: Any, evaluated_at: datetime) -> _RuleOutcome | None:
+    raw = _quote_raw(quote, "first_retrieved_at")
+    if raw is None:
+        return None
+    if isinstance(raw, str):
+        try:
+            parsed = datetime.fromisoformat(raw)
+        except ValueError:
+            return (
+                "retrieval_timestamp",
+                "INSUFFICIENT_DATA",
+                "Retrieval timestamp did not parse.",
+            )
+    elif isinstance(raw, datetime):
+        parsed = raw
+    else:
+        return ("retrieval_timestamp", "INSUFFICIENT_DATA", "Retrieval timestamp is malformed.")
+    if parsed.tzinfo is None:
+        return ("retrieval_timestamp", "INSUFFICIENT_DATA", "First retrieval timestamp is naive.")
+    retrieved = parsed.astimezone(UTC)
+    if retrieved > evaluated_at.astimezone(UTC) + timedelta(minutes=1):
+        return (
+            "future_retrieval",
+            "INSUFFICIENT_DATA",
+            "First retrieval is after the evaluation clock.",
+        )
+    return ("retrieval_timestamp", "PASS", "Retrieval timestamp is not after the evaluation clock.")
+
+
+def _availability_clock(quote: Any, evaluated_at: datetime) -> _RuleOutcome:
+    raw = _quote_raw(quote, "available_at")
+    if raw is None:
+        return (
+            "observation_availability",
+            "PASS",
+            "No separate availability timestamp was supplied.",
+        )
+    if isinstance(raw, str):
+        try:
+            parsed = datetime.fromisoformat(raw)
+        except ValueError:
+            return (
+                "observation_availability",
+                "INSUFFICIENT_DATA",
+                "Availability timestamp did not parse.",
+            )
+    elif isinstance(raw, datetime):
+        parsed = raw
+    else:
+        return (
+            "observation_availability",
+            "INSUFFICIENT_DATA",
+            "Availability timestamp is malformed.",
+        )
+    if parsed.tzinfo is None:
+        return ("observation_availability", "INSUFFICIENT_DATA", "Availability timestamp is naive.")
+    available = parsed.astimezone(UTC)
+    if available > evaluated_at.astimezone(UTC) + timedelta(minutes=1):
+        return (
+            "observation_availability",
+            "INSUFFICIENT_DATA",
+            "The observation was not available at the evaluation clock.",
+        )
+    return (
+        "observation_availability",
+        "PASS",
+        "Observation availability is at or before evaluation.",
+    )
 
 
 def _future_quote(anchor: datetime, evaluated_at: datetime) -> _RuleOutcome:

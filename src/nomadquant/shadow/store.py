@@ -61,6 +61,8 @@ CREATE TABLE IF NOT EXISTS shadow_cycles (
     ledger_after_json TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS shadow_cycles_created ON shadow_cycles (created_at DESC);
+CREATE INDEX IF NOT EXISTS shadow_cycles_status ON shadow_cycles (status);
+CREATE INDEX IF NOT EXISTS shadow_cycles_label_status ON shadow_cycles (label, status);
 CREATE TABLE IF NOT EXISTS shadow_equity (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     cycle_id INTEGER,
@@ -174,6 +176,7 @@ class ShadowStore:
         with self._connect() as conn:
             conn.executescript(SCHEMA)
             _ensure_outbox_columns(conn)
+            _ensure_cycle_indexes(conn)
             row = conn.execute("SELECT id FROM shadow_ledger WHERE id = 1").fetchone()
             if row is None:
                 now = datetime.now(UTC).isoformat()
@@ -309,6 +312,53 @@ class ShadowStore:
                     (limit, offset),
                 ).fetchall()
         return [_cycle_row(row) for row in rows]
+
+    def history_totals(self) -> dict[str, Any]:
+        """Full-history counts. Not limited to the recent display page."""
+        with self._connect() as conn:
+            status_rows = conn.execute(
+                "SELECT status, COUNT(*) AS n FROM shadow_cycles GROUP BY status"
+            ).fetchall()
+            label_rows = conn.execute(
+                "SELECT COALESCE(label, '') AS label, status, COUNT(*) AS n "
+                "FROM shadow_cycles GROUP BY label, status"
+            ).fetchall()
+            intent_rows = conn.execute(
+                "SELECT state, COUNT(*) AS n FROM shadow_intents GROUP BY state"
+            ).fetchall()
+            daily_rows = conn.execute(
+                "SELECT status, COUNT(*) AS n FROM shadow_daily_ops GROUP BY status"
+            ).fetchall()
+            risk_rows = conn.execute(
+                "SELECT COALESCE(risk_verdict, '') AS verdict, COUNT(*) AS n "
+                "FROM shadow_cycles GROUP BY risk_verdict"
+            ).fetchall()
+        by_status = {str(row["status"]): int(row["n"]) for row in status_rows}
+        by_intent = {str(row["state"]): int(row["n"]) for row in intent_rows}
+        by_daily = {str(row["status"]): int(row["n"]) for row in daily_rows}
+        by_verdict = {str(row["verdict"]): int(row["n"]) for row in risk_rows}
+        forward = {
+            str(row["status"]): int(row["n"])
+            for row in label_rows
+            if str(row["label"]) in {"", "forward_shadow"}
+        }
+        return {
+            "cycles_total": sum(by_status.values()),
+            "by_status": by_status,
+            "forward_by_status": forward,
+            "missed_sessions": by_status.get("missed_signal", 0),
+            "filled_shadow_intents": by_status.get("filled", 0),
+            "rejected_proposals": by_verdict.get("REJECT", 0),
+            "insufficient_records": by_status.get("insufficient_data", 0)
+            + by_status.get("error", 0),
+            "pending_intents": sum(
+                by_intent.get(state, 0)
+                for state in ("PENDING_DATA", "RESERVED", "RISK_APPROVED", "SIGNAL_RECORDED")
+            ),
+            "failed_daily_operations": by_daily.get("error", 0) + by_daily.get("FAILED", 0),
+            "daily_operations_by_status": by_daily,
+            "intents_by_state": by_intent,
+        }
 
     def count_cycles(self, *, status: str | None = None) -> int:
         with self._connect() as conn:
@@ -964,6 +1014,13 @@ class ShadowStore:
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
         return conn
+
+
+def _ensure_cycle_indexes(conn: sqlite3.Connection) -> None:
+    conn.execute("CREATE INDEX IF NOT EXISTS shadow_cycles_status ON shadow_cycles (status)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS shadow_cycles_label_status ON shadow_cycles (label, status)"
+    )
 
 
 def _ensure_outbox_columns(conn: sqlite3.Connection) -> None:

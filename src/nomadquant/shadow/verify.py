@@ -25,6 +25,18 @@ from nomadquant.shadow.store import ShadowStore
 
 Check = dict[str, str]
 
+VERIFY_EXIT_CODES = {
+    "PASS": 0,
+    "FAIL": 1,
+    "NOT_EVALUABLE": 2,
+    "INVALID_ARTIFACT": 3,
+}
+
+
+def verification_exit_code(status: str) -> int:
+    """Shell contract for every verifier status. Unknown statuses are failures."""
+    return VERIFY_EXIT_CODES.get(status, 1)
+
 
 def verify_cycle(settings: Settings, cycle_id: int) -> dict[str, Any]:
     """Recompute what the cycle should show. Do not trust its stored totals alone."""

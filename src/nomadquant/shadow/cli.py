@@ -16,7 +16,7 @@ from nomadquant.shadow.gate import application_guard
 from nomadquant.shadow.marks import value_forward_portfolio
 from nomadquant.shadow.preflight import run_preflight, run_reconcile
 from nomadquant.shadow.store import ShadowStore, shadow_path_for_label
-from nomadquant.shadow.verify import verify_cycle
+from nomadquant.shadow.verify import verification_exit_code, verify_cycle
 from nomadquant.shadow.worker import run_daily_worker
 
 
@@ -114,9 +114,13 @@ def _dispatch(args: argparse.Namespace, settings: Settings) -> int:
         _print(payload)
         return code
     if args.command == "verify":
-        report = verify_cycle(settings, args.cycle_id)
+        try:
+            report = verify_cycle(settings, args.cycle_id)
+        except Exception as exc:  # noqa: BLE001
+            print(f"error: {type(exc).__name__}", file=sys.stderr)
+            return 1
         _print(report)
-        return 0 if report["status"] != "FAIL" else 1
+        return verification_exit_code(str(report.get("status") or ""))
     if args.command == "preflight":
         _print(run_preflight(settings))
         return 0

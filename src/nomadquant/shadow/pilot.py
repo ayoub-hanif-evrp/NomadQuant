@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -40,25 +40,31 @@ def forward_pilot_report(settings: Settings, *, verify_limit: int = 5) -> dict[s
     snap = store.snapshot()
     valuation = value_forward_portfolio(snap, settings.market_data_path)
     reconcile = run_reconcile(settings)
-    cycles = store.list_cycles(limit=500)
-    forward = [row for row in cycles if row.get("label") in {None, "forward_shadow"}]
-    missed = [row for row in forward if row.get("status") == "missed_signal"]
-    fills = [row for row in forward if row.get("status") == "filled"]
-    failed = [row for row in forward if row.get("status") in {"error", "blocked"}]
-    prospective = [
+    totals = store.history_totals()
+    recent = store.list_cycles(limit=30)
+    forward_recent = [row for row in recent if row.get("label") in {None, "forward_shadow"}]
+    prospective_recent = [
         row
-        for row in forward
+        for row in forward_recent
         if row.get("status") not in {"missed_signal", "blocked"} and _created_after_signal(row)
     ]
+    fills_total = int(totals["forward_by_status"].get("filled", 0))
+    missed_total = int(totals["forward_by_status"].get("missed_signal", 0))
+    failed_total = int(totals["forward_by_status"].get("error", 0)) + int(
+        totals["forward_by_status"].get("blocked", 0)
+    )
     pilot_raw = store.get_meta(PILOT_STARTED_KEY)
     pilot_day = _pilot_day(pilot_raw)
     now = datetime.now(UTC)
     eligible = _eligible_sessions(pilot_day, now)
-    processed = {row.get("signal_session") for row in prospective if row.get("signal_session")}
+    processed = {
+        row.get("signal_session") for row in prospective_recent if row.get("signal_session")
+    }
     pending = store.pending_intents()
+    sample = forward_recent[:verify_limit]
     verified = []
     failures = 0
-    for row in forward[:verify_limit]:
+    for row in sample:
         if row.get("id") is None:
             continue
         try:
@@ -77,18 +83,27 @@ def forward_pilot_report(settings: Settings, *, verify_limit: int = 5) -> dict[s
     baseline = _baseline(settings, pilot_day)
     return {
         "initialized": True,
-        "status": "INCONCLUSIVE" if not fills else "OBSERVING",
+        "status": "INCONCLUSIVE" if fills_total == 0 else "OBSERVING",
         "pilot_started_at": pilot_raw,
         "days_since_start": None if pilot_day is None else (now.date() - pilot_day).days,
         "eligible_sessions": len(eligible),
         "sessions_processed": len(processed),
-        "sessions_missed": len({row.get("signal_session") for row in missed}),
+        "sessions_missed": missed_total,
         "sessions_awaiting_data": len(pending),
-        "failed_cycles": len(failed),
-        "pending_intents": len(pending),
+        "failed_cycles": failed_total,
+        "pending_intents": int(totals["pending_intents"]),
+        "history_totals": totals,
         "reconciliation_ok": bool(reconcile.get("ok")),
         "verified_cycles": len([row for row in verified if row["status"] == "PASS"]),
         "verification_failures": failures,
+        "verification_sample": {
+            "checked": len(verified),
+            "passed": len([row for row in verified if row["status"] == "PASS"]),
+            "failed": failures,
+            "limit": verify_limit,
+            "history_cycles": totals["cycles_total"],
+            "note": "Counts in this object are a recent sample, not the full history.",
+        },
         "recent_verification": verified,
         "starting_capital_usd": "100",
         "equity_usd": None if equity is None else str(equity),
@@ -101,14 +116,15 @@ def forward_pilot_report(settings: Settings, *, verify_limit: int = 5) -> dict[s
         "total_costs_usd": str(snap["total_costs_usd"]),
         "exposure_usd": None if valuation.exposure_usd is None else str(valuation.exposure_usd),
         "drawdown_fraction": drawdown,
-        "prospective_decisions": len(prospective),
-        "hypothetical_fills": len(fills),
+        "prospective_decisions": len(prospective_recent),
+        "prospective_decisions_are_recent": True,
+        "hypothetical_fills": fills_total,
         "fill_assumption": "delayed_hypothetical_daily_open",
         "baseline": baseline,
         "hypothesis": {
             "strategy_id": "spy_tsmom_12_1",
             "parameters_unchanged": True,
-            "comparison": "inconclusive" if not fills else "observing",
+            "comparison": "inconclusive" if fills_total == 0 else "observing",
             "cash_baseline_usd": "100",
             "note": _CAVEAT,
         },
@@ -122,7 +138,7 @@ def forward_pilot_report(settings: Settings, *, verify_limit: int = 5) -> dict[s
                 "fill_price": row.get("fill_price"),
                 "forward_created": _created_after_signal(row),
             }
-            for row in forward[:30]
+            for row in forward_recent
         ],
         "equity_history": store.equity_history(limit=500),
         "caveat": _CAVEAT,
@@ -153,55 +169,172 @@ def supervised_readiness(settings: Settings) -> dict[str, Any]:
         pilot_raw = store.get_meta(PILOT_STARTED_KEY)
         cash = str(store.snapshot()["cash_usd"])
     data_status = str(coverage.get("status") or "UNKNOWN")
-    data_fresh = data_status in {"OK", "CURRENT", "COMPLETE"}
+    data_complete = data_status == "OK" and int(coverage.get("missing_count") or 0) == 0
+    data_fresh = data_complete
+    checks = {
+        str(item.get("name")): item
+        for item in list(preflight.get("checks") or [])
+        if isinstance(item, dict)
+    }
+    rebalance_scheduled = bool(checks.get("rebalance_due", {}).get("ok"))
+    signal_eligible = bool(checks.get("eligible_signal_session", {}).get("ok"))
+    observation_available = bool(checks.get("observation", {}).get("ok"))
+    recovery = bool(preflight.get("recovery_required")) or any(
+        str(item.get("state") or item.get("status") or "") == "RESERVED" for item in pending
+    )
+    eligible_pending = _eligible_pending(pending, settings)
+    worker_script = Path(__file__).resolve().parents[3] / "scripts" / "shadow-daily.ps1"
+    lock = Path(settings.shadow_path).parent / "shadow_worker.lock"
+    pilot_running = False
+    if lock.exists():
+        age = datetime.now(UTC) - datetime.fromtimestamp(lock.stat().st_mtime, tz=UTC)
+        pilot_running = age < timedelta(hours=2)
+    failed_daily = 0
+    if path.exists():
+        failed_daily = int(
+            ShadowStore(path, namespace="forward").history_totals()["failed_daily_operations"]
+        )
     reasons: list[str] = []
-    if not data_fresh:
+    if not path.exists():
+        reasons.append("ledger_missing")
+    if not data_complete:
         reasons.append(f"market_data:{data_status}")
-    if not reconcile.get("ok"):
+    if path.exists() and not reconcile.get("ok"):
         reasons.append("ledger_not_reconciled")
     if not guard.get("allowed"):
         reasons.extend(f"guard:{item}" for item in list(guard.get("reasons") or []))
     if preflight.get("status") == "BLOCKED":
         reasons.append("preflight_blocked")
+    if recovery:
+        reasons.append("recovery_required")
+    if pending and not eligible_pending:
+        reasons.append("pending_observation_not_executable")
     if not pilot_raw:
         reasons.append("pilot_clock_unset")
-    if reasons and (not data_fresh):
-        readiness = "INSUFFICIENT_DATA"
-    elif any(
-        item.startswith("guard:") or item in {"ledger_not_reconciled", "preflight_blocked"}
-        for item in reasons
-    ):
-        readiness = "BLOCKED"
-    elif not pilot_raw:
-        readiness = "READY"
-    else:
-        readiness = "OBSERVING"
+    state = _pilot_state(
+        configured=path.exists(),
+        recovery=recovery,
+        blocked=preflight.get("status") == "BLOCKED"
+        or not guard.get("allowed")
+        or (path.exists() and not reconcile.get("ok")),
+        data_complete=data_complete,
+        pending=len(pending),
+        eligible_pending=eligible_pending,
+        rebalance_scheduled=rebalance_scheduled,
+        observation_available=observation_available,
+        failed_daily=failed_daily,
+        clock_started=pilot_raw is not None,
+    )
     return {
-        "readiness": readiness,
+        "readiness": state,
+        "state": state,
         "reasons": reasons,
         "data_status": data_status,
+        "data_complete": data_complete,
         "data_fresh": data_fresh,
-        "rebalance_due": preflight.get("status") not in {"NO_REBALANCE_DUE", "ALREADY_PROCESSED"},
-        "preflight_status": preflight.get("status"),
-        "pending_can_resume": len(pending) > 0,
+        "rebalance_scheduled": rebalance_scheduled,
+        "signal_eligible": signal_eligible,
+        "observation_available": observation_available,
+        "pending_intent_count": len(pending),
+        "pending_intent_eligible_count": eligible_pending,
+        "pending_can_resume": eligible_pending > 0,
         "pending_intents": len(pending),
-        "ledger_reconciled": bool(reconcile.get("ok")),
+        "recovery_required": recovery,
+        "global_application_allowed": bool(guard.get("allowed")),
+        "ledger_reconciled": bool(reconcile.get("ok")) if path.exists() else False,
+        "pilot_clock_started": pilot_raw is not None,
+        "pilot_worker_configured": worker_script.exists(),
+        "pilot_running": pilot_running,
+        "shadow_fill_model": "delayed_hypothetical_daily_open",
+        "user_confirmation_required": pilot_raw is None,
+        "preflight_status": preflight.get("status"),
         "application_blocked": not bool(guard.get("allowed")),
         "guard_reasons": list(guard.get("reasons") or []),
         "next_execution": "delayed_hypothetical",
         "realtime_executable": False,
         "user_decision_required": pilot_raw is None,
         "pilot_started_at": pilot_raw,
-        "pilot_active": pilot_raw is not None,
+        "pilot_active": pilot_running,
         "cash_usd": cash,
         "mutates_forward_ledger": False,
         "broker_orders": False,
-        "note": (
-            "READY means the checks that can be answered are clear enough to ask "
-            "for an explicit shadow-apply. It is not an active trading system, "
-            "and this report does not submit an Alpaca order or mutate the ledger."
-        ),
+        "note": _STATE_NOTES.get(state, ""),
     }
+
+
+_STATE_NOTES = {
+    "NOT_CONFIGURED": "The forward ledger file is absent. Inspection does not create it.",
+    "READY_TO_START": (
+        "A scheduled rebalance has an observation and the checks are clear. "
+        "Starting still requires an explicit confirmation. The pilot is not running."
+    ),
+    "WAITING_FOR_SESSION": "No month-start rebalance is due. This is not a start command.",
+    "WAITING_FOR_DATA": "Stored SIP coverage is incomplete for the required window.",
+    "PENDING_OBSERVATION": ("A pending intent exists. Presence alone does not make it executable."),
+    "BLOCKED": "A guard, reconcile failure, or preflight block prevents application.",
+    "RECOVERY_REQUIRED": "An interrupted reservation must be recovered before a new apply.",
+    "OBSERVING": (
+        "The pilot clock has started. A start timestamp does not mean a worker is running."
+    ),
+    "FAILED": "A recorded daily operation failed.",
+}
+
+
+def _pilot_state(
+    *,
+    configured: bool,
+    recovery: bool,
+    blocked: bool,
+    data_complete: bool,
+    pending: int,
+    eligible_pending: int,
+    rebalance_scheduled: bool,
+    observation_available: bool,
+    failed_daily: int,
+    clock_started: bool,
+) -> str:
+    if not configured:
+        return "NOT_CONFIGURED"
+    if recovery:
+        return "RECOVERY_REQUIRED"
+    if blocked:
+        return "BLOCKED"
+    if not data_complete:
+        return "WAITING_FOR_DATA"
+    if failed_daily:
+        return "FAILED"
+    if pending and eligible_pending == 0:
+        return "PENDING_OBSERVATION"
+    if clock_started:
+        return "OBSERVING"
+    if rebalance_scheduled and observation_available:
+        return "READY_TO_START"
+    if rebalance_scheduled and not observation_available:
+        return "PENDING_OBSERVATION"
+    return "WAITING_FOR_SESSION"
+
+
+def _eligible_pending(pending: list[dict[str, Any]], settings: Settings) -> int:
+    """Count pending intents whose fill session bar is already stored. Presence is not enough."""
+    market_path = Path(settings.market_data_path)
+    if not market_path.exists():
+        return 0
+    market = MarketStore.open_readonly(market_path)
+    if market is None or not market.has_symbol(SYMBOL, FEED):
+        return 0
+    stored = set(market.sessions(SYMBOL, FEED))
+    count = 0
+    for item in pending:
+        raw = item.get("fill_session")
+        if not raw:
+            continue
+        try:
+            session = date.fromisoformat(str(raw))
+        except ValueError:
+            continue
+        if session in stored and str(item.get("state")) == "PENDING_DATA":
+            count += 1
+    return count
 
 
 def _created_after_signal(row: dict[str, Any]) -> bool:

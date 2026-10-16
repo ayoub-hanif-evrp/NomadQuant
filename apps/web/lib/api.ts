@@ -1826,6 +1826,11 @@ export type ForwardPilotReport = {
   caveat?: string;
   supervision?: {
     readiness?: string;
+    state?: string;
+    rebalance_scheduled?: boolean;
+    pilot_running?: boolean;
+    pilot_clock_started?: boolean;
+    data_complete?: boolean;
     reasons?: string[];
     data_fresh?: boolean;
     data_status?: string;

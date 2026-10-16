@@ -82,7 +82,7 @@ export function ForwardPilot() {
           {data.supervision ? (
             <div className="mb-3 rounded-xl border border-[var(--line)] p-3 text-xs">
               <div className="mb-1 font-semibold">
-                Pilot readiness: {data.supervision.readiness ?? "—"}
+                Pilot state: {data.supervision.state ?? data.supervision.readiness ?? "—"}
               </div>
               <p className="text-[var(--muted)]">{data.supervision.note}</p>
               <p className="mt-1 font-mono">
