@@ -124,7 +124,7 @@ export function Overview() {
             <div>
               <dt className="text-[var(--muted)]">Forward pilot</dt>
               <dd>
-                {pilot.data?.supervision?.readiness ?? "—"}
+                {pilot.data?.supervision?.state ?? pilot.data?.supervision?.readiness ?? "—"}
                 {pilot.data?.supervision?.pilot_active ? "" : " · not an active trading system"}
                 {pilot.data?.supervision?.user_decision_required ? " · user decision required" : ""}
               </dd>

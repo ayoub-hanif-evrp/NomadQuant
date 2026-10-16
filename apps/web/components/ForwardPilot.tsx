@@ -60,7 +60,9 @@ export function ForwardPilot() {
             <div>
               <dt className="text-[var(--muted)]">Verification</dt>
               <dd>
-                pass {data.verified_cycles ?? 0} · fail {data.verification_failures ?? 0} · reconcile{" "}
+                {data.verification_sample?.passed ?? data.verified_cycles ?? 0} of{" "}
+                {data.verification_sample?.checked ?? 0} recent cycles passed · history{" "}
+                {data.verification_sample?.history_cycles ?? "—"} · reconcile{" "}
                 {data.reconciliation_ok ? "ok" : "not ok"}
               </dd>
             </div>

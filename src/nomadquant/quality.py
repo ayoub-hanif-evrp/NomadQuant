@@ -53,6 +53,7 @@ def quality_report(settings: Settings) -> dict[str, Any]:
             "sessions_missed": pilot.get("sessions_missed"),
             "sample": "insufficient" if not pilot.get("hypothetical_fills") else "observing",
             "readiness": (pilot.get("supervision") or {}).get("readiness"),
+            "state": (pilot.get("supervision") or {}).get("state"),
             "reasons": (pilot.get("supervision") or {}).get("reasons"),
         },
         "verifier": cycles,

@@ -42,7 +42,7 @@ export function ResearchQuality() {
           <div>
             <dt className="text-[var(--muted)]">Pilot readiness</dt>
             <dd>
-              {data.pilot?.readiness ?? "—"}
+              {data.pilot?.state ?? data.pilot?.readiness ?? "—"}
               {(data.pilot?.reasons ?? []).length ? ` · ${(data.pilot?.reasons ?? []).join(", ")}` : ""}
             </dd>
           </div>

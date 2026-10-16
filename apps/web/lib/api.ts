@@ -1818,6 +1818,14 @@ export type ForwardPilotReport = {
   reconciliation_ok?: boolean;
   verified_cycles?: number;
   verification_failures?: number;
+  verification_sample?: {
+    checked?: number;
+    passed?: number;
+    failed?: number;
+    limit?: number;
+    history_cycles?: number;
+    note?: string;
+  };
   equity_usd?: string | null;
   cash_usd?: string;
   hypothetical_fills?: number;
@@ -1887,6 +1895,7 @@ export type QualityReport = {
     sessions_missed?: number;
     sample?: string;
     readiness?: string;
+    state?: string;
     reasons?: string[];
   };
   verifier?: {

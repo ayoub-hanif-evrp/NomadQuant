@@ -26,7 +26,7 @@ Set either both Alpaca variables or neither. One without the other is a configur
 
 The live trading host `https://api.alpaca.markets` is rejected, as is any URL whose scheme, host, port, path, query, or credentials differ from the paper URL. The string `live` anywhere in the URL is rejected. The Alpaca client is constructed with `paper=True`.
 
-There is no live credential field, no live adapter, and no code path that submits, cancels, or replaces an order.
+There is no live credential field, no live adapter, and no code path that submits, cancels, or replaces an order. `1.0.0-rc.1` keeps those locks. Pilot preview and confirmation are local hash checks. They do not call Alpaca.
 
 ## Disconnected mode
 

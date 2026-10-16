@@ -176,3 +176,42 @@ These are observed results. They are not a completed forward fill and not a conf
 | Autonomous execution | **Forbidden** |
 
 **No-go for Alpaca paper orders until the remaining rows are closed under a new authorized prompt.**
+
+## Prompt 18 workstation evidence (2026-10-16, about 17:51 UTC)
+
+| Check | Result |
+|-------|--------|
+| Version | `1.0.0-rc.1` candidate for the local research and shadow scope only. |
+| SIP | SPY and QQQ each have 2209 sessions. Latest stored and latest safe session `2026-10-15`. Missing 0 in the warm-up window `2025-09-09` through `2026-10-15`. `2026-10-16` open was not stored. Last successful historical store `2026-10-16T11:00:59Z`. |
+| Entitlement | Historical SIP bars are stored. This run did not query account buying power or the asset fractionable flag. |
+| Ledger | Cash 100, reserved 0, holdings empty, realized 0, version 1. Reconcile `ok=true`. |
+| Cycles | 2 prospective dry-run `no_trade` rows. 0 fills. 0 pending intents. 0 unresolved reservations. |
+| Verification | Recent sample 2 of 2 passed. That sample is not a full-history execution proof, and `no_trade` fill checks stay `NOT_APPLICABLE`. |
+| Pilot | `WAITING_FOR_SESSION`. Clock unset. Worker script present. `pilot_running` false. Not ready to start a fill today because no month-start rebalance is due and the next open is missing. |
+| Daily inspect | `COMPLETED`, worker `WAITING_FOR_SESSION`. Cash stayed 100, version stayed 1. |
+| Daily dry-run | `COMPLETED`, worker `COMPLETED_NO_TRADE`. Reused the existing cycle. Cash stayed 100, version stayed 1. |
+| Shadow-apply | Not run. |
+| Alpaca orders | None. |
+| Ollama | Offline claim benchmark covers five fixed cases and calls no model. A new two-model live review was not run in this pass. |
+
+## Pilot preview and confirmation
+
+`nomadquant-shadow pilot preview` prints capital, holdings, snapshot version, policy hash, data readiness, pending intents, the next signal context, the delayed-hypothetical model, the local files a later apply would touch, the recovery command, and that a committed fill cannot be undone. It sets `mutates_forward_ledger` false.
+
+`nomadquant-shadow pilot confirm --approval HASH` accepts the token only when it equals the hash of the current preview. A mismatch, including any relevant state change, returns `REJECTED` and exit 1. Acceptance prints the worker command and still does not apply.
+
+## Pilot state transitions
+
+| State | When it is used |
+| --- | --- |
+| `NOT_CONFIGURED` | The forward ledger file is absent. |
+| `RECOVERY_REQUIRED` | An interrupted reservation is still active. |
+| `BLOCKED` | Preflight is blocked, the guard refuses application, or reconcile failed. |
+| `WAITING_FOR_DATA` | Required market coverage is incomplete. |
+| `FAILED` | A recorded daily operation failed. |
+| `PENDING_OBSERVATION` | A pending intent exists but its fill bar is not stored, or a rebalance is scheduled without the next open. |
+| `OBSERVING` | The pilot clock has been set. This does not mean a worker process is alive. |
+| `READY_TO_START` | A month-start rebalance is scheduled, the next observation is stored, and the clock has not started. |
+| `WAITING_FOR_SESSION` | Data is complete and no rebalance is scheduled. |
+
+A pending row is not executable by itself. `pilot_running` is true only while `data/shadow_worker.lock` is younger than two hours.

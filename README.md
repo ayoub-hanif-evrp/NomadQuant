@@ -1,6 +1,6 @@
 # NomadQuant
 
-NomadQuant is a locally hosted, paper-only foundation for algorithmic trading research. It provides configuration locks, a read-only Alpaca paper adapter, a local daily-bar store, an offline Quant Research Lab with verification, and a premium monitoring/research terminal dashboard.
+NomadQuant `1.0.0-rc.1` is a locally hosted, paper-only research and supervised shadow system. It provides configuration locks, a read-only Alpaca paper adapter, a local daily-bar store, an offline Quant Research Lab with verification, and a monitoring dashboard.
 
 It does not place orders. Offline backtests are labeled as simulated research, not broker trading. Nothing in this repository is evidence of profit.
 
@@ -163,12 +163,23 @@ uv run --no-sync python -c "from nomadquant.agents.cli import main; main(['bench
 
 After `uv sync` (stop the API first if Windows locks the scripts), the same commands work as `uv run nomadquant-agent ...`. Inspect results at `http://127.0.0.1:3000/agents`. Reviews are retrospective and never place orders.
 
-## Shadow portfolio (daily cycle)
+## Supervised daily workflow
+
+One workflow. Installation and tests do not apply shadow fills.
+
+| Step | Command | What it may change |
+| --- | --- | --- |
+| Inspect | `uv run nomadquant-shadow daily --mode inspect` | No download, no cash or holdings change, no broker order. Writes a daily log. |
+| Sync + inspect | `uv run nomadquant-shadow daily --mode inspect --sync` | Read-only historical bars into the local market database. No shadow fill. |
+| Dry-run | `uv run nomadquant-shadow daily --mode dry-run` | Signal and risk preview. No cash, holdings, or reservation change. |
+| Supervised shadow-apply | Preview first, then `uv run nomadquant-shadow worker --mode shadow-apply` | Internal ledger only, after you accept the preview hash. No broker order. |
 
 ```powershell
-uv run --no-sync python -c "from nomadquant.shadow.cli import main; main(['cycle','--mode','dry-run'])"
-uv run --no-sync python -c "from nomadquant.shadow.cli import main; main(['status'])"
+uv run nomadquant-shadow pilot preview
+uv run nomadquant-shadow pilot confirm --approval PREVIEW_HASH
 ```
+
+`confirm` checks that the token still matches the preview. It does not apply a fill. A committed simulated fill has no automatic undo. `recover` only releases an interrupted reservation.
 
 Dashboard: `http://127.0.0.1:3000/shadow`. Uses the internal $100 ledger only. No Alpaca orders.
 
@@ -183,7 +194,7 @@ Dashboard: `http://127.0.0.1:3000/strategies`. Verdicts never submit broker orde
 
 ## Suggested next milestone
 
-Explicitly reviewed Alpaca paper-execution gateway with risk enforcement still default-disabled. Do not grant broker order tools to agents.
+Keep the release candidate on the safe daily checks. An Alpaca paper-order gateway stays a separate decision and stays default-disabled. Do not grant broker order tools to agents. See [docs/RELEASE_BLOCKERS.md](docs/RELEASE_BLOCKERS.md).
 
 ## License
 
