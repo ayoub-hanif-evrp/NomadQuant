@@ -1,6 +1,6 @@
 [project]
 name = "nomadquant"
-version = "1.0.0-rc.1"
+version = "1.0.0"
 description = "Locally hosted, paper-only research foundation for algorithmic trading."
 readme = "README.md"
 license = "LicenseRef-Proprietary"
@@ -21,6 +21,7 @@ nomadquant-data = "nomadquant.marketdata.cli:main"
 nomadquant-research = "nomadquant.research.cli:main"
 nomadquant-risk = "nomadquant.risk.cli:main"
 nomadquant-shadow = "nomadquant.shadow.cli:main"
+nomadquant-ops = "nomadquant.ops.cli:main"
 
 [dependency-groups]
 dev = [

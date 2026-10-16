@@ -69,7 +69,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app = FastAPI(
         title="NomadQuant",
-        version="1.0.0-rc.1",
+        version="1.0.0",
         lifespan=lifespan,
         docs_url="/docs",
         redoc_url=None,

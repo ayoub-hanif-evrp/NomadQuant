@@ -264,7 +264,7 @@ uv run nomadquant-agent inspect --run-id <agent-run-id>`}
                       <Badge tone="info">{detail.data.verdict}</Badge>
                     ) : null}
                     <Link
-                      href="/research"
+                      href={`/research?run=${detail.data.research_run_id}`}
                       className="rounded-full border border-[rgba(103,240,224,0.3)] px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--cyan)]"
                     >
                       Research #{detail.data.research_run_id}

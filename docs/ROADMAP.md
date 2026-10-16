@@ -68,6 +68,10 @@ Deterministic `RiskEngine` against the internal $100 ledger only. Verdicts are A
 
 Persistent $100 shadow ledger, `nomadquant-shadow cycle`, next-session-open simulated fills, and Shadow Portfolio dashboard. Still no Alpaca order path. Dry-run execution gateway contracts exist for a later milestone.
 
+## v1.0 scope freeze
+
+v1.0 is the local research and supervised shadow workstation. Autonomous brokerage trading, strategy optimization, and new models are out of scope. See [V1_LIMITATIONS.md](V1_LIMITATIONS.md).
+
 ## Release candidate 1.0.0-rc.1
 
 The local research and shadow scope is frozen. Verifier statuses have distinct exit codes. Quote retrieval time is checked on its own. Pilot readiness names an operational state and does not treat a start timestamp as a running worker. Full-history counts come from SQLite. A pilot preview hash must still match before any later shadow-apply, and preview itself does not mutate the ledger. Remaining limits are listed in [RELEASE_BLOCKERS.md](RELEASE_BLOCKERS.md).

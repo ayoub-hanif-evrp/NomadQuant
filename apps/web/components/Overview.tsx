@@ -21,7 +21,7 @@ import {
   Skeleton,
   VerificationBadge,
 } from "@/components/ui";
-import { formatUsd, loadForwardPilot, loadShadowOps } from "@/lib/api";
+import { formatUsd, loadAgentStatus, loadForwardPilot, loadShadowOps } from "@/lib/api";
 import { connectionState } from "@/lib/connection";
 import {
   useEventHistogramQuery,
@@ -48,6 +48,11 @@ export function Overview() {
     queryKey: ["shadow-ops-summary"],
     queryFn: loadShadowOps,
     refetchInterval: 30_000,
+  });
+  const agents = useQuery({
+    queryKey: ["agent-status"],
+    queryFn: loadAgentStatus,
+    refetchInterval: 60_000,
   });
   const apiState = connectionState({
     isLoading: health.isLoading,
@@ -146,10 +151,26 @@ export function Overview() {
               </dd>
             </div>
             <div>
+              <dt className="text-[var(--muted)]">Shadow equity</dt>
+              <dd className="font-mono">
+                {pilot.data?.equity_usd ?? "—"} cash {pilot.data?.cash_usd ?? "—"}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-[var(--muted)]">Next expected</dt>
+              <dd>{pilot.data?.supervision?.note ?? "Open Shadow Operations for the current state."}</dd>
+            </div>
+            <div>
               <dt className="text-[var(--muted)]">Next step</dt>
-              <dd>
+              <dd className="flex flex-wrap gap-3">
                 <Link href="/shadow" className="text-[var(--cyan)]">
-                  Open Shadow Operations
+                  Shadow Operations
+                </Link>
+                <Link href="/market-data" className="text-[var(--cyan)]">
+                  Market Explorer
+                </Link>
+                <Link href="/agents" className="text-[var(--cyan)]">
+                  Agents
                 </Link>
               </dd>
             </div>
@@ -191,6 +212,17 @@ export function Overview() {
           label="Last activity"
           ok={Boolean(health.data?.last_event_at)}
           value={health.data?.last_event_at?.slice(0, 19) ?? "none"}
+        />
+        <StatusChip
+          label="Ollama"
+          ok={Boolean(agents.data?.ollama.available)}
+          value={
+            agents.isLoading
+              ? "…"
+              : agents.data?.ollama.available
+                ? `${agents.data.ollama.models.length} models`
+                : "disconnected"
+          }
         />
         <StatusChip label="Paper lock" ok value="orders off" />
         <StatusChip
@@ -296,15 +328,17 @@ export function Overview() {
           {researchRuns.data?.items.length ? (
             <ul className="space-y-2">
               {researchRuns.data.items.slice(0, 5).map((run) => (
-                <li
-                  key={run.id}
-                  className="rounded-xl border border-[var(--line)] px-3 py-2 text-sm"
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="font-mono text-xs text-[var(--cyan)]">#{run.id}</span>
-                    <Badge tone={run.status === "succeeded" ? "ok" : "err"}>{run.status}</Badge>
-                  </div>
-                  <p className="mt-1 truncate text-[var(--muted)]">{run.experiment_id}</p>
+                <li key={run.id}>
+                  <Link
+                    href={`/research?run=${run.id}`}
+                    className="block rounded-xl border border-[var(--line)] px-3 py-2 text-sm hover:bg-[rgba(255,255,255,0.03)]"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-mono text-xs text-[var(--cyan)]">#{run.id}</span>
+                      <Badge tone={run.status === "succeeded" ? "ok" : "err"}>{run.status}</Badge>
+                    </div>
+                    <p className="mt-1 truncate text-[var(--muted)]">{run.experiment_id}</p>
+                  </Link>
                 </li>
               ))}
             </ul>

@@ -1,6 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import { useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
 import {
   Badge,
@@ -50,6 +51,9 @@ export function ResearchLab() {
   const experiments = useResearchExperimentsList();
   const runs = useResearchRunsList();
   const [selectedRunId, setSelectedRunId] = useState<number | null>(null);
+  const requestedRun = Number(useSearchParams().get("run"));
+  const requestedRunId =
+    Number.isInteger(requestedRun) && requestedRun > 0 ? requestedRun : null;
   const [windowFilter, setWindowFilter] = useState<"all" | "train" | "validation" | "test">("test");
   const [verifyOpen, setVerifyOpen] = useState(false);
   const [decision, setDecision] = useState<ResearchSimulatedDecision | null>(null);
@@ -57,6 +61,7 @@ export function ResearchLab() {
 
   const effectiveRunId =
     selectedRunId ??
+    requestedRunId ??
     runs.data?.items.find((run) => run.status === "succeeded")?.id ??
     runs.data?.items[0]?.id ??
     null;

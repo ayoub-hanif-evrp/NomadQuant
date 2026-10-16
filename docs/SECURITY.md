@@ -43,7 +43,7 @@ Rejected credentials return `failure_kind=authentication`. A connection failure 
 
 ## Data on disk
 
-`data/nomadquant.db` stores startup events. It must not be used for secrets. The `data/` directory contents are gitignored except `data/.gitkeep`.
+`data/nomadquant.db` stores startup events. It must not be used for secrets. The `data/` directory contents are gitignored except `data/.gitkeep`. Local backups from `scripts/backup-local.ps1` exclude `.env` and are not uploaded.
 
 ## Fail closed
 

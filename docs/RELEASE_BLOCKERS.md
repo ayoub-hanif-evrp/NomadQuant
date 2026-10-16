@@ -1,6 +1,6 @@
 # Release blockers
 
-Version under review: `1.0.0-rc.1`. Scope is the local research and supervised shadow system. This is not authorization to submit broker orders.
+v1.0 ships with the limits in [V1_LIMITATIONS.md](V1_LIMITATIONS.md). The items below are accepted product boundaries, not open order-path defects. This is not authorization to submit broker orders.
 
 Ranked remaining issues, observed on this workstation on 2026-10-16:
 

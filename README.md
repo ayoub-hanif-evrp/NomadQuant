@@ -1,6 +1,6 @@
 # NomadQuant
 
-NomadQuant `1.0.0-rc.1` is a locally hosted, paper-only research and supervised shadow system. It provides configuration locks, a read-only Alpaca paper adapter, a local daily-bar store, an offline Quant Research Lab with verification, and a monitoring dashboard.
+NomadQuant 1.0.0 is a locally hosted, paper-only research and supervised shadow workstation. It provides configuration locks, a read-only Alpaca paper adapter, a local daily-bar store, an offline Quant Research Lab with verification, and a monitoring dashboard.
 
 It does not place orders. Offline backtests are labeled as simulated research, not broker trading. Nothing in this repository is evidence of profit.
 
@@ -29,6 +29,32 @@ Copy-Item .env.example .env
 ```
 
 Edit `.env` and set `ALPACA_API_KEY` and `ALPACA_API_SECRET` from the Alpaca dashboard's paper-trading API keys. Leave both blank to run in disconnected mode. Do not put live keys in this file. Do not commit `.env`.
+
+## Install, start, stop
+
+From the repository root in PowerShell:
+
+```powershell
+.\scripts\install-local.ps1
+.\scripts\start-nomadquant.ps1
+```
+
+Open `http://127.0.0.1:3000`. Stop only the processes that script started:
+
+```powershell
+.\scripts\stop-nomadquant.ps1
+.\scripts\doctor.ps1
+.\scripts\verify-all.ps1
+```
+
+Backups stay on this PC. They do not include `.env`.
+
+```powershell
+.\scripts\backup-local.ps1
+.\scripts\restore-local.ps1 -Source data\backups\STAMP -Confirm CONFIRM_TOKEN
+```
+
+The app starts with blank Alpaca keys and with Ollama stopped. Those states are disconnected, not crashes. Installation does not download models, register Task Scheduler jobs, or apply a shadow fill.
 
 ## Start
 
@@ -194,7 +220,7 @@ Dashboard: `http://127.0.0.1:3000/strategies`. Verdicts never submit broker orde
 
 ## Suggested next milestone
 
-Keep the release candidate on the safe daily checks. An Alpaca paper-order gateway stays a separate decision and stays default-disabled. Do not grant broker order tools to agents. See [docs/RELEASE_BLOCKERS.md](docs/RELEASE_BLOCKERS.md).
+v1.0 is the local research and supervised shadow product. Read [docs/V1_OPERATIONS_MANUAL.md](docs/V1_OPERATIONS_MANUAL.md) and [docs/V1_LIMITATIONS.md](docs/V1_LIMITATIONS.md). An Alpaca paper-order gateway is not part of this release.
 
 ## License
 
