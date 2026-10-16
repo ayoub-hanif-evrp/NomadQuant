@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import ROUND_DOWN, Decimal
 
+from nomadquant.finance.execution import execution_price
 from nomadquant.research.models import CostModel
 from nomadquant.risk.policy import RiskPolicy
 
@@ -104,7 +105,7 @@ def size_policy_aware(
     headroom_exposure = max(_ZERO, max_exposure_usd - current_value)
 
     if delta > 0:
-        fill = price * (1 + (costs.spread_bps + costs.slippage_bps) / Decimal(20000))
+        fill = execution_price(price, costs, side="buy")
         budget_cash = max(_ZERO, available - costs.commission_usd - policy.min_cash_reserve_usd)
         spend_cap = min(delta, max_tx, budget_cash, headroom_exposure)
         if spend_cap < costs.min_notional_usd:
@@ -160,7 +161,7 @@ def size_policy_aware(
         )
 
     # Sell
-    fill = price * (1 - (costs.spread_bps + costs.slippage_bps) / Decimal(20000))
+    fill = execution_price(price, costs, side="sell")
     sell_value = -delta
     sell_cap = min(sell_value, max_tx, current_value)
     if sell_cap < costs.min_notional_usd or qty <= 0:

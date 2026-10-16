@@ -14,9 +14,16 @@ def momentum_return(
     lookback: int,
     skip: int,
 ) -> Decimal | None:
-    """Price return from ``lookback`` sessions ago to ``skip`` sessions ago.
+    """Registered ``spy-tsmom-v1`` return. Do not change this formula in place.
 
-    Uses only closes with session date strictly on or before ``as_of``.
+    momentum = close[t - skip] / close[t - skip - lookback] - 1
+
+    For lookback 252 and skip 21 that is 252 return intervals ending 21
+    sessions before the decision. The guard requires lookback + skip + 1
+    sessions (274). Fewer sessions returns None.
+
+    A different published reading uses close[t - skip] / close[t - lookback] - 1,
+    which is only lookback - skip intervals. That is not this experiment.
     """
     available = [session for session in sessions if session <= as_of]
     needed = lookback + skip
@@ -36,6 +43,11 @@ def momentum_return(
 
 
 def target_from_momentum(value: Decimal | None) -> Decimal:
+    """Map a computed momentum number to a long-only weight.
+
+    Positive momentum targets 1. Zero and negative momentum target cash.
+    ``None`` is unavailable data, not a cash signal.
+    """
     if value is None:
-        return _ZERO
+        raise ValueError("INSUFFICIENT_DATA: momentum is unavailable and is not a cash target")
     return _ONE if value > 0 else _ZERO

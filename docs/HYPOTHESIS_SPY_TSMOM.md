@@ -24,6 +24,8 @@ The original paper studied a broad futures universe. This experiment tests a sin
 - Lookback: 252 sessions
 - Skip: 21 sessions (recent month omitted from the return)
 - Momentum = close[t − skip] / close[t − skip − lookback] − 1
+- That is 252 return intervals, not the shorter close[t − 21] / close[t − 252] − 1 reading
+- Warm-up is lookback + skip + 1 sessions (274). Fewer sessions is INSUFFICIENT_DATA, not a cash signal
 - Target weight = 1 if momentum > 0 else 0 (cash)
 - Rebalance: first NYSE session of each calendar month
 - Information cutoff: modeled availability of session t’s close (16:30 America/New_York)
@@ -32,6 +34,8 @@ The original paper studied a broad futures universe. This experiment tests a sin
 ## Costs
 
 Commission $0, spread 1 bps, slippage 1 bps, minimum notional $1, fractional shares to 6 decimals, initial capital $100.
+
+Execution convention `half_spread_plus_full_slippage_v1`: the buy price is mid + half the spread + the full slippage basis point. Commission, when nonzero, is a separate cash item. Spread and slippage are not deducted a second time. The older shadow formula `(spread_bps + slippage_bps) / 20000` is not used for new fills and is not written back into stored runs.
 
 ## Windows
 

@@ -15,6 +15,8 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from nomadquant.finance.accounting import Book, apply_fill
+from nomadquant.finance.execution import CONVENTION_ID, execution_price
 from nomadquant.marketdata.availability import modeled_available_at
 from nomadquant.marketdata.calendar import sessions_between
 from nomadquant.marketdata.store import MarketStore
@@ -855,52 +857,37 @@ def _simulate_fill(
     open_price: Decimal,
     costs: CostModel,
 ) -> tuple[dict[str, Any], dict[str, str]]:
-    half = open_price * (costs.spread_bps + costs.slippage_bps) / Decimal(20000)
-    fill = open_price + half if side == "buy" else open_price - half
-    commission = costs.commission_usd
-    notional = qty * fill
-    cost_attr = qty * half + commission
-    cash = before["cash_usd"]
-    holdings = dict(before["holdings"])
-    basis = dict(before["cost_basis"])
-    realized = before["realized_pnl_usd"]
-    if side == "buy":
-        cash -= notional + commission
-        prev = holdings.get(SYMBOL, _ZERO)
-        prev_basis = basis.get(SYMBOL, _ZERO)
-        new_qty = prev + qty
-        basis[SYMBOL] = ((prev_basis * prev) + notional) / new_qty if new_qty > 0 else _ZERO
-        holdings[SYMBOL] = new_qty
-    else:
-        cash += notional - commission
-        prev = holdings.get(SYMBOL, _ZERO)
-        prev_basis = basis.get(SYMBOL, _ZERO)
-        realized += (fill - prev_basis) * qty - commission
-        holdings[SYMBOL] = prev - qty
-        if holdings[SYMBOL] <= 0:
-            holdings.pop(SYMBOL, None)
-            basis.pop(SYMBOL, None)
-    if cash < 0:
-        raise ValueError("Fill would make cash negative.")
-    equity = cash + holdings.get(SYMBOL, _ZERO) * open_price
+    book = Book(
+        cash=before["cash_usd"],
+        holdings={str(k): Decimal(str(v)) for k, v in dict(before["holdings"]).items()},
+        cost_basis={str(k): Decimal(str(v)) for k, v in dict(before["cost_basis"]).items()},
+        realized_pnl=before["realized_pnl_usd"],
+        attributed_costs=before["total_costs_usd"],
+    )
+    updated, fill = apply_fill(
+        book, symbol=SYMBOL, side=side, quantity=qty, mid=open_price, costs=costs
+    )
+    equity = updated.cash + updated.holdings.get(SYMBOL, _ZERO) * open_price
     after = {
-        "cash_usd": cash,
+        "cash_usd": updated.cash,
         "reserved_cash_usd": _ZERO,
-        "holdings": holdings,
-        "cost_basis": basis,
-        "realized_pnl_usd": realized,
-        "total_costs_usd": before["total_costs_usd"] + cost_attr,
+        "holdings": updated.holdings,
+        "cost_basis": updated.cost_basis,
+        "realized_pnl_usd": updated.realized_pnl,
+        "total_costs_usd": updated.attributed_costs,
         "peak_equity_usd": max(before["peak_equity_usd"], equity),
     }
     meta = {
-        "fill_price": str(fill),
+        "fill_price": str(fill.fill_price),
         "open_price": str(open_price),
         "quantity": str(qty),
         "side": side,
-        "costs_usd": str(cost_attr),
+        "costs_usd": str(updated.attributed_costs - before["total_costs_usd"]),
+        "execution_convention": CONVENTION_ID,
         "note": (
             "Simulated delayed next-session open fill; not an Alpaca order. "
-            "Not a claim of real-time execution at the open."
+            "Not a claim of real-time execution at the open. "
+            "Spread and slippage are inside the fill price and are not charged again."
         ),
     }
     return after, meta
@@ -923,12 +910,12 @@ def _delta_quantity(
     if abs(delta) < costs.min_notional_usd:
         return _ZERO, None
     if delta > 0:
-        fill = price * (1 + (costs.spread_bps + costs.slippage_bps) / Decimal(20000))
+        fill = execution_price(price, costs, side="buy")
         budget = cash - costs.commission_usd
         spend = min(delta, budget)
         q = (spend / fill).quantize(Decimal(10) ** -costs.quantity_precision, rounding=ROUND_DOWN)
         return (q, "buy") if q > 0 else (_ZERO, None)
-    fill = price * (1 - (costs.spread_bps + costs.slippage_bps) / Decimal(20000))
+    fill = execution_price(price, costs, side="sell")
     sell_value = -delta
     q = min(
         qty,
@@ -973,6 +960,8 @@ def _finish(
         f"{label}:{FEED}:{SYMBOL}:"
         f"{(signal_session or date.min).isoformat()}:{STRATEGY_ID}:{status}:{mode}"
     )
+    evidence = dict(evidence)
+    evidence.setdefault("execution_convention", CONVENTION_ID)
     evidence_hash = _hash(evidence)
     created = datetime.now(UTC).isoformat()
     ledger_after = after or before

@@ -186,17 +186,45 @@ class DailyBacktestEngine:
                     buy_hold_done = True
             elif mode == "momentum" and _is_month_start(session, sessions):
                 value = momentum_return(closes, sessions, session, lookback, skip)
-                target = target_from_momentum(value)
-                pending_weight = target
-                pending_reason = "tsmom_rebalance"
-                pending_decision_date = session
-                pending_features = {
-                    "lookback_sessions": str(lookback),
-                    "skip_sessions": str(skip),
-                    "momentum_return": "null" if value is None else str(value),
-                    "close": str(bar.close),
-                    "information_cutoff": modeled_available_at(session).isoformat(),
-                }
+                if value is None:
+                    decisions.append(
+                        SimulatedDecision(
+                            session_date=session,
+                            decision_timestamp=modeled_available_at(session).isoformat(),
+                            data_cutoff=modeled_available_at(session).isoformat(),
+                            symbol=config.symbols[0],
+                            signal="insufficient_data",
+                            feature_inputs={
+                                "momentum_status": "INSUFFICIENT_DATA",
+                                "lookback_sessions": str(lookback),
+                                "skip_sessions": str(skip),
+                            },
+                            proposed_target_weight=_ZERO,
+                            action="no_trade",
+                            rationale=(
+                                "Required momentum observations are missing. "
+                                "This is not a cash signal and no order is simulated."
+                            ),
+                            evidence_hash=_evidence_hash(
+                                session, {"momentum_status": "INSUFFICIENT_DATA"}, _ZERO
+                            ),
+                            portfolio_before=portfolio.snapshot(prices),
+                            portfolio_after=portfolio.snapshot(prices),
+                            warnings=["INSUFFICIENT_DATA"],
+                        )
+                    )
+                else:
+                    target = target_from_momentum(value)
+                    pending_weight = target
+                    pending_reason = "tsmom_rebalance"
+                    pending_decision_date = session
+                    pending_features = {
+                        "lookback_sessions": str(lookback),
+                        "skip_sessions": str(skip),
+                        "momentum_return": str(value),
+                        "close": str(bar.close),
+                        "information_cutoff": modeled_available_at(session).isoformat(),
+                    }
 
             close_prices = {config.symbols[0]: bar.close}
             equity = portfolio.market_value(close_prices)
