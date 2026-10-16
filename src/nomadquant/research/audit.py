@@ -203,6 +203,7 @@ def _bad_prices(
     end_index = len(sessions) - 1 - skip
     start_index = end_index - lookback
     target = sessions[start_index] if 0 <= start_index < len(sessions) else sessions[0]
+
     def poisoned(value: Decimal) -> Decimal | None:
         series = dict(closes)
         series[target] = value

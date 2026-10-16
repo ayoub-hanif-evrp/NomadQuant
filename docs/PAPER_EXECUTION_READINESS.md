@@ -150,6 +150,18 @@ These are observed results. They are not a completed forward fill and not a conf
 | Alpaca orders | None. No data-sync and no order client were invoked. |
 | Ollama | One review of research run 2 with installed `qwen3.5:9b`. Agent run 5 succeeded in 68s (11:49:10Z to 11:50:18Z). Researcher, skeptic, and reviewer stages completed. Deterministic verification overrode the model: 5 numerical claims did not match stored test-window metrics. Verdict `verification_failed`. Not a trading decision and not a broker order. No new model was downloaded. Memory was not sampled. |
 
+## Prompt 16 local evidence (2026-10-16)
+
+| Check | Result |
+|-------|--------|
+| Fill convention | `half_spread_plus_full_slippage_v1`. At a $100 mid, 1 bp spread and 1 bp slippage, buy is $100.015 and sell is $99.985. The old shadow formula produced $100.01 and is not used for new fills. Stored cycles were not rewritten. |
+| Ledger | Cash 100, reserved 0, holdings empty, version 1. Reconcile `ok=true`. |
+| SIP | SPY and QQQ each have 2209 sessions through 2026-10-15. Missing count 0. |
+| Cycle 2 | Independent verifier `full_cycle=PASS`. Fill assumption is `NOT_APPLICABLE` because the row is a dry-run `no_trade`. |
+| Research audit | Run 2, 5 of 93 decisions. Signal, prefix, cost, and unsafe-price checks passed. Status `NOT_EVALUABLE` because split and dividend files are absent. Not comprehensive. |
+| Worker dry-run | `ece6425b9ab642959bfc472bc8f5b175`, `COMPLETED_NO_TRADE`. Cash stayed 100. |
+| Shadow-apply / Alpaca orders / paper reset | Not run. |
+
 ## Go / no-go checklist
 
 | Item | Go? |

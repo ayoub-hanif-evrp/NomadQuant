@@ -1853,6 +1853,34 @@ export type CycleVerification = {
   note: string;
 };
 
+export type QualityReport = {
+  ci?: { result?: string; commit?: string | null; note?: string };
+  execution_convention?: string;
+  cost_scenarios?: { optimistic_buy?: string; base_buy?: string; stress_buy?: string; note?: string };
+  data_completeness?: { status?: string; missing_count?: number };
+  accounting_reconciliation_ok?: boolean;
+  pilot?: {
+    status?: string;
+    prospective_decisions?: number;
+    hypothetical_fills?: number;
+    sessions_missed?: number;
+    sample?: string;
+  };
+  verifier?: {
+    cycles?: Array<{ cycle_id?: number; status?: string; full_cycle?: string; fill?: string }>;
+    note?: string;
+  };
+  unresolved?: string[];
+};
+
+export async function loadQualityReport(): Promise<QualityReport> {
+  const value = await readJson("/api/shadow/quality");
+  if (!isRecord(value) || !Array.isArray(value.unresolved)) {
+    throw new Error("Unexpected quality report");
+  }
+  return value as QualityReport;
+}
+
 export async function loadForwardPilot(): Promise<ForwardPilotReport> {
   const value = await readJson("/api/shadow/pilot");
   if (!isRecord(value)) {

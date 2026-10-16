@@ -351,6 +351,13 @@ def shadow_equity(
     return {"items": store.equity_history(limit=limit)}
 
 
+@router.get("/quality")
+def shadow_quality(request: Request) -> dict[str, Any]:
+    from nomadquant.quality import quality_report
+
+    return quality_report(request.app.state.settings)
+
+
 @router.get("/pilot")
 def shadow_pilot(request: Request) -> dict[str, Any]:
     from nomadquant.shadow.pilot import forward_pilot_report

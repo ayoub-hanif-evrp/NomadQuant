@@ -46,6 +46,14 @@ try {
       await page.screenshot({ path: file, fullPage: true });
       console.log("wrote", file);
       if (target.name === "shadow-operations") {
+        const quality = page.getByRole("heading", { name: "Research Quality & Execution Integrity" });
+        if (await quality.count()) {
+          await quality.scrollIntoViewIfNeeded();
+          await page.waitForTimeout(400);
+          const qualityFile = path.join(outDir, `research-quality-${viewport.name}.png`);
+          await page.screenshot({ path: qualityFile, fullPage: false });
+          console.log("wrote", qualityFile);
+        }
         const heading = page.getByRole("heading", { name: "Forward Pilot" });
         if (await heading.count()) {
           await heading.scrollIntoViewIfNeeded();

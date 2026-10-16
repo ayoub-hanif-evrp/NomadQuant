@@ -27,6 +27,7 @@ import {
   toneFor,
 } from "@/components/ui";
 import { ForwardPilot } from "@/components/ForwardPilot";
+import { ResearchQuality } from "@/components/ResearchQuality";
 import type { ShadowCycle, ShadowValuation } from "@/lib/api";
 import {
   loadShadowCycle,
@@ -334,6 +335,7 @@ export function ShadowPortfolio() {
       </Panel>
 
       <ForwardPilot />
+      <ResearchQuality />
 
       {status.data ? (
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
