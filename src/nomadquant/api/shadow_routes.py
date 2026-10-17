@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
+from pydantic import BaseModel, Field
 
 from nomadquant.shadow.marks import value_forward_portfolio
 from nomadquant.shadow.preflight import run_preflight, run_reconcile
@@ -368,6 +369,32 @@ def shadow_pilot(request: Request) -> dict[str, Any]:
     from nomadquant.shadow.pilot import forward_pilot_report
 
     return forward_pilot_report(request.app.state.settings)
+
+
+@router.get("/pilot/preview")
+def shadow_pilot_preview(request: Request) -> dict[str, Any]:
+    from nomadquant.shadow.pilot import pilot_start_preview
+
+    return pilot_start_preview(request.app.state.settings)
+
+
+class PilotConfirmBody(BaseModel):
+    preview_hash: str = Field(min_length=16, max_length=128)
+    confirm: str
+
+
+@router.post("/pilot/confirm")
+def shadow_pilot_confirm(body: PilotConfirmBody, request: Request) -> dict[str, Any]:
+    from nomadquant.api.csrf import require_local_mutation
+    from nomadquant.shadow.pilot import confirm_pilot_start
+
+    require_local_mutation(request)
+    if body.confirm not in {"ARM_FORWARD_PILOT", "CONFIRM_SHADOW_APPLY"}:
+        raise HTTPException(status_code=409, detail="Confirmation phrase does not match.")
+    result = confirm_pilot_start(request.app.state.settings, body.preview_hash)
+    if result.get("status") == "REJECTED":
+        raise HTTPException(status_code=409, detail=str(result.get("reason") or "rejected"))
+    return result
 
 
 @router.get("/cycles/{cycle_id}/verification")

@@ -254,6 +254,8 @@ def test_no_order_submission_endpoint(client: TestClient) -> None:
         "/api/shadow/cycles/{cycle_id}",
         "/api/shadow/cycles/{cycle_id}/verification",
         "/api/shadow/pilot",
+        "/api/shadow/pilot/preview",
+        "/api/shadow/pilot/confirm",
         "/api/shadow/quality",
         "/api/shadow/equity",
         "/api/shadow/preflight",

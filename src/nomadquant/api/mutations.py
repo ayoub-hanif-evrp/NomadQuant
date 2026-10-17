@@ -10,6 +10,7 @@ POST_ROUTES = frozenset(
         "/api/news/analyze",
         "/api/market-data/sync",
         "/api/agents/reviews",
+        "/api/shadow/pilot/confirm",
     }
 )
 

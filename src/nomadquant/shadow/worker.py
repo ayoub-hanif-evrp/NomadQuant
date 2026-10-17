@@ -25,6 +25,7 @@ WorkerStatus = Literal[
     "RISK_BLOCKED",
     "COMPLETED_NO_TRADE",
     "COMPLETED_FILL",
+    "AWAITING_USER_APPROVAL",
     "RECOVERY_REQUIRED",
     "FAILED",
 ]
@@ -147,6 +148,10 @@ def run_daily_worker(
             label=LABEL_FORWARD,
         )
         outcome["cycle"] = cycle_detail
+        if mode == "shadow-apply" and str(cycle_detail.get("status") or "") == "awaiting_approval":
+            from nomadquant.approvals.service import issue_proposal_from_cycle
+
+            outcome["approval_request"] = issue_proposal_from_cycle(settings, cycle_detail)
         outcome["worker_status"] = _status_from_cycle(
             cycle_detail,
             preflight_status=preflight_status,
@@ -271,6 +276,8 @@ def _status_from_cycle(
     cycle_status = str(detail.get("status", "")).lower()
     if cycle_status in {"error", "blocked"}:
         return "FAILED"
+    if cycle_status == "awaiting_approval":
+        return "AWAITING_USER_APPROVAL"
     if cycle_status in {"pending_data", "pending_observation"} or pending_count > 0:
         return "PENDING_OBSERVATION"
     if cycle_status == "filled":

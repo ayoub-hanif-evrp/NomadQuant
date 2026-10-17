@@ -82,7 +82,20 @@ def _fetch(settings: Settings, opener: Any | None) -> dict[str, Any]:
     present = {symbol: quote for symbol, quote in quotes.items() if quote is not None}
     if not present:
         return {**base, "status": "unavailable", "detail": "No snapshot returned.", "quotes": {}}
-    return {**base, "status": "ok", "detail": "", "quotes": present}
+    from nomadquant.overview import market_clock
+
+    clock = market_clock(datetime.now(UTC))
+    annotated = {
+        symbol: _annotate(quote, clock) for symbol, quote in present.items() if quote is not None
+    }
+    return {
+        **base,
+        "status": "ok",
+        "detail": "",
+        "market_state": clock["state"],
+        "market_label": clock["label"],
+        "quotes": annotated,
+    }
 
 
 def _quote(raw: object) -> dict[str, Any] | None:
@@ -109,6 +122,24 @@ def _quote(raw: object) -> dict[str, Any] | None:
         "change_pct": (
             None if change is None or not prev_close else round(change / prev_close * 100, 3)
         ),
+    }
+
+
+def _annotate(quote: dict[str, Any], clock: dict[str, Any]) -> dict[str, Any]:
+    trade_time = str(quote.get("trade_time") or "")
+    try:
+        traded = datetime.fromisoformat(trade_time.replace("Z", "+00:00"))
+        age_seconds = max(0, int((datetime.now(UTC) - traded.astimezone(UTC)).total_seconds()))
+    except ValueError:
+        age_seconds = None
+    open_now = clock.get("state") == "open"
+    return {
+        **quote,
+        "stale": not open_now,
+        "market_state": clock.get("state"),
+        "market_label": clock.get("label"),
+        "age_seconds": age_seconds,
+        "display_label": "Last IEX trade" if not open_now else "IEX last trade",
     }
 
 

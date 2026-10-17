@@ -44,6 +44,18 @@ CREATE TABLE IF NOT EXISTS news_fetches (
     duration_ms INTEGER NOT NULL DEFAULT 0,
     detail TEXT NOT NULL DEFAULT ''
 );
+CREATE TABLE IF NOT EXISTS news_review_stages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    review_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    status TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    finished_at TEXT,
+    model TEXT NOT NULL DEFAULT '',
+    input_json TEXT NOT NULL DEFAULT '{}',
+    output_json TEXT NOT NULL DEFAULT '{}',
+    error_safe TEXT NOT NULL DEFAULT ''
+);
 """
 
 
@@ -201,6 +213,65 @@ class NewsStore:
                 (status, datetime.now(UTC).isoformat(), model, json.dumps(report), review_id),
             )
 
+    def start_stage(self, review_id: int, name: str, *, model: str, payload: dict[str, Any]) -> int:
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO news_review_stages (
+                    review_id, name, status, started_at, model, input_json
+                ) VALUES (?, ?, 'running', ?, ?, ?)
+                """,
+                (
+                    review_id,
+                    name,
+                    datetime.now(UTC).isoformat(),
+                    model,
+                    json.dumps(payload),
+                ),
+            )
+            return int(cursor.lastrowid or 0)
+
+    def finish_stage(
+        self,
+        stage_id: int,
+        *,
+        status: str,
+        output: dict[str, Any],
+        error_safe: str = "",
+    ) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE news_review_stages
+                SET status = ?, finished_at = ?, output_json = ?, error_safe = ?
+                WHERE id = ?
+                """,
+                (
+                    status,
+                    datetime.now(UTC).isoformat(),
+                    json.dumps(output),
+                    error_safe[:500],
+                    stage_id,
+                ),
+            )
+
+    def stages(self, review_id: int) -> list[dict[str, Any]]:
+        try:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    "SELECT * FROM news_review_stages WHERE review_id = ? ORDER BY id",
+                    (review_id,),
+                ).fetchall()
+        except sqlite3.OperationalError:
+            return []
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            body = dict(row)
+            body["input"] = json.loads(body.pop("input_json") or "{}")
+            body["output"] = json.loads(body.pop("output_json") or "{}")
+            result.append(body)
+        return result
+
     def review(self, review_id: int) -> dict[str, Any] | None:
         with self._connect() as conn:
             row = conn.execute("SELECT * FROM news_reviews WHERE id = ?", (review_id,)).fetchone()
@@ -208,6 +279,7 @@ class NewsStore:
             return None
         body = dict(row)
         body["report"] = json.loads(body.pop("report_json") or "{}")
+        body["stages"] = self.stages(review_id)
         return body
 
 

@@ -73,7 +73,16 @@ def collect_evidence(
         {
             "id": "trading.status",
             "source": "forward pilot",
-            "text": f"{trading['headline']}. {trading['summary']}",
+            "text": (
+                f"{trading['headline']}. {trading['summary']} "
+                f"Lifecycle {trading.get('lifecycle') or trading.get('state')}. "
+                f"Pilot clock "
+                + (
+                    "is set."
+                    if trading.get("pilot_clock_started")
+                    else "is not set. The user can arm it without waiting for month-start."
+                )
+            ),
         },
         {
             "id": "trading.reasons",
@@ -204,10 +213,16 @@ def _live_fact(settings: Settings, quotes: dict[str, Any] | None) -> dict[str, s
         "id": "live.iex",
         "source": "Alpaca IEX snapshot",
         "text": (
-            f"SPY last traded at {spy['price']} USD at {spy['trade_time'][:16].replace('T', ' ')} "
-            f"UTC on the IEX exchange. Previous close {spy.get('previous_close')} USD"
+            f"SPY last IEX trade was {spy['price']} USD at "
+            f"{spy['trade_time'][:16].replace('T', ' ')} UTC"
+            + (
+                ". The regular US cash session is closed, so this is not a live 'right now' price."
+                if spy.get("stale")
+                else "."
+            )
+            + f" Previous close {spy.get('previous_close')} USD"
             + ("" if change is None else f", change {change}%")
-            + ". This price is for display only. The strategy uses SIP daily bars."
+            + ". This IEX price is display only. The strategy uses SIP daily bars."
         ),
     }
 
@@ -284,9 +299,14 @@ _TOPICS: tuple[tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]], ...] = 
         ("Does news change the strategy?", "What are the agents doing?"),
     ),
     (
-        ("agent", "skeptic", "researcher", "reviewer"),
+        ("agent", "skeptic", "researcher", "reviewer", "crew"),
         ("agents",),
         ("What did the agents find?", "Why are there no trades yet?"),
+    ),
+    (
+        ("pilot", "armed", "approval", "approve"),
+        ("trading.status", "trading.reasons"),
+        ("Is the pilot armed?", "Is approval needed?"),
     ),
     (
         ("strategy", "decide", "explain", "momentum", "rebalance", "next"),

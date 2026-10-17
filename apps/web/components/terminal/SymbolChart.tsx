@@ -81,7 +81,9 @@ export function SymbolChart({
             ) : null}
           </h2>
           <p className="mt-1 text-sm text-[var(--muted)]">
-            {quote ? `Real-time IEX price, last trade ${formatNewYork(quote.trade_time)}. ` : ""}
+            {quote
+              ? `${quote.stale ? "Last IEX trade (session closed)" : "IEX last trade"} ${formatNewYork(quote.trade_time)}. `
+              : ""}
             {latest ? `Chart shows finished daily bars through ${formatDay(latest)}.` : "Loading stored bars…"}
           </p>
         </div>

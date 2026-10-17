@@ -9,7 +9,8 @@ import { EyeIcon } from "@/components/icons/animated/eye";
 import { GaugeIcon } from "@/components/icons/animated/gauge";
 import { ScanTextIcon } from "@/components/icons/animated/scan-text";
 import { ShieldCheckIcon } from "@/components/icons/animated/shield-check";
-import { AnimatedIcon, formatDay, Pill, timeAgo, type AnimatedIconComponent } from "@/components/terminal/kit";
+import { CrewAvatar, type CrewId, type CrewMood } from "@/components/avatars/CrewAvatar";
+import { formatDay, Pill, timeAgo, type AnimatedIconComponent } from "@/components/terminal/kit";
 import {
   analyzeNews,
   loadAgentRun,
@@ -28,6 +29,25 @@ type AgentKey = "scout" | "researcher" | "skeptic" | "reviewer" | "verifier" | "
 type AgentStatusKey = "idle" | "queued" | "working" | "done" | "flagged" | "failed";
 type ToolCall = { tool: string; status: string; ms: number; at: string; args: string };
 type AgentView = { status: AgentStatusKey; now: string; tools: ToolCall[]; found: string };
+
+function moodFrom(status: AgentStatusKey, replay: boolean): CrewMood {
+  if (replay && status === "working") {
+    return "replay";
+  }
+  if (status === "working" || status === "queued") {
+    return "working";
+  }
+  if (status === "done") {
+    return "success";
+  }
+  if (status === "flagged") {
+    return "concern";
+  }
+  if (status === "failed") {
+    return "failed";
+  }
+  return "idle";
+}
 
 const CREW: Array<{
   key: AgentKey;
@@ -222,7 +242,7 @@ export function AgentWorkspace() {
         const index = STAGE_ORDER.indexOf(key);
         state = index < replayStep ? state : index === replayStep ? "working" : "queued";
       }
-      if (analysing) {
+      if (analysing && key === "researcher") {
         state = "working";
       }
       const latest = tools.at(-1);
@@ -343,7 +363,7 @@ export function AgentWorkspace() {
         <div className="flex min-w-[720px] items-center justify-between gap-1">
           {CREW.map((agent, index) => (
             <div key={agent.key} className="flex flex-1 items-center">
-              <RailAvatar agent={agent} view={views[agent.key]} />
+              <RailAvatar agent={agent} view={views[agent.key]} replay={mode === "replay"} />
               {index < CREW.length - 1 ? (
                 <Connector
                   active={views[CREW[index + 1].key].status === "working"}
@@ -491,7 +511,7 @@ export function AgentWorkspace() {
 
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         {CREW.map((agent, index) => (
-          <AgentCard key={agent.key} agent={agent} view={views[agent.key]} index={index} />
+          <AgentCard key={agent.key} agent={agent} view={views[agent.key]} index={index} replay={mode === "replay"} />
         ))}
       </section>
 
@@ -500,8 +520,8 @@ export function AgentWorkspace() {
           <p className="kicker">Ask the crew about a headline</p>
           <h2 className="mt-1 text-xl font-semibold">News analysis</h2>
           <p className="mt-1 text-sm text-[var(--muted)]">
-            One local model call writes the Researcher, Skeptic, and Reviewer views of a headline. It is an
-            interpretation, never a strategy change.
+            Analyze runs Researcher, then Skeptic, then Reviewer, then a number check. Each stage is stored.
+            It is research context only and cannot change the strategy.
           </p>
           {news.data?.items.length ? (
             <ul className="mt-3 divide-y divide-[var(--line)]">
@@ -677,24 +697,19 @@ function statusTone(status: AgentStatusKey): "gold" | "ok" | "warn" | "err" | "m
           : "muted";
 }
 
-function RailAvatar({ agent, view }: { agent: (typeof CREW)[number]; view: AgentView }) {
+function RailAvatar({
+  agent,
+  view,
+  replay,
+}: {
+  agent: (typeof CREW)[number];
+  view: AgentView;
+  replay: boolean;
+}) {
   const working = view.status === "working";
   return (
     <div className="flex w-[92px] shrink-0 flex-col items-center gap-2 text-center">
-      <motion.div
-        animate={working ? { scale: [1, 1.08, 1] } : { scale: 1 }}
-        transition={working ? { duration: 1.4, repeat: Infinity } : { duration: 0.2 }}
-        className={cn(
-          "relative flex h-14 w-14 items-center justify-center rounded-2xl border",
-          working
-            ? "border-[var(--gold)] bg-[rgba(224,184,79,0.16)] text-[var(--gold-soft)] shadow-[0_0_24px_rgba(224,184,79,0.35)]"
-            : view.status === "done"
-              ? "border-[var(--line-strong)] bg-[rgba(224,184,79,0.06)] text-[var(--gold)]"
-              : "border-[var(--line)] bg-[rgba(255,255,255,0.02)] text-[var(--muted)]",
-        )}
-      >
-        <AnimatedIcon icon={agent.icon} active={working} size={26} />
-      </motion.div>
+      <CrewAvatar id={agent.key as CrewId} mood={moodFrom(view.status, replay)} size={56} />
       <p className="text-xs font-semibold">{agent.name}</p>
       <Pill tone={statusTone(view.status)} pulse={working}>
         {STATUS_TEXT[view.status]}
@@ -721,7 +736,17 @@ function Connector({ active, dashed }: { active: boolean; dashed: boolean }) {
   );
 }
 
-function AgentCard({ agent, view, index }: { agent: (typeof CREW)[number]; view: AgentView; index: number }) {
+function AgentCard({
+  agent,
+  view,
+  index,
+  replay,
+}: {
+  agent: (typeof CREW)[number];
+  view: AgentView;
+  index: number;
+  replay: boolean;
+}) {
   const working = view.status === "working";
   return (
     <motion.article
@@ -731,16 +756,7 @@ function AgentCard({ agent, view, index }: { agent: (typeof CREW)[number]; view:
       className={cn("panel flex flex-col gap-3 p-5", working && "working-sheen border-[var(--line-strong)]")}
     >
       <div className="flex items-start gap-3">
-        <motion.div
-          animate={working ? { rotate: [0, -4, 4, 0] } : { rotate: 0 }}
-          transition={working ? { duration: 1.6, repeat: Infinity } : { duration: 0.2 }}
-          className={cn(
-            "flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border",
-            working ? "border-[var(--gold)] bg-[rgba(224,184,79,0.16)] text-[var(--gold-soft)]" : "border-[var(--line)] text-[var(--gold)]",
-          )}
-        >
-          <AnimatedIcon icon={agent.icon} active={working} size={24} />
-        </motion.div>
+        <CrewAvatar id={agent.key as CrewId} mood={moodFrom(view.status, replay)} size={52} />
         <div className="min-w-0 flex-1">
           <div className="flex items-center justify-between gap-2">
             <h3 className="text-lg font-semibold">{agent.name}</h3>

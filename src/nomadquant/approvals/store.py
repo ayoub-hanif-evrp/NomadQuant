@@ -117,6 +117,20 @@ class ApprovalStore:
             ).fetchone()
         return None if row is None else dict(row)
 
+    def pending_with_preview(self, preview_hash: str) -> dict[str, Any] | None:
+        if not preview_hash:
+            return None
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM approval_requests
+                WHERE preview_hash = ? AND status = 'pending'
+                ORDER BY created_at DESC LIMIT 1
+                """,
+                (preview_hash,),
+            ).fetchone()
+        return None if row is None else dict(row)
+
     def list_requests(self) -> list[dict[str, Any]]:
         with self._connect() as conn:
             rows = conn.execute(

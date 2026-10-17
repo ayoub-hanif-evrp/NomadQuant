@@ -36,6 +36,9 @@ def render_approval_message(
             f"Risk checks: {risk_summary}",
             f"Caveats: {caveats}",
             "",
+            "The review link is http://127.0.0.1 and only works on this computer.",
+            "A phone or another machine cannot open it. GET never approves.",
+            "",
             f"Review and confirm: {review_url}",
             f"Request: {request_id}",
         ]

@@ -123,6 +123,8 @@ def test_live_quote_parses_an_iex_snapshot(tmp_path: Path) -> None:
     assert body["status"] == "ok"
     assert body["quotes"]["SPY"]["price"] == 763.31
     assert body["quotes"]["SPY"]["change"] == 3.31
+    assert body["quotes"]["SPY"]["display_label"]
+    assert "stale" in body["quotes"]["SPY"]
 
 
 def test_overview_explains_trading_state_from_records(tmp_path: Path) -> None:
@@ -282,3 +284,57 @@ def test_news_payload_keeps_headline_not_article_body() -> None:
     encoded = json.dumps(articles)
     assert "Index fund sees inflows" in encoded
     assert "copyrighted" not in encoded
+
+
+def test_news_analysis_runs_three_linked_stages(tmp_path: Path) -> None:
+    from nomadquant.news.service import analyze_headline
+    from nomadquant.news.store import NewsStore
+
+    settings = make_settings(tmp_path)
+    store = NewsStore(settings.news_path)
+    store.replace_articles(
+        [
+            {
+                "id": "h1",
+                "headline": "Fed holds rates",
+                "source": "Example",
+                "url": "https://example.test/fed",
+                "published_at": "2026-10-16T12:00:00Z",
+                "updated_at": "2026-10-16T12:00:00Z",
+                "symbols": "SPY",
+                "content_hash": "abc",
+            }
+        ],
+        status="ok",
+        detail="1",
+    )
+    seen: list[str] = []
+
+    class _Seq:
+        def health(self, timeout: float = 2.0) -> dict[str, object]:
+            return {"available": True, "models": ["qwen3.5:9b"]}
+
+        def chat_json(self, _model: str, messages: list[dict[str, str]], *_a: object, **_k: object):
+            blob = messages[0]["content"] + messages[1]["content"]
+            if "ROLE: Researcher" in blob:
+                seen.append("researcher")
+                return {"text": "The stored headline says the Fed holds rates."}
+            if "ROLE: Skeptic" in blob:
+                seen.append("skeptic")
+                assert "Prior notes" in blob
+                return {"text": "A hold is not a forecast."}
+            seen.append("reviewer")
+            assert "Prior notes" in blob
+            return {"text": "Not enough to change a monthly momentum rule."}
+
+    settings.ollama_model = "qwen3.5:9b"
+    result = analyze_headline(settings, "h1", provider=_Seq())  # type: ignore[arg-type]
+    assert seen == ["researcher", "skeptic", "reviewer"]
+    assert [row["name"] for row in result["stages"]] == [
+        "researcher",
+        "skeptic",
+        "reviewer",
+        "verifier",
+    ]
+    assert result["report"]["strategy_override"] is False
+    assert result["broker_orders"] is False

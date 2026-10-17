@@ -27,6 +27,7 @@ import {
   loadApprovals,
   loadLiveQuotes,
   loadNews,
+  confirmPilotArm,
   loadHomeOverview,
   refreshNews,
   syncHistoricalBars,
@@ -57,6 +58,8 @@ export function CommandCenter() {
   const [syncState, setSyncState] = useState<"idle" | "confirm" | "running" | "done" | "error">("idle");
   const [syncNote, setSyncNote] = useState("");
   const [fetchingNews, setFetchingNews] = useState(false);
+  const [armState, setArmState] = useState<"idle" | "running" | "done" | "error">("idle");
+  const [armNote, setArmNote] = useState("");
 
   const view = overview.data;
   const spy = live.data?.quotes.SPY;
@@ -77,6 +80,20 @@ export function CommandCenter() {
     } catch (exc) {
       setSyncState("error");
       setSyncNote(exc instanceof Error ? exc.message : "The update failed.");
+    }
+  }
+
+  async function armPilot() {
+    setArmState("running");
+    setArmNote("Arming the forward clock. No trade is created.");
+    try {
+      const result = await confirmPilotArm();
+      setArmState("done");
+      setArmNote(result.status === "PILOT_ARMED" ? "Pilot clock is set. No fill was simulated." : result.status);
+      await queryClient.invalidateQueries({ queryKey: ["home-overview"] });
+    } catch (exc) {
+      setArmState("error");
+      setArmNote(exc instanceof Error ? exc.message : "Arming failed.");
     }
   }
 
@@ -142,7 +159,7 @@ export function CommandCenter() {
         <Tile
           index={1}
           icon={TrendingUpIcon}
-          label="SPY right now"
+          label={marketOpen ? "SPY last IEX trade" : "Last IEX trade (market closed)"}
           value={spy ? formatUsd(spy.price) : live.isLoading ? "…" : "Unavailable"}
           accent={
             spy?.change_pct != null ? (
@@ -153,7 +170,7 @@ export function CommandCenter() {
           }
           note={
             spy
-              ? `Last trade ${formatNewYork(spy.trade_time)} · IEX real-time`
+              ? `${marketOpen ? "Last trade" : "Friday-or-last session trade"} ${formatNewYork(spy.trade_time)} · IEX display only`
               : (live.data?.detail ?? "Checking the real-time feed…")
           }
         />
@@ -222,6 +239,9 @@ export function CommandCenter() {
               index={index}
               syncState={syncState}
               onSync={() => setSyncState("confirm")}
+              armState={armState}
+              armable={Boolean(view?.trading.armable)}
+              onArm={() => void armPilot()}
             />
           ))}
         </ul>
@@ -251,6 +271,11 @@ export function CommandCenter() {
         {syncNote ? (
           <p className={`mt-3 text-sm ${syncState === "error" ? "text-[var(--err)]" : "text-[var(--gold-soft)]"}`}>
             {syncNote}
+          </p>
+        ) : null}
+        {armNote ? (
+          <p className={`mt-3 text-sm ${armState === "error" ? "text-[var(--err)]" : "text-[var(--gold-soft)]"}`}>
+            {armNote}
           </p>
         ) : null}
         {view?.trading.recent_decisions.length ? (
@@ -377,11 +402,17 @@ function CheckRow({
   index,
   syncState,
   onSync,
+  armState,
+  armable,
+  onArm,
 }: {
   check: HomeCheck;
   index: number;
   syncState: string;
   onSync: () => void;
+  armState: string;
+  armable: boolean;
+  onArm: () => void;
 }) {
   return (
     <motion.li
@@ -409,9 +440,21 @@ function CheckRow({
         </button>
       ) : null}
       {check.action === "start_pilot" ? (
-        <Link href="/shadow" className="ghost-button mt-3 inline-block px-4 py-1.5 text-sm">
-          How to start the pilot
-        </Link>
+        <div className="mt-3 flex flex-wrap gap-2">
+          {armable ? (
+            <button
+              type="button"
+              onClick={onArm}
+              disabled={armState === "running"}
+              className="gold-button px-4 py-1.5 text-sm"
+            >
+              {armState === "running" ? "Arming…" : "Arm the forward clock"}
+            </button>
+          ) : null}
+          <Link href="/shadow" className="ghost-button inline-block px-4 py-1.5 text-sm">
+            How the pilot works
+          </Link>
+        </div>
       ) : null}
     </motion.li>
   );

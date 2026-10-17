@@ -215,3 +215,22 @@ These are observed results. They are not a completed forward fill and not a conf
 | `WAITING_FOR_SESSION` | Data is complete and no rebalance is scheduled. |
 
 A pending row is not executable by itself. `pilot_running` is true only while `data/shadow_worker.lock` is younger than two hours.
+
+## Future Alpaca paper-order milestone (not enabled)
+
+This sprint does **not** turn on broker submission. `ALLOW_ORDER_SUBMISSION` stays false. Agents still have no order tools.
+
+When a later written authorization is given, paper orders should be a separate gateway that:
+
+1. Uses the Alpaca **paper** API only (`https://paper-api.alpaca.markets`). Live trading remains forbidden.
+2. Requires a second explicit execution flag, distinct from shadow-apply and email approval.
+3. Confirms the paper account, `SPY` as a fractionable equity, and the $100 internal notional cap before any submit.
+4. Submits only after the same risk recheck that currently gates the internal ledger fill.
+5. Uses a stable unique `client_order_id` per approved proposal and never retries while the broker outcome is unknown.
+6. Reconciles `GET /v2/orders:by_client_order_id` and `GET /v2/orders/{order_id}` before any second submit.
+7. Handles rejection, partial fill, and after-hours queued orders without inventing a fill in the $100 book.
+8. Reconciles broker positions independently of the internal ledger.
+9. Provides an emergency halt that stops new submits without deleting history.
+10. Keeps Researcher, Skeptic, Reviewer, News Scout, and Copilot off the order path.
+
+Email approval in this sprint still authorizes **only** the internal shadow transaction. It is not a broker ticket.

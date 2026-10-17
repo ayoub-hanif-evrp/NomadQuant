@@ -2,8 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { SparklesIcon } from "@/components/icons/animated/sparkles";
-import { AnimatedIcon } from "@/components/terminal/kit";
+import { CrewAvatar } from "@/components/avatars/CrewAvatar";
 import { askCopilot, type CopilotAnswer } from "@/lib/api";
 
 const STORAGE_KEY = "nq-copilot-thread";
@@ -102,9 +101,7 @@ export function CopilotPanel({ onClose }: { onClose: () => void }) {
     >
       <header className="flex items-center justify-between gap-3 border-b border-[var(--line)] px-5 py-4">
         <div className="flex items-center gap-3">
-          <span className="flex h-10 w-10 items-center justify-center rounded-2xl border border-[var(--line-strong)] bg-[rgba(224,184,79,0.1)] text-[var(--gold)]">
-            <AnimatedIcon icon={SparklesIcon} active={busy} size={22} />
-          </span>
+          <CrewAvatar id="copilot" mood={busy ? "working" : "idle"} size={44} />
           <div>
             <p className="kicker">Nomad Copilot</p>
             <h2 className="text-lg font-semibold">Ask me anything about your app</h2>

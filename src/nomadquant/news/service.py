@@ -14,15 +14,27 @@ from nomadquant.config import Settings
 from nomadquant.news.store import NewsStore, headline_hash
 
 _NEWS_URL = "https://data.alpaca.markets/v1beta1/news"
-_SCHEMA = {
+_STAGE_SCHEMA = {
     "type": "object",
-    "properties": {
-        "researcher": {"type": "string"},
-        "skeptic": {"type": "string"},
-        "reviewer": {"type": "string"},
-    },
-    "required": ["researcher", "skeptic", "reviewer"],
+    "properties": {"text": {"type": "string"}},
+    "required": ["text"],
 }
+_ROLES = (
+    (
+        "researcher",
+        "ROLE: Researcher. State only what this stored headline says. Do not invent prices.",
+    ),
+    (
+        "skeptic",
+        "ROLE: Skeptic. You receive the Researcher's notes. Challenge causal claims. "
+        "Do not invent prices.",
+    ),
+    (
+        "reviewer",
+        "ROLE: Reviewer. You receive the Researcher and Skeptic notes. Say whether the "
+        "headline is enough to change a price-only monthly momentum rule. It is not.",
+    ),
+)
 
 
 SOURCE = "Alpaca News API (data.alpaca.markets)"
@@ -110,7 +122,7 @@ def analyze_headline(
     *,
     provider: OllamaProvider | None = None,
 ) -> dict[str, Any]:
-    """One opt-in local reading of a stored headline. Not a strategy change."""
+    """Sequential Researcher → Skeptic → Reviewer reading. Not a strategy change."""
     store = NewsStore(settings.news_path)
     article = store.article(article_id)
     if article is None:
@@ -126,68 +138,92 @@ def analyze_headline(
             break
     headline = str(article["headline"])
     source = str(article["source"])
+    context = {
+        "headline": headline,
+        "source": source,
+        "published_at": str(article.get("published_at") or ""),
+        "url": str(article.get("url") or ""),
+    }
+    notes: dict[str, str] = {}
     if not model:
         report = {
             "researcher": f"Stored headline from {source}: {headline}",
             "skeptic": "No local model is available, so no interpretation was added.",
             "reviewer": "Insufficient evidence for a market conclusion.",
             "verification": "numbers_not_added",
+            "label": "interpretation_not_a_strategy_change",
         }
         store.finish_review(review_id, status="offline", model="", report=report)
-        viewed = store.review(review_id)
-        assert viewed is not None
-        viewed["broker_orders"] = False
-        return viewed
-    try:
-        parsed = local.chat_json(
-            model,
-            [
-                {
-                    "role": "system",
-                    "content": (
-                        "Read only the headline. Researcher states what it says. "
-                        "Skeptic challenges any causal claim. Reviewer says whether it is "
-                        "enough to change a price-only momentum rule. Do not invent prices."
-                    ),
-                },
-                {"role": "user", "content": f"Source: {source}\nHeadline: {headline}"},
-            ],
-            _SCHEMA,
-            timeout=25,
-            num_ctx=4096,
+        return _view(store, review_id)
+    for name, instruction in _ROLES:
+        stage_id = store.start_stage(review_id, name, model=model, payload={**context, **notes})
+        user = f"Source: {source}\nHeadline: {headline}\nPublished: {context['published_at']}\n" + (
+            "" if not notes else "Prior notes:\n" + json.dumps(notes)
         )
-    except OllamaError as exc:
-        store.finish_review(
-            review_id,
-            status="failed",
-            model=model,
-            report={"error": type(exc).__name__},
-        )
-        viewed = store.review(review_id)
-        assert viewed is not None
-        viewed["broker_orders"] = False
-        return viewed
-    report = {
-        "researcher": str(parsed.get("researcher") or ""),
-        "skeptic": str(parsed.get("skeptic") or ""),
-        "reviewer": str(parsed.get("reviewer") or ""),
-        "verification": "headline_only",
-        "label": "interpretation_not_a_strategy_change",
-    }
-    blob = " ".join(report[key] for key in ("researcher", "skeptic", "reviewer"))
+        try:
+            parsed = local.chat_json(
+                model,
+                [
+                    {
+                        "role": "system",
+                        "content": (
+                            "Read only the stored headline and the prior notes. "
+                            f'{instruction} Reply with JSON {{"text": "..."}}. '
+                            "Do not invent prices. This cannot change the registered strategy."
+                        ),
+                    },
+                    {"role": "user", "content": user},
+                ],
+                _STAGE_SCHEMA,
+                timeout=25,
+                num_ctx=4096,
+            )
+        except OllamaError as exc:
+            store.finish_stage(stage_id, status="failed", output={}, error_safe=type(exc).__name__)
+            store.finish_review(
+                review_id,
+                status="failed",
+                model=model,
+                report={"error": type(exc).__name__, "failed_stage": name},
+            )
+            return _view(store, review_id)
+        text = str(parsed.get("text") or "").strip()
+        notes[name] = text
+        store.finish_stage(stage_id, status="succeeded", output={"text": text})
+    verification_id = store.start_stage(
+        review_id, "verifier", model="", payload={"headline": headline, **notes}
+    )
+    blob = " ".join(notes.values())
     if _invented_number(blob, headline):
-        report = {
+        notes = {
             "researcher": f"Stored headline from {source}: {headline}",
             "skeptic": (
                 "The model added a figure that is not in the headline. That text was discarded."
             ),
             "reviewer": "Insufficient evidence.",
-            "verification": "rejected_unsupported_number",
         }
-    store.finish_review(review_id, status="completed", model=model, report=report)
+        verdict = "rejected_unsupported_number"
+        store.finish_stage(verification_id, status="failed", output={"verification": verdict})
+        status = "completed"
+    else:
+        verdict = "headline_only"
+        store.finish_stage(verification_id, status="succeeded", output={"verification": verdict})
+        status = "completed"
+    finished: dict[str, Any] = {
+        **notes,
+        "verification": verdict,
+        "label": "interpretation_not_a_strategy_change",
+        "strategy_override": False,
+    }
+    store.finish_review(review_id, status=status, model=model, report=finished)
+    return _view(store, review_id)
+
+
+def _view(store: NewsStore, review_id: int) -> dict[str, Any]:
     viewed = store.review(review_id)
     assert viewed is not None
     viewed["broker_orders"] = False
+    viewed["strategy_override"] = False
     return viewed
 
 

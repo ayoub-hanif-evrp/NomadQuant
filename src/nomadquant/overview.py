@@ -159,6 +159,7 @@ def overview(settings: Settings, *, now: datetime | None = None) -> dict[str, An
             "state": readiness.get("state"),
             "lifecycle": readiness.get("lifecycle"),
             "armable": bool(readiness.get("armable")),
+            "pilot_clock_started": bool(readiness.get("pilot_clock_started")),
             "next_rebalance": rebalance,
             "recent_decisions": [
                 {

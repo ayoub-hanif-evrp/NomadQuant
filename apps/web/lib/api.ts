@@ -2049,6 +2049,9 @@ export type HomeOverview = {
     summary: string;
     checks: HomeCheck[];
     state: string;
+    lifecycle?: string;
+    armable?: boolean;
+    pilot_clock_started?: boolean;
     next_rebalance: { signal_session: string; fill_session: string };
     recent_decisions: Array<{ id: number; session: string; result: string }>;
     simulated_fills: number;
@@ -2083,6 +2086,9 @@ export type LiveQuote = {
   previous_close: number | null;
   change: number | null;
   change_pct: number | null;
+  stale?: boolean;
+  display_label?: string;
+  age_seconds?: number | null;
 };
 
 export type LiveQuotes = {
@@ -2167,6 +2173,17 @@ export function analyzeNews(articleId: string): Promise<{ status: string; report
 
 export function syncHistoricalBars(): Promise<{ sync?: string; status?: string; broker_orders: false }> {
   return mutate("/api/market-data/sync", { confirm: "SYNC_HISTORICAL_BARS" });
+}
+
+export async function confirmPilotArm(): Promise<{ status: string; applied: boolean; broker_orders: false }> {
+  const preview = await readJson("/api/shadow/pilot/preview");
+  if (!isRecord(preview) || typeof preview.preview_hash !== "string") {
+    throw new Error("Pilot preview was not available.");
+  }
+  return mutate("/api/shadow/pilot/confirm", {
+    preview_hash: preview.preview_hash,
+    confirm: "ARM_FORWARD_PILOT",
+  });
 }
 
 export function startResearchReview(input: {

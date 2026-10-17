@@ -86,6 +86,52 @@ def create_approval_request(
     return viewed
 
 
+def issue_proposal_from_cycle(settings: Settings, detail: dict[str, Any]) -> dict[str, Any] | None:
+    """Email a real sized proposal. Does nothing for no_trade or missing evidence."""
+    if str(detail.get("status") or "") != "awaiting_approval":
+        return None
+    raw_evidence = detail.get("evidence")
+    evidence: dict[str, Any] = raw_evidence if isinstance(raw_evidence, dict) else {}
+    raw_proposal = evidence.get("proposal")
+    proposal: dict[str, Any] = raw_proposal if isinstance(raw_proposal, dict) else {}
+    action = str(proposal.get("side") or detail.get("intent") or "").upper()
+    if action not in {"BUY", "SELL"}:
+        return None
+    quantity = str(proposal.get("quantity") or evidence.get("sizing", {}).get("quantity") or "")
+    notional = str(evidence.get("open_price") or "")
+    preview = str(evidence.get("proposal", {}).get("id") or detail.get("proposal_id") or "")
+    store = ApprovalStore(settings.approval_path)
+    if preview and store.pending_with_preview(preview):
+        return None
+    why = (
+        f"Month-start momentum {evidence.get('momentum')} on "
+        f"{evidence.get('signal_session')}. Fill session {evidence.get('fill_session')} "
+        f"at delayed hypothetical open {evidence.get('open_price')}."
+    )
+    risk = f"Verdict {evidence.get('risk_verdict')}. Reasons: " + ", ".join(
+        str(item) for item in (evidence.get("risk_reasons") or []) or ["none"]
+    )
+    caveats = (
+        "Delayed hypothetical daily open. Internal $100 book only. "
+        "The localhost review link works only on this computer. "
+        "GET never approves. This is not an Alpaca order."
+    )
+    return create_approval_request(
+        settings,
+        instrument=str(proposal.get("symbol") or "SPY"),
+        action=action,
+        quantity=quantity or "0",
+        notional_usd=notional or "0",
+        why=why,
+        risk_summary=risk,
+        caveats=caveats,
+        preview_hash=preview,
+        ledger_version=int((detail.get("ledger_before") or {}).get("version") or 0),
+        policy_hash=str(evidence.get("policy_hash") or ""),
+        market_fingerprint="",
+    )
+
+
 def list_approval_requests(settings: Settings, *, now: datetime | None = None) -> dict[str, Any]:
     clock = now or datetime.now(UTC)
     store = ApprovalStore.open_readonly(settings.approval_path)
