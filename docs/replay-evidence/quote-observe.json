@@ -1,0 +1,23 @@
+{
+  "market_state": "closed",
+  "quote_status": "ok",
+  "quote_detail": "",
+  "bid": "763.5",
+  "ask": "764.6",
+  "quote_time": "2026-10-16T20:44:45.870458146Z",
+  "decision": {
+    "execution_model": "OBSERVED_QUOTE_SHADOW",
+    "side": "buy",
+    "symbol": "SPY",
+    "feed": "iex",
+    "broker_orders": false,
+    "used_by_registered_strategy": false,
+    "estimated_mid": null,
+    "observed_price": null,
+    "quantity": "0",
+    "status": "NO_FILL",
+    "reason": "market_closed_stale_quote_refused"
+  },
+  "ledger_mutated": false,
+  "broker_orders": false
+}

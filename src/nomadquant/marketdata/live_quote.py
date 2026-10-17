@@ -102,6 +102,7 @@ def _quote(raw: object) -> dict[str, Any] | None:
     if not isinstance(raw, dict):
         return None
     trade = _section(raw, "latestTrade")
+    quote = _section(raw, "latestQuote")
     daily = _section(raw, "dailyBar")
     prev = _section(raw, "prevDailyBar")
     price = _number(trade.get("p"))
@@ -122,6 +123,9 @@ def _quote(raw: object) -> dict[str, Any] | None:
         "change_pct": (
             None if change is None or not prev_close else round(change / prev_close * 100, 3)
         ),
+        "bid": _number(quote.get("bp")),
+        "ask": _number(quote.get("ap")),
+        "quote_time": str(quote.get("t") or ""),
     }
 
 
