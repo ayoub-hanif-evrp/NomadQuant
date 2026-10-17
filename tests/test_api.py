@@ -248,6 +248,7 @@ def test_no_order_submission_endpoint(client: TestClient) -> None:
         "/api/risk/evaluations/{evaluation_id}",
         "/api/shadow/status",
         "/api/shadow/valuation",
+        "/api/shadow/performance",
         "/api/shadow/ops",
         "/api/shadow/timeline",
         "/api/shadow/cycles",

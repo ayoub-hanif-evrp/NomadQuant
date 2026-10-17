@@ -135,7 +135,7 @@ Pytest warns that Starlette wants `httpx2` and that `websockets.legacy` is depre
 - Paper-only settings that reject live mode, live Alpaca URLs, non-local binds, and order submission
 - Startup without Alpaca credentials, in disconnected mode
 - Read-only account and position retrieval, with rate limits and connection errors returned as data
-- `GET /health`, broker status, `GET /api/market-data/status`, `GET /api/market-data/bars`, observability, and research verify/replay routes (all GET-only)
+- `GET /health`, broker status, market-data, shadow, and research routes. POST is a localhost allowlist and never submits an order.
 - SQLite operational, market, and research databases under `data/` (gitignored)
 - Raw daily SPY/QQQ bars in `data/market.sqlite`, with a 16:30 New York availability model
 - One pre-registered SPY time-series momentum backtest with independent replay and verification

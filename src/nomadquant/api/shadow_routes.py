@@ -100,6 +100,14 @@ def shadow_valuation(request: Request) -> dict[str, Any]:
     return _valuation(request, store).as_dict()
 
 
+@router.get("/performance")
+def shadow_performance(request: Request) -> dict[str, Any]:
+    """Read-only $100 simulation view. Does not fill or submit an order."""
+    from nomadquant.shadow.performance import simulation_performance
+
+    return simulation_performance(request.app.state.settings)
+
+
 @router.get("/ops")
 def shadow_ops(request: Request) -> dict[str, Any]:
     settings = request.app.state.settings

@@ -3,12 +3,13 @@
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { loadShadowEquity, loadShadowStatus, loadShadowValuation } from "@/lib/api";
+import { loadShadowEquity, loadShadowStatus, loadShadowValuation, loadSimulationPerformance } from "@/lib/api";
 
 export function PortfolioView() {
   const status = useQuery({ queryKey: ["portfolio-status"], queryFn: loadShadowStatus });
   const value = useQuery({ queryKey: ["portfolio-value"], queryFn: loadShadowValuation });
   const equity = useQuery({ queryKey: ["portfolio-equity"], queryFn: () => loadShadowEquity(60) });
+  const performance = useQuery({ queryKey: ["simulation-performance"], queryFn: loadSimulationPerformance });
   const points = (equity.data?.items ?? [])
     .map((item) => ({
       at: String(item.recorded_at ?? item.session ?? ""),
@@ -20,16 +21,20 @@ export function PortfolioView() {
     <div className="space-y-4">
       <header>
         <p className="kicker">Portfolio</p>
-        <h1 className="mt-1 text-3xl font-semibold tracking-tight">Internal $100 shadow book</h1>
+        <h1 className="mt-1 text-3xl font-semibold tracking-tight">$100 Simulation Performance</h1>
         <p className="mt-2 max-w-2xl text-sm text-[var(--muted)]">
           Simulated ledger only. It is not the Alpaca paper account and not a live brokerage balance.
         </p>
       </header>
       <div className="grid gap-3 md:grid-cols-3">
-        <Card label="Cash" value={status.data?.cash_usd ?? "…"} />
-        <Card label="Equity" value={value.data?.equity_usd ?? status.data?.peak_equity_usd ?? "…"} />
-        <Card label="Ledger version" value={String(status.data?.ledger_version ?? "…")} />
+        <Card label="Starting capital" value="$100.00" />
+        <Card label="Cash" value={String(performance.data?.cash_usd ?? status.data?.cash_usd ?? "…")} />
+        <Card label="Marked equity" value={String(performance.data?.equity_usd ?? value.data?.equity_usd ?? "…")} />
       </div>
+      <p className="text-sm text-[var(--warn)]">
+        {String(performance.data?.sample_note ?? "The forward sample is not large enough to judge the strategy.")}
+        {" "}Prospective fills: {String(performance.data?.prospective_fills ?? "…")}. Dividends: not evaluable.
+      </p>
       <section className="panel p-4">
         {points.length < 2 ? (
           <div className="py-10 text-center">

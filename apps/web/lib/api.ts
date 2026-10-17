@@ -1740,6 +1740,14 @@ export type ShadowCycle = {
   evidence: Record<string, unknown>;
 };
 
+export async function loadSimulationPerformance(): Promise<Record<string, unknown>> {
+  const value = await readJson("/api/shadow/performance");
+  if (!isRecord(value) || value.label !== "internal_100_simulation") {
+    throw new Error("Unexpected simulation performance");
+  }
+  return value;
+}
+
 export async function loadShadowStatus(): Promise<ShadowStatus> {
   const value = await readJson("/api/shadow/status");
   if (!isRecord(value) || value.trading_state !== "SHADOW_ONLY") {

@@ -358,6 +358,12 @@ export function AgentWorkspace() {
         </div>
         <ModeBadge mode={mode} runId={runId} />
       </header>
+      {detail.data?.verdict === "verification_failed" ? (
+        <p className="rounded-xl border border-[rgba(224,122,106,0.45)] bg-[rgba(224,122,106,0.08)] px-4 py-2 text-sm text-[var(--err)]">
+          verification_failed. The model finished, and the deterministic checker rejected one or more numbers. This is
+          not a trading decision.
+        </p>
+      ) : null}
 
       <section className="panel overflow-x-auto p-5">
         <div className="flex min-w-[720px] items-center justify-between gap-1">

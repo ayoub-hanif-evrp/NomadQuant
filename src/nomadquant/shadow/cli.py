@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import date
+from datetime import UTC, date, datetime
 from typing import Any
 
 from nomadquant.config import Settings, get_settings
@@ -85,6 +85,8 @@ def main(argv: list[str] | None = None) -> None:
         help="Release interrupted reservations and deliver shadow outbox (explicit).",
     )
 
+    sub.add_parser("quote-observe", help="Read one IEX quote. Does not fill or trade.")
+    sub.add_parser("supervise", help="Inspect the bounded daily workflow. Does not apply.")
     daily = sub.add_parser("daily", help="Supervised daily procedure. Default is inspect.")
     daily.add_argument("--mode", choices=["inspect", "dry-run", "shadow-apply"], default="inspect")
     daily.add_argument(
@@ -130,6 +132,14 @@ def _dispatch(args: argparse.Namespace, settings: Settings) -> int:
             return 1
         _print(payload)
         return 0 if payload.get("status") != "ERROR" else 1
+    if args.command == "quote-observe":
+        _print(_observe_quote(settings))
+        return 0
+    if args.command == "supervise":
+        from nomadquant.shadow.supervise import run_supervised
+
+        _print(run_supervised(settings, mode="inspect", sync=False))
+        return 0
     if args.command == "daily":
         code, payload = run_daily_operation(
             settings,
@@ -349,6 +359,66 @@ def _run_recover(settings: Settings) -> int:
     if outbox and outbox.get("errors"):
         return 1
     return 0
+
+
+def _observe_quote(settings: Settings) -> dict[str, Any]:
+    """Capture one read-only IEX quote and refuse a fill while the market is closed."""
+    from decimal import Decimal
+
+    from nomadquant.marketdata.live_quote import live_quotes
+    from nomadquant.overview import market_clock
+    from nomadquant.research.models import CostModel
+    from nomadquant.shadow.observed_quote import QuoteObservation, simulate_observed_fill
+
+    clock = market_clock(datetime.now(UTC))
+    payload = live_quotes(settings)
+    spy = (payload.get("quotes") or {}).get("SPY") or {}
+    quote = None
+    bid = spy.get("bid")
+    ask = spy.get("ask")
+    stamp = str(spy.get("quote_time") or "")
+    retrieved = _aware(str(payload.get("retrieved_at") or ""))
+    traded = _aware(stamp)
+    if bid is not None and ask is not None and traded is not None and retrieved is not None:
+        quote = QuoteObservation(
+            symbol="SPY",
+            feed="iex",
+            bid=Decimal(str(bid)),
+            ask=Decimal(str(ask)),
+            market_timestamp=traded,
+            retrieved_at=retrieved,
+            source="alpaca_snapshot_latest_quote",
+        )
+    decision = simulate_observed_fill(
+        quote,
+        side="buy",
+        decision_time=datetime.now(UTC),
+        market_open=clock.get("state") == "open",
+        cash=Decimal("100"),
+        held_quantity=Decimal("0"),
+        costs=CostModel(),
+    )
+    return {
+        "market_state": clock.get("state"),
+        "quote_status": payload.get("status"),
+        "quote_detail": payload.get("detail"),
+        "bid": None if bid is None else str(bid),
+        "ask": None if ask is None else str(ask),
+        "quote_time": stamp,
+        "decision": decision,
+        "ledger_mutated": False,
+        "broker_orders": False,
+    }
+
+
+def _aware(value: str) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else None
 
 
 def _print(payload: Any) -> None:
