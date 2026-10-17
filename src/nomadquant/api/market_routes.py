@@ -160,6 +160,14 @@ def market_freshness(request: Request) -> dict[str, Any]:
     }
 
 
+@router.get("/live-quote")
+def market_live_quote(request: Request) -> dict[str, Any]:
+    """Display-only IEX snapshot, cached for 15 seconds. Not a strategy input."""
+    from nomadquant.marketdata.live_quote import live_quotes
+
+    return live_quotes(request.app.state.settings)
+
+
 class SyncBody(BaseModel):
     confirm: str
 

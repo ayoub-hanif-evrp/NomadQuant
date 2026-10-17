@@ -2,22 +2,25 @@
 
 :root {
   color-scheme: dark;
-  --bg: #04060b;
-  --bg-2: #0a0f16;
-  --bg-3: #121a24;
-  --ink: #e2eaee;
-  --muted: #7b8f9c;
-  --card: rgba(14, 20, 30, 0.92);
-  --line: rgba(68, 168, 158, 0.14);
-  --line-strong: rgba(68, 168, 158, 0.28);
-  --cyan: #5ce4d4;
-  --teal: #2fa89a;
-  --violet: #9a8cff;
-  --ok: #6bc992;
-  --warn: #ddb56a;
-  --err: #dc9494;
-  --info: #7eb8d4;
-  --radius: 12px;
+  --bg: #050505;
+  --bg-2: #0b0a08;
+  --bg-3: #16130e;
+  --ink: #f3ede0;
+  --muted: #a39a87;
+  --card: rgba(18, 16, 12, 0.92);
+  --line: rgba(212, 175, 55, 0.16);
+  --line-strong: rgba(212, 175, 55, 0.34);
+  --gold: #e0b84f;
+  --gold-soft: #f2d58a;
+  --gold-deep: #9c7a26;
+  --cyan: var(--gold);
+  --teal: #b8902f;
+  --violet: #c79a6b;
+  --ok: #e6cf8b;
+  --warn: #f09a4a;
+  --err: #e07a6a;
+  --info: #9fb3c8;
+  --radius: 16px;
   --background: var(--bg);
   --foreground: var(--ink);
   --purple: var(--violet);
@@ -25,9 +28,9 @@
 
 body {
   background:
-    radial-gradient(820px 360px at 0% -8%, rgba(92, 228, 212, 0.06), transparent 58%),
-    radial-gradient(560px 320px at 100% 0%, rgba(154, 140, 255, 0.05), transparent 52%),
-    linear-gradient(180deg, var(--bg-2) 0%, var(--bg) 42%);
+    radial-gradient(900px 420px at 10% -10%, rgba(224, 184, 79, 0.08), transparent 60%),
+    radial-gradient(640px 360px at 100% 0%, rgba(156, 122, 38, 0.07), transparent 55%),
+    linear-gradient(180deg, var(--bg-2) 0%, var(--bg) 45%);
   color: var(--ink);
   font-family: var(--font-plex-sans), ui-sans-serif, system-ui, sans-serif;
   font-size: 15px;
@@ -43,11 +46,73 @@ kbd {
 
 .panel {
   border: 1px solid var(--line);
-  background: linear-gradient(180deg, rgba(18, 26, 36, 0.78), var(--card));
+  background: linear-gradient(180deg, rgba(24, 21, 15, 0.82), var(--card));
   border-radius: var(--radius);
   box-shadow:
-    0 0 0 1px rgba(92, 228, 212, 0.02),
-    0 10px 28px rgba(0, 0, 0, 0.28);
+    inset 0 1px 0 rgba(242, 213, 138, 0.06),
+    0 14px 36px rgba(0, 0, 0, 0.42);
+}
+
+.gold-text {
+  background: linear-gradient(100deg, #f7e3a6 0%, #e0b84f 45%, #9c7a26 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.gold-button {
+  background: linear-gradient(180deg, #f2d58a 0%, #d4a73c 100%);
+  color: #140e02;
+  font-weight: 650;
+  border-radius: 999px;
+  box-shadow: 0 6px 18px rgba(212, 167, 60, 0.25);
+  transition:
+    transform 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.gold-button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 24px rgba(212, 167, 60, 0.35);
+}
+
+.gold-button:disabled {
+  opacity: 0.45;
+  transform: none;
+}
+
+.ghost-button {
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  color: var(--gold-soft);
+  transition: background 160ms ease;
+}
+
+.ghost-button:hover {
+  background: rgba(224, 184, 79, 0.08);
+}
+
+@keyframes nq-sheen {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(220%);
+  }
+}
+
+.working-sheen {
+  position: relative;
+  overflow: hidden;
+}
+
+.working-sheen::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  width: 40%;
+  background: linear-gradient(90deg, transparent, rgba(242, 213, 138, 0.12), transparent);
+  animation: nq-sheen 1.6s ease-in-out infinite;
 }
 
 .kicker {
@@ -59,8 +124,8 @@ kbd {
 }
 
 .delay-badge {
-  border: 1px solid rgba(126, 184, 212, 0.45);
-  background: rgba(126, 184, 212, 0.12);
+  border: 1px solid rgba(159, 179, 200, 0.4);
+  background: rgba(159, 179, 200, 0.1);
   color: var(--info);
   border-radius: 999px;
   padding: 0.15rem 0.55rem;
@@ -94,7 +159,7 @@ kbd {
   position: fixed;
   inset: 0;
   z-index: 40;
-  background: rgba(2, 4, 8, 0.62);
+  background: rgba(3, 3, 2, 0.62);
   backdrop-filter: blur(2px);
 }
 
@@ -108,7 +173,7 @@ kbd {
   width: min(100%, 28rem);
   height: 100%;
   border-left: 1px solid var(--line-strong);
-  background: linear-gradient(180deg, rgba(14, 20, 30, 0.98), rgba(8, 12, 18, 0.98));
+  background: linear-gradient(180deg, rgba(18, 16, 12, 0.98), rgba(10, 9, 7, 0.98));
   box-shadow: -12px 0 40px rgba(0, 0, 0, 0.45);
 }
 

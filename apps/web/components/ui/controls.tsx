@@ -37,7 +37,7 @@ export function SegmentedControl<T extends string>({
             className={cn(
               "rounded-[10px] px-3 py-1.5 text-xs font-medium transition-colors",
               active
-                ? "bg-[rgba(92,228,212,0.12)] text-[var(--cyan)]"
+                ? "bg-[rgba(224,184,79,0.12)] text-[var(--cyan)]"
                 : "text-[var(--muted)] hover:text-[var(--ink)]",
             )}
           >
@@ -80,7 +80,7 @@ export function Tabs({
               className={cn(
                 "rounded-[var(--radius)] px-3 py-1.5 text-xs font-medium",
                 selected
-                  ? "bg-[rgba(92,228,212,0.1)] text-[var(--cyan)]"
+                  ? "bg-[rgba(224,184,79,0.1)] text-[var(--cyan)]"
                   : "text-[var(--muted)] hover:bg-[rgba(255,255,255,0.03)] hover:text-[var(--ink)]",
               )}
             >

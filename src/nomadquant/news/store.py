@@ -34,6 +34,16 @@ CREATE TABLE IF NOT EXISTS news_reviews (
     model TEXT NOT NULL DEFAULT '',
     report_json TEXT NOT NULL DEFAULT '{}'
 );
+CREATE TABLE IF NOT EXISTS news_fetches (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    started_at TEXT NOT NULL,
+    finished_at TEXT,
+    status TEXT NOT NULL,
+    source TEXT NOT NULL,
+    article_count INTEGER NOT NULL DEFAULT 0,
+    duration_ms INTEGER NOT NULL DEFAULT 0,
+    detail TEXT NOT NULL DEFAULT ''
+);
 """
 
 
@@ -110,6 +120,37 @@ class NewsStore:
                 "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
                 (payload,),
             )
+
+    def start_fetch(self, source: str) -> int:
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "INSERT INTO news_fetches (started_at, status, source) VALUES (?, 'running', ?)",
+                (datetime.now(UTC).isoformat(), source),
+            )
+            return int(cursor.lastrowid or 0)
+
+    def finish_fetch(
+        self, fetch_id: int, *, status: str, count: int, duration_ms: int, detail: str
+    ) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE news_fetches
+                SET finished_at = ?, status = ?, article_count = ?, duration_ms = ?, detail = ?
+                WHERE id = ?
+                """,
+                (datetime.now(UTC).isoformat(), status, count, duration_ms, detail, fetch_id),
+            )
+
+    def fetches(self, limit: int = 10) -> list[dict[str, Any]]:
+        try:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    "SELECT * FROM news_fetches ORDER BY id DESC LIMIT ?", (limit,)
+                ).fetchall()
+        except sqlite3.OperationalError:
+            return []
+        return [dict(row) for row in rows]
 
     def articles(self) -> list[dict[str, Any]]:
         with self._connect() as conn:

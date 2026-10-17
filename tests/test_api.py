@@ -262,6 +262,8 @@ def test_no_order_submission_endpoint(client: TestClient) -> None:
         "/api/approvals/{request_id}",
         "/api/approvals/{request_id}/decide",
         "/api/market-data/freshness",
+        "/api/market-data/live-quote",
+        "/api/overview",
         "/api/market-data/sync",
         "/api/copilot/ask",
         "/api/news/headlines",

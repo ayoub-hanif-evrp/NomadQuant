@@ -217,7 +217,7 @@ uv run nomadquant-agent inspect --run-id <agent-run-id>`}
                     onClick={() => setSelectedId(run.id)}
                     className={`w-full rounded-xl border px-3 py-2 text-left text-sm ${
                       selectedId === run.id
-                        ? "border-[rgba(103,240,224,0.35)] bg-[rgba(103,240,224,0.08)]"
+                        ? "border-[rgba(224,184,79,0.35)] bg-[rgba(224,184,79,0.08)]"
                         : "border-[var(--line)] hover:bg-[rgba(255,255,255,0.03)]"
                     }`}
                   >
@@ -265,7 +265,7 @@ uv run nomadquant-agent inspect --run-id <agent-run-id>`}
                     ) : null}
                     <Link
                       href={`/research?run=${detail.data.research_run_id}`}
-                      className="rounded-full border border-[rgba(103,240,224,0.3)] px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--cyan)]"
+                      className="rounded-full border border-[rgba(224,184,79,0.3)] px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--cyan)]"
                     >
                       Research #{detail.data.research_run_id}
                     </Link>

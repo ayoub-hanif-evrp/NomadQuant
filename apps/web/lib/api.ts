@@ -1979,12 +1979,28 @@ export type NewsHeadline = {
   symbols: string;
 };
 
-export async function loadNews(): Promise<{
+export type NewsFetch = {
+  id: number;
+  started_at: string;
+  finished_at: string | null;
+  status: string;
+  source: string;
+  article_count: number;
+  duration_ms: number;
+  detail: string;
+};
+
+export type NewsFeed = {
   status: string;
   detail?: string;
+  at?: string;
+  source: string;
   items: NewsHeadline[];
+  fetches: NewsFetch[];
   live: false;
-}> {
+};
+
+export async function loadNews(): Promise<NewsFeed> {
   const value = await readJson("/api/news/headlines");
   if (!isRecord(value) || !Array.isArray(value.items) || value.live !== false) {
     throw new Error("Unexpected news feed");
@@ -1992,15 +2008,106 @@ export async function loadNews(): Promise<{
   return {
     status: String(value.status),
     detail: typeof value.detail === "string" ? value.detail : undefined,
+    at: typeof value.at === "string" ? value.at : undefined,
+    source: typeof value.source === "string" ? value.source : "Alpaca News API",
     live: false,
     items: value.items.filter(isRecord).map((item) => item as NewsHeadline),
+    fetches: Array.isArray(value.fetches)
+      ? value.fetches.filter(isRecord).map((item) => item as NewsFetch)
+      : [],
   };
+}
+
+export type HomeCheck = {
+  key: string;
+  ok: boolean;
+  title: string;
+  detail: string;
+  action: "sync" | "start_pilot" | null;
+};
+
+export type HomeOverview = {
+  clock: {
+    now_new_york: string;
+    today: string;
+    weekday: string;
+    is_trading_day: boolean;
+    state: "open" | "pre_open" | "closed";
+    label: string;
+    next_open: string;
+    last_completed_session: string;
+  };
+  data: {
+    feed: string;
+    latest_stored: string | null;
+    latest_eligible: string | null;
+    missing_sessions: string[];
+    current: boolean;
+  };
+  trading: {
+    headline: string;
+    summary: string;
+    checks: HomeCheck[];
+    state: string;
+    next_rebalance: { signal_session: string; fill_session: string };
+    recent_decisions: Array<{ id: number; session: string; result: string }>;
+    simulated_fills: number;
+    alpaca_orders: "disabled";
+  };
+  portfolio: {
+    starting_usd: string;
+    equity_usd: string | null;
+    cash_usd: string | null;
+    holdings: Record<string, string>;
+    simulated_fills: number;
+  };
+  strategy: { id: string; plain: string };
+  broker_orders: false;
+};
+
+export async function loadHomeOverview(): Promise<HomeOverview> {
+  const value = await readJson("/api/overview");
+  if (!isRecord(value) || value.broker_orders !== false || !isRecord(value.clock)) {
+    throw new Error("Unexpected overview");
+  }
+  return value as HomeOverview;
+}
+
+export type LiveQuote = {
+  price: number;
+  trade_time: string;
+  session_open: number | null;
+  session_high: number | null;
+  session_low: number | null;
+  session_date: string;
+  previous_close: number | null;
+  change: number | null;
+  change_pct: number | null;
+};
+
+export type LiveQuotes = {
+  status: string;
+  detail: string;
+  feed: "iex";
+  label: string;
+  retrieved_at: string;
+  used_by_strategy: false;
+  quotes: Partial<Record<"SPY" | "QQQ", LiveQuote>>;
+};
+
+export async function loadLiveQuotes(): Promise<LiveQuotes> {
+  const value = await readJson("/api/market-data/live-quote");
+  if (!isRecord(value) || value.used_by_strategy !== false) {
+    throw new Error("Unexpected live quote");
+  }
+  return value as LiveQuotes;
 }
 
 export type CopilotAnswer = {
   answer: string;
   evidence_ids: string[];
   evidence: Array<{ id: string; source: string; text: string }>;
+  follow_ups: string[];
   mode: string;
   model: string | null;
   ollama_available: boolean;
@@ -2008,7 +2115,7 @@ export type CopilotAnswer = {
   broker_orders: false;
 };
 
-async function mutate<T>(path: string, body: unknown): Promise<T> {
+async function mutate<T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> {
   let response: Response;
   try {
     response = await fetch(`${API_URL}${path}`, {
@@ -2019,8 +2126,12 @@ async function mutate<T>(path: string, body: unknown): Promise<T> {
         "X-NomadQuant-Intent": "mutate",
       },
       body: JSON.stringify(body),
+      signal,
     });
-  } catch {
+  } catch (exc) {
+    if (exc instanceof DOMException && exc.name === "AbortError") {
+      throw exc;
+    }
     throw new Error("API unreachable");
   }
   if (!response.ok) {
@@ -2038,11 +2149,15 @@ async function mutate<T>(path: string, body: unknown): Promise<T> {
   return (await response.json()) as T;
 }
 
-export function askCopilot(question: string): Promise<CopilotAnswer> {
-  return mutate<CopilotAnswer>("/api/copilot/ask", { question });
+export function askCopilot(
+  question: string,
+  history: Array<{ role: "user" | "assistant"; content: string }> = [],
+  signal?: AbortSignal,
+): Promise<CopilotAnswer> {
+  return mutate<CopilotAnswer>("/api/copilot/ask", { question, history }, signal);
 }
 
-export function refreshNews(): Promise<{ status: string; detail?: string; items: NewsHeadline[] }> {
+export function refreshNews(): Promise<NewsFeed> {
   return mutate("/api/news/refresh", {});
 }
 

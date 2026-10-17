@@ -459,13 +459,13 @@ export function ShadowPortfolio() {
             <ResponsiveContainer>
               <LineChart data={chartData}>
                 <CartesianGrid stroke="rgba(255,255,255,0.06)" />
-                <XAxis dataKey="t" tick={{ fill: "#8b93a7", fontSize: 11 }} />
-                <YAxis tick={{ fill: "#8b93a7", fontSize: 11 }} domain={["auto", "auto"]} />
+                <XAxis dataKey="t" tick={{ fill: "#9a917f", fontSize: 11 }} />
+                <YAxis tick={{ fill: "#9a917f", fontSize: 11 }} domain={["auto", "auto"]} />
                 <Tooltip />
                 <Legend />
-                <Line type="monotone" dataKey="equity" stroke="#67f0e0" dot={false} strokeWidth={2} />
+                <Line type="monotone" dataKey="equity" stroke="#e8c766" dot={false} strokeWidth={2} />
                 <Line type="monotone" dataKey="cash" stroke="#d4a574" dot={false} strokeWidth={1.5} />
-                <Line type="monotone" dataKey="exposure" stroke="#9aa7ff" dot={false} strokeWidth={1.5} />
+                <Line type="monotone" dataKey="exposure" stroke="#c79a6b" dot={false} strokeWidth={1.5} />
               </LineChart>
             </ResponsiveContainer>
           </div>
@@ -478,7 +478,7 @@ export function ShadowPortfolio() {
                 <XAxis dataKey="t" hide />
                 <YAxis hide domain={["auto", "auto"]} />
                 <Tooltip />
-                <Area type="monotone" dataKey="exposure" stroke="#9aa7ff" fill="rgba(154,167,255,0.12)" />
+                <Area type="monotone" dataKey="exposure" stroke="#c79a6b" fill="rgba(199,154,107,0.12)" />
               </AreaChart>
             </ResponsiveContainer>
           </div>

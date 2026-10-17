@@ -34,23 +34,23 @@ export function MarketCandleChart({
       autoSize: true,
       layout: {
         background: { type: ColorType.Solid, color: "transparent" },
-        textColor: "#8ea3ab",
+        textColor: "#a39a87",
         fontFamily: "var(--font-plex-sans), sans-serif",
       },
       grid: {
-        vertLines: { color: "rgba(94, 214, 201, 0.06)" },
-        horzLines: { color: "rgba(94, 214, 201, 0.06)" },
+        vertLines: { color: "rgba(224, 184, 79, 0.05)" },
+        horzLines: { color: "rgba(224, 184, 79, 0.05)" },
       },
       crosshair: { mode: 1 },
-      rightPriceScale: { borderColor: "rgba(94, 214, 201, 0.16)" },
-      timeScale: { borderColor: "rgba(94, 214, 201, 0.16)", timeVisible: false },
+      rightPriceScale: { borderColor: "rgba(224, 184, 79, 0.16)" },
+      timeScale: { borderColor: "rgba(224, 184, 79, 0.16)", timeVisible: false },
     });
     chartRef.current = chart;
 
     const volumePane = chart.addSeries(HistogramSeries, {
       priceFormat: { type: "volume" },
       priceScaleId: "volume",
-      color: "rgba(103, 240, 224, 0.35)",
+      color: "rgba(224, 184, 79, 0.35)",
     });
     chart.priceScale("volume").applyOptions({
       scaleMargins: { top: 0.8, bottom: 0 },
@@ -59,12 +59,12 @@ export function MarketCandleChart({
     let priceSeries: ISeriesApi<"Candlestick"> | ISeriesApi<"Line">;
     if (mode === "candle") {
       priceSeries = chart.addSeries(CandlestickSeries, {
-        upColor: "#7ddea2",
-        downColor: "#f0a0a0",
-        borderUpColor: "#7ddea2",
-        borderDownColor: "#f0a0a0",
-        wickUpColor: "#7ddea2",
-        wickDownColor: "#f0a0a0",
+        upColor: "#e0b84f",
+        downColor: "#c9604f",
+        borderUpColor: "#e0b84f",
+        borderDownColor: "#c9604f",
+        wickUpColor: "#e0b84f",
+        wickDownColor: "#c9604f",
       });
       priceSeries.setData(
         bars.map((bar) => ({
@@ -77,7 +77,7 @@ export function MarketCandleChart({
       );
     } else {
       priceSeries = chart.addSeries(LineSeries, {
-        color: "#67f0e0",
+        color: "#e8c766",
         lineWidth: 2,
       });
       priceSeries.setData(
@@ -94,8 +94,8 @@ export function MarketCandleChart({
         value: Number(bar.volume),
         color:
           Number(bar.close) >= Number(bar.open)
-            ? "rgba(125, 222, 162, 0.35)"
-            : "rgba(240, 160, 160, 0.35)",
+            ? "rgba(230, 207, 139, 0.35)"
+            : "rgba(201, 96, 79, 0.35)",
       })),
     );
 

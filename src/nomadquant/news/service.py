@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 import urllib.error
 import urllib.request
 from typing import Any
@@ -24,6 +25,9 @@ _SCHEMA = {
 }
 
 
+SOURCE = "Alpaca News API (data.alpaca.markets)"
+
+
 def news_view(settings: Settings) -> dict[str, Any]:
     store = NewsStore.open_readonly(settings.news_path)
     if store is None:
@@ -31,6 +35,8 @@ def news_view(settings: Settings) -> dict[str, Any]:
             "status": "not_loaded",
             "detail": "News has not been requested. Nothing is invented in its place.",
             "items": [],
+            "fetches": [],
+            "source": SOURCE,
             "live": False,
             "broker_orders": False,
         }
@@ -38,6 +44,8 @@ def news_view(settings: Settings) -> dict[str, Any]:
     return {
         **meta,
         "items": store.articles(),
+        "fetches": store.fetches(),
+        "source": SOURCE,
         "live": False,
         "broker_orders": False,
         "note": "Headlines and links only. This is not a live quote and not a strategy change.",
@@ -51,8 +59,21 @@ def refresh_news(settings: Settings, *, opener: Any | None = None) -> dict[str, 
         "" if settings.alpaca_api_secret is None else settings.alpaca_api_secret.get_secret_value()
     )
     store = NewsStore(settings.news_path)
+    fetch_id = store.start_fetch(SOURCE)
+    started = time.monotonic()
+
+    def done(status: str, count: int, detail: str) -> None:
+        store.finish_fetch(
+            fetch_id,
+            status=status,
+            count=count,
+            duration_ms=int((time.monotonic() - started) * 1000),
+            detail=detail,
+        )
+
     if not key or not secret:
         store.record_status("unavailable", "Alpaca credentials are not configured.")
+        done("unavailable", 0, "Alpaca credentials are not configured.")
         return news_view(settings)
     query = urlencode({"symbols": "SPY,QQQ", "limit": 15})
     request = urllib.request.Request(
@@ -71,12 +92,15 @@ def refresh_news(settings: Settings, *, opener: Any | None = None) -> dict[str, 
     except urllib.error.HTTPError as exc:
         detail = "News entitlement was refused." if exc.code in {401, 403} else f"HTTP {exc.code}"
         store.record_status("unavailable", detail)
+        done("unavailable", 0, detail)
         return news_view(settings)
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError) as exc:
         store.record_status("unavailable", type(exc).__name__)
+        done("unavailable", 0, type(exc).__name__)
         return news_view(settings)
     articles = _articles(payload)
     store.replace_articles(articles, status="ok", detail=f"{len(articles)} headlines stored.")
+    done("ok", len(articles), f"{len(articles)} headlines stored.")
     return news_view(settings)
 
 

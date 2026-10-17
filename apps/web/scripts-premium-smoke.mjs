@@ -4,9 +4,9 @@ import path from "node:path";
 const out = path.resolve("../../docs/ui-shots");
 const base = "http://127.0.0.1:3000";
 const pages = [
-  ["premium-home", "/", "What is current"],
+  ["premium-home", "/", "Today at a glance"],
   ["premium-intelligence", "/decisions", "Why the system would act"],
-  ["premium-agents", "/agents", "Research review"],
+  ["premium-agents", "/agents", "Your AI research crew"],
   ["premium-markets", "/market", "Stored daily market"],
   ["premium-portfolio", "/portfolio", "Internal $100 shadow book"],
   ["premium-approvals", "/approvals", "Waiting for you"],
@@ -57,17 +57,22 @@ for (const [width, height] of viewports) {
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto(`${base}/`, { waitUntil: "networkidle", timeout: 60000 });
   await page.locator("canvas").first().waitFor({ timeout: 20000 });
+  await page.getByText("Chart shows finished daily bars through").waitFor({ timeout: 20000 });
   const body = await page.locator("body").innerText();
-  if (!body.includes("DELAYED")) fail("missing DELAYED badge");
-  if (!body.includes("2026-10-15") && !body.includes("October 15, 2026")) fail("missing stored session");
+  if (!body.includes("Oct 15, 2026")) fail("missing stored session");
+  if (!body.toLowerCase().includes("is the system working?")) fail("missing system status panel");
   await page.getByRole("button", { name: "QQQ" }).click();
   await page.getByRole("heading", { name: /^QQQ/ }).waitFor({ timeout: 20000 });
+  await page.screenshot({ path: path.join(out, "premium-home-scrolled-1280x800.png"), fullPage: true });
   await page.getByRole("button", { name: "Copilot" }).click();
-  await page.getByRole("heading", { name: "Ask about what is stored" }).waitFor();
-  await page.getByRole("button", { name: "How much virtual money do I currently have?" }).click();
-  await page.getByText("market.spy").or(page.getByText("scope.locks")).or(page.getByText("pilot.state")).first().waitFor({ timeout: 45000 });
-  const answer = await page.locator("aside").nth(1).innerText();
+  await page.getByRole("heading", { name: "Ask me anything about your app" }).waitFor();
+  await page.getByRole("button", { name: "How much virtual money do I have?" }).click();
+  const sources = page.getByRole("button", { name: /Show \d+ sources?/ });
+  await sources.first().waitFor({ timeout: 90000 });
+  await sources.first().click();
+  const answer = await page.locator("aside").last().innerText();
   if (answer.includes("999")) fail("assistant invented 999");
+  console.log("copilot-answer", answer.split("\n").slice(0, 12).join(" / ").slice(0, 600));
   await page.screenshot({ path: path.join(out, "premium-copilot-1280x800.png") });
   console.log("copilot", errors.length ? errors.join(" | ") : "ok");
   if (errors.length) fail(errors.join(" | "));
@@ -80,6 +85,7 @@ for (const [width, height] of viewports) {
   await page.goto(`${base}/agents`, { waitUntil: "networkidle", timeout: 60000 });
   const idle = await page.getByText("No review is running").count();
   console.log("agents-idle-copy", idle);
+  await page.screenshot({ path: path.join(out, "premium-agents-full-1280x800.png"), fullPage: true });
   const run = page.getByRole("button", { name: /Run \d+/ }).first();
   if (await run.count()) {
     await run.click();
@@ -102,7 +108,8 @@ for (const [width, height] of viewports) {
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   if (overflow > 1) fail(`mobile overflow ${overflow}`);
   await page.getByRole("button", { name: "Copilot" }).click();
-  await page.getByRole("heading", { name: "Ask about what is stored" }).waitFor();
+  await page.getByRole("heading", { name: "Ask me anything about your app" }).waitFor();
+  await page.waitForTimeout(600);
   await page.screenshot({ path: path.join(out, "premium-copilot-390x844.png") });
   if (errors.length) fail(errors.join(" | "));
   await context.close();

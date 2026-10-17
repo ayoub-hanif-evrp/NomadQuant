@@ -16,13 +16,13 @@ export type UiTone = "ok" | "warn" | "err" | "info";
 export function toneClasses(tone: string): string {
   switch (tone) {
     case "ok":
-      return "text-[var(--ok)] border-[rgba(107,201,146,0.35)]";
+      return "text-[var(--ok)] border-[rgba(230,207,139,0.35)]";
     case "warn":
-      return "text-[var(--warn)] border-[rgba(221,181,106,0.35)]";
+      return "text-[var(--warn)] border-[rgba(240,154,74,0.35)]";
     case "err":
       return "text-[var(--err)] border-[rgba(220,148,148,0.4)]";
     default:
-      return "text-[var(--cyan)] border-[rgba(92,228,212,0.28)]";
+      return "text-[var(--cyan)] border-[rgba(224,184,79,0.28)]";
   }
 }
 

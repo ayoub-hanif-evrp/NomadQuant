@@ -121,7 +121,7 @@ export function Activity() {
         </label>
         <button
           type="button"
-          className="rounded-xl border border-[rgba(103,240,224,0.3)] px-3 py-2 text-sm text-[var(--cyan)]"
+          className="rounded-xl border border-[rgba(224,184,79,0.3)] px-3 py-2 text-sm text-[var(--cyan)]"
           onClick={() => {
             setOffset(0);
             setQ(draftQ);
@@ -138,17 +138,17 @@ export function Activity() {
           <div className="h-40">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={histData}>
-                <CartesianGrid stroke="rgba(94,214,201,0.08)" vertical={false} />
-                <XAxis dataKey="t" tick={{ fill: "#8ea3ab", fontSize: 10 }} />
-                <YAxis tick={{ fill: "#8ea3ab", fontSize: 10 }} width={28} />
+                <CartesianGrid stroke="rgba(224,184,79,0.08)" vertical={false} />
+                <XAxis dataKey="t" tick={{ fill: "#a39a87", fontSize: 10 }} />
+                <YAxis tick={{ fill: "#a39a87", fontSize: 10 }} width={28} />
                 <Tooltip
                   contentStyle={{
-                    background: "#0d151c",
-                    border: "1px solid rgba(94,214,201,0.2)",
+                    background: "#0e0c09",
+                    border: "1px solid rgba(224,184,79,0.2)",
                     borderRadius: 12,
                   }}
                 />
-                <Bar dataKey="count" fill="#67f0e0" radius={[3, 3, 0, 0]} />
+                <Bar dataKey="count" fill="#e8c766" radius={[3, 3, 0, 0]} />
                 <Bar dataKey="errors" fill="#f0a0a0" radius={[3, 3, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>

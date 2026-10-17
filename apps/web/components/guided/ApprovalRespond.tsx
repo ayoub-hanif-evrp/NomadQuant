@@ -58,7 +58,7 @@ export function ApprovalRespond({ requestId }: { requestId: string }) {
             type="button"
             disabled={busy || !token}
             onClick={() => send("approve")}
-            className="rounded-lg bg-[var(--cyan)] px-3 py-2 font-semibold text-[#04120f]"
+            className="rounded-lg bg-[var(--cyan)] px-3 py-2 font-semibold text-[#140e02]"
           >
             Approve shadow permission
           </button>

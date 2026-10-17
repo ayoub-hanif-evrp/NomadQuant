@@ -17,17 +17,131 @@ class _Offline:
         return {"available": False, "models": []}
 
 
+_NO_QUOTES: dict[str, object] = {"status": "unavailable", "detail": "test", "quotes": {}}
+
+
 def test_copilot_answers_from_stored_cash_without_a_model(tmp_path: Path) -> None:
     settings = make_settings(tmp_path)
     result = answer_question(
         settings,
         "How much virtual money do I currently have?",
         provider=_Offline(),  # type: ignore[arg-type]
+        quotes=_NO_QUOTES,
     )
     assert result["broker_orders"] is False
     assert result["mode"] == "stored_records"
-    assert "100" in result["answer"] or "unavailable" in result["answer"]
-    assert result["evidence_ids"]
+    assert "100" in result["answer"]
+    assert result["evidence_ids"] == ["portfolio"]
+    assert result["follow_ups"]
+
+
+def test_copilot_explains_why_there_is_no_trade(tmp_path: Path) -> None:
+    result = answer_question(
+        make_settings(tmp_path),
+        "Why didn't the system buy SPY?",
+        provider=_Offline(),  # type: ignore[arg-type]
+        quotes=_NO_QUOTES,
+    )
+    assert "trading.reasons" in result["evidence_ids"]
+    assert "first trading day of a month" in result["answer"]
+
+
+def test_copilot_keeps_a_grounded_model_answer_and_history(tmp_path: Path) -> None:
+    seen: dict[str, object] = {}
+
+    class _Grounded:
+        def health(self, timeout: float = 2.0) -> dict[str, object]:
+            return {"available": True, "models": ["qwen3.5:9b"]}
+
+        def chat_json(self, _model: str, messages: list[dict[str, str]], *_a: object, **_k: object):
+            seen["messages"] = messages
+            return {
+                "answer": "Your internal book holds 100 USD in cash.",
+                "used_evidence_ids": ["portfolio"],
+                "follow_ups": ["Why are there no trades yet?"],
+            }
+
+    settings = make_settings(tmp_path)
+    settings.ollama_model = "qwen3.5:9b"
+    result = answer_question(
+        settings,
+        "And how much cash?",
+        history=[{"role": "user", "content": "Hello"}, {"role": "assistant", "content": "Hi"}],
+        provider=_Grounded(),  # type: ignore[arg-type]
+        quotes=_NO_QUOTES,
+    )
+    assert result["mode"] == "local_model"
+    assert result["follow_ups"] == ["Why are there no trades yet?"]
+    roles = [item["role"] for item in seen["messages"]]  # type: ignore[union-attr]
+    assert roles == ["system", "user", "assistant", "user"]
+
+
+def test_live_quote_is_display_only_and_skips_network_without_keys(tmp_path: Path) -> None:
+    from nomadquant.marketdata.live_quote import clear_cache, live_quotes
+
+    clear_cache()
+    body = live_quotes(make_settings(tmp_path))
+    clear_cache()
+    assert body["status"] == "unavailable"
+    assert body["used_by_strategy"] is False
+    assert body["feed"] == "iex"
+
+
+def test_live_quote_parses_an_iex_snapshot(tmp_path: Path) -> None:
+    import io
+
+    from pydantic import SecretStr
+
+    from nomadquant.marketdata.live_quote import clear_cache, live_quotes
+
+    snapshot = {
+        "SPY": {
+            "latestTrade": {"p": 763.31, "t": "2026-10-16T20:47:54Z"},
+            "dailyBar": {
+                "o": 760.0,
+                "h": 765.0,
+                "l": 758.0,
+                "c": 763.0,
+                "v": 10,
+                "t": "2026-10-16",
+            },
+            "prevDailyBar": {"c": 760.0},
+        }
+    }
+
+    class _Opener:
+        def open(self, request: object, timeout: float) -> io.BytesIO:
+            assert "feed=iex" in request.full_url  # type: ignore[attr-defined]
+            return io.BytesIO(json.dumps(snapshot).encode())
+
+    settings = make_settings(tmp_path)
+    settings.alpaca_api_key = SecretStr("key")
+    settings.alpaca_api_secret = SecretStr("secret")
+    clear_cache()
+    body = live_quotes(settings, opener=_Opener())
+    clear_cache()
+    assert body["status"] == "ok"
+    assert body["quotes"]["SPY"]["price"] == 763.31
+    assert body["quotes"]["SPY"]["change"] == 3.31
+
+
+def test_overview_explains_trading_state_from_records(tmp_path: Path) -> None:
+    from datetime import UTC, datetime
+
+    from nomadquant.overview import next_rebalance, overview
+
+    view = overview(make_settings(tmp_path), now=datetime(2026, 10, 17, 12, 0, tzinfo=UTC))
+    assert view["clock"]["weekday"] == "Saturday"
+    assert view["clock"]["state"] == "closed"
+    assert view["clock"]["next_open"].startswith("2026-10-19T09:30")
+    assert view["trading"]["next_rebalance"] == {
+        "signal_session": "2026-11-02",
+        "fill_session": "2026-11-03",
+    }
+    assert view["broker_orders"] is False
+    from datetime import date
+
+    assert next_rebalance(date(2026, 10, 1))["signal_session"] == "2026-10-01"
 
 
 def test_copilot_post_requires_the_local_header(tmp_path: Path) -> None:
@@ -56,6 +170,9 @@ def test_news_refresh_without_credentials_does_not_call_the_network(tmp_path: Pa
     assert response.status_code == 200
     assert response.json()["status"] == "unavailable"
     assert response.json()["items"] == []
+    fetches = response.json()["fetches"]
+    assert fetches[0]["status"] == "unavailable"
+    assert fetches[0]["finished_at"]
 
 
 def test_sync_requires_phrase_and_does_not_download_without_it(
@@ -138,6 +255,7 @@ def test_model_answer_with_an_extra_price_is_discarded(tmp_path: Path) -> None:
         settings,
         "What is the latest SPY price?",
         provider=_Talkative(),  # type: ignore[arg-type]
+        quotes=_NO_QUOTES,
     )
     assert "999.99" not in result["answer"]
     assert result["mode"] == "stored_records"

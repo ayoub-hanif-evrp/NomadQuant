@@ -16,14 +16,14 @@ import {
 import type { ResearchEquityPoint, ResearchSimulatedTrade } from "@/lib/api";
 
 const STRATEGY_COLORS: Record<string, string> = {
-  spy_tsmom_12_1: "#67f0e0",
-  spy_buy_hold: "#f0c36c",
-  cash: "#8ea3ab",
-  tsmom_6m: "#9b87ff",
+  spy_tsmom_12_1: "#e8c766",
+  spy_buy_hold: "#f09a4a",
+  cash: "#a39a87",
+  tsmom_6m: "#c79a6b",
 };
 
 function colorFor(id: string, index: number): string {
-  return STRATEGY_COLORS[id] ?? ["#67f0e0", "#f0c36c", "#7dde9e", "#93a1b5", "#f0a3a3"][index % 5];
+  return STRATEGY_COLORS[id] ?? ["#e8c766", "#f09a4a", "#e6cf8b", "#9a917f", "#f0a3a3"][index % 5];
 }
 
 function alignEquity(
@@ -83,16 +83,16 @@ export function ResearchEquityChart({
     <div className="h-[360px] w-full" role="img" aria-label="Equity comparison chart">
       <ResponsiveContainer width="100%" height="100%">
         <LineChart data={data} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
-          <CartesianGrid stroke="rgba(94,214,201,0.08)" />
-          <XAxis dataKey="session_date" tick={{ fill: "#8ea3ab", fontSize: 11 }} minTickGap={40} />
-          <YAxis tick={{ fill: "#8ea3ab", fontSize: 11 }} width={56} domain={["auto", "auto"]} />
+          <CartesianGrid stroke="rgba(224,184,79,0.08)" />
+          <XAxis dataKey="session_date" tick={{ fill: "#a39a87", fontSize: 11 }} minTickGap={40} />
+          <YAxis tick={{ fill: "#a39a87", fontSize: 11 }} width={56} domain={["auto", "auto"]} />
           <Tooltip
             contentStyle={{
-              background: "#0d151c",
-              border: "1px solid rgba(94,214,201,0.2)",
+              background: "#0e0c09",
+              border: "1px solid rgba(224,184,79,0.2)",
               borderRadius: 12,
             }}
-            labelStyle={{ color: "#e8f3f2" }}
+            labelStyle={{ color: "#f3ede0" }}
           />
           <Legend />
           {visibleStrategies.map((id, index) => (
@@ -111,7 +111,7 @@ export function ResearchEquityChart({
                       cy={props.cy}
                       r={3.5}
                       fill={colorFor(id, index)}
-                      stroke="#070b10"
+                      stroke="#080706"
                     />
                   );
                 }
@@ -158,24 +158,24 @@ export function ResearchDrawdownChart({
     <div className="h-[260px] w-full" role="img" aria-label="Drawdown chart">
       <ResponsiveContainer width="100%" height="100%">
         <AreaChart data={data} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
-          <CartesianGrid stroke="rgba(94,214,201,0.08)" />
-          <XAxis dataKey="session_date" tick={{ fill: "#8ea3ab", fontSize: 11 }} minTickGap={40} />
+          <CartesianGrid stroke="rgba(224,184,79,0.08)" />
+          <XAxis dataKey="session_date" tick={{ fill: "#a39a87", fontSize: 11 }} minTickGap={40} />
           <YAxis
-            tick={{ fill: "#8ea3ab", fontSize: 11 }}
+            tick={{ fill: "#a39a87", fontSize: 11 }}
             width={48}
             tickFormatter={(value: number) => `${value.toFixed(0)}%`}
             label={{
               value: "Drawdown % (negative = underwater)",
               angle: -90,
               position: "insideLeft",
-              fill: "#8ea3ab",
+              fill: "#a39a87",
               fontSize: 10,
             }}
           />
           <Tooltip
             contentStyle={{
-              background: "#0d151c",
-              border: "1px solid rgba(94,214,201,0.2)",
+              background: "#0e0c09",
+              border: "1px solid rgba(224,184,79,0.2)",
               borderRadius: 12,
             }}
             formatter={(value) => [`${Number(value).toFixed(2)}%`, "Drawdown"]}
@@ -236,17 +236,17 @@ export function ResearchExposureChart({
         <p className="mb-1 text-[11px] text-[var(--muted)]">Cash (USD)</p>
         <ResponsiveContainer width="100%" height="90%">
           <AreaChart data={data} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
-            <CartesianGrid stroke="rgba(94,214,201,0.08)" />
-            <XAxis dataKey="session_date" tick={{ fill: "#8ea3ab", fontSize: 11 }} minTickGap={40} />
+            <CartesianGrid stroke="rgba(224,184,79,0.08)" />
+            <XAxis dataKey="session_date" tick={{ fill: "#a39a87", fontSize: 11 }} minTickGap={40} />
             <YAxis
-              tick={{ fill: "#8ea3ab", fontSize: 11 }}
+              tick={{ fill: "#a39a87", fontSize: 11 }}
               width={56}
               tickFormatter={(value: number) => `$${value.toFixed(0)}`}
             />
             <Tooltip
               contentStyle={{
-                background: "#0d151c",
-                border: "1px solid rgba(94,214,201,0.2)",
+                background: "#0e0c09",
+                border: "1px solid rgba(224,184,79,0.2)",
                 borderRadius: 12,
               }}
               formatter={(value) => [`$${Number(value).toFixed(2)}`, "Cash (USD)"]}
@@ -255,8 +255,8 @@ export function ResearchExposureChart({
               type="monotone"
               dataKey="cash_usd"
               name="Cash (USD)"
-              stroke="#8ea3ab"
-              fill="#8ea3ab"
+              stroke="#a39a87"
+              fill="#a39a87"
               fillOpacity={0.2}
               isAnimationActive={false}
             />
@@ -267,18 +267,18 @@ export function ResearchExposureChart({
         <p className="mb-1 text-[11px] text-[var(--muted)]">Exposure (% of equity, 0–100)</p>
         <ResponsiveContainer width="100%" height="90%">
           <AreaChart data={data} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
-            <CartesianGrid stroke="rgba(94,214,201,0.08)" />
-            <XAxis dataKey="session_date" tick={{ fill: "#8ea3ab", fontSize: 11 }} minTickGap={40} />
+            <CartesianGrid stroke="rgba(224,184,79,0.08)" />
+            <XAxis dataKey="session_date" tick={{ fill: "#a39a87", fontSize: 11 }} minTickGap={40} />
             <YAxis
-              tick={{ fill: "#8ea3ab", fontSize: 11 }}
+              tick={{ fill: "#a39a87", fontSize: 11 }}
               width={48}
               domain={[0, 100]}
               tickFormatter={(value: number) => `${value}%`}
             />
             <Tooltip
               contentStyle={{
-                background: "#0d151c",
-                border: "1px solid rgba(94,214,201,0.2)",
+                background: "#0e0c09",
+                border: "1px solid rgba(224,184,79,0.2)",
                 borderRadius: 12,
               }}
               formatter={(value) => [`${Number(value).toFixed(1)}%`, "Exposure"]}
@@ -287,8 +287,8 @@ export function ResearchExposureChart({
               type="monotone"
               dataKey="exposure_pct"
               name="Exposure %"
-              stroke="#67f0e0"
-              fill="#67f0e0"
+              stroke="#e8c766"
+              fill="#e8c766"
               fillOpacity={0.2}
               isAnimationActive={false}
             />

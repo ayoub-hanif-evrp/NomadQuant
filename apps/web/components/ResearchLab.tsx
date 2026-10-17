@@ -122,7 +122,7 @@ export function ResearchLab() {
                   onClick={() => setSelectedRunId(run.id)}
                   className={`w-full rounded-xl border px-3 py-2 text-left text-sm transition-colors ${
                     effectiveRunId === run.id
-                      ? "border-[rgba(103,240,224,0.35)] bg-[rgba(103,240,224,0.08)]"
+                      ? "border-[rgba(224,184,79,0.35)] bg-[rgba(224,184,79,0.08)]"
                       : "border-[var(--line)] hover:bg-[rgba(255,255,255,0.03)]"
                   }`}
                 >
@@ -218,7 +218,7 @@ export function ResearchLab() {
                         }}
                         className={`rounded-full border px-2.5 py-1 text-[11px] ${
                           on
-                            ? "border-[rgba(103,240,224,0.35)] text-[var(--cyan)]"
+                            ? "border-[rgba(224,184,79,0.35)] text-[var(--cyan)]"
                             : "border-[var(--line)] text-[var(--muted)]"
                         }`}
                       >

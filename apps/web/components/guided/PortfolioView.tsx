@@ -45,9 +45,9 @@ export function PortfolioView() {
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={points}>
                 <XAxis dataKey="at" hide />
-                <YAxis domain={["auto", "auto"]} stroke="#7b8f9c" />
+                <YAxis domain={["auto", "auto"]} stroke="#9a917f" />
                 <Tooltip />
-                <Area dataKey="equity" stroke="#5ce4d4" fill="rgba(92,228,212,0.18)" />
+                <Area dataKey="equity" stroke="#e0b84f" fill="rgba(224,184,79,0.18)" />
               </AreaChart>
             </ResponsiveContainer>
           </div>

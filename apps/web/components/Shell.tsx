@@ -27,32 +27,42 @@ import {
   type FormEvent,
   type ReactNode,
 } from "react";
+import { AnimatePresence } from "motion/react";
 import { cn } from "@/lib/cn";
-import { connectionLabel, connectionState, connectionTone } from "@/lib/connection";
+import { connectionState } from "@/lib/connection";
 import { useRefreshAll, useSystemHealth } from "@/lib/hooks";
+import { BotIcon } from "@/components/icons/animated/bot";
+import { ChartLineIcon } from "@/components/icons/animated/chart-line";
+import { HomeIcon } from "@/components/icons/animated/home";
+import { LayersIcon } from "@/components/icons/animated/layers";
+import { SettingsIcon } from "@/components/icons/animated/settings";
+import { ShieldCheckIcon } from "@/components/icons/animated/shield-check";
+import { SparklesIcon } from "@/components/icons/animated/sparkles";
+import { WalletIcon } from "@/components/icons/animated/wallet";
 import { CopilotPanel } from "@/components/terminal/CopilotPanel";
-import { Badge, StatusDot } from "@/components/ui";
+import { AnimatedIcon, Pill, type AnimatedIconComponent } from "@/components/terminal/kit";
 
 type NavItem = {
   href: string;
   label: string;
   icon: typeof LayoutDashboard;
   available: boolean;
+  animated?: AnimatedIconComponent;
 };
 
 type NavGroup = { title: string; items: NavItem[] };
 
 const NAV: NavGroup[] = [
   {
-    title: "Guided",
+    title: "Menu",
     items: [
-      { href: "/", label: "Home", icon: LayoutDashboard, available: true },
-      { href: "/decisions", label: "Intelligence", icon: Workflow, available: true },
-      { href: "/agents", label: "Agents", icon: Bot, available: true },
-      { href: "/market", label: "Markets", icon: LineChart, available: true },
-      { href: "/portfolio", label: "Portfolio", icon: LineChart, available: true },
-      { href: "/approvals", label: "Approvals", icon: ShieldAlert, available: true },
-      { href: "/advanced", label: "Advanced", icon: FlaskConical, available: true },
+      { href: "/", label: "Home", icon: LayoutDashboard, animated: HomeIcon, available: true },
+      { href: "/decisions", label: "Intelligence", icon: Workflow, animated: LayersIcon, available: true },
+      { href: "/agents", label: "Agents", icon: Bot, animated: BotIcon, available: true },
+      { href: "/market", label: "Markets", icon: LineChart, animated: ChartLineIcon, available: true },
+      { href: "/portfolio", label: "Portfolio", icon: LineChart, animated: WalletIcon, available: true },
+      { href: "/approvals", label: "Approvals", icon: ShieldAlert, animated: ShieldCheckIcon, available: true },
+      { href: "/advanced", label: "Advanced", icon: FlaskConical, animated: SettingsIcon, available: true },
     ],
   },
 ];
@@ -96,6 +106,8 @@ export function Shell({ children }: { children: ReactNode }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [copilotOpen, setCopilotOpen] = useState(false);
+  const [hovered, setHovered] = useState<string | null>(null);
+  const [nyTime, setNyTime] = useState("");
   const [refreshing, setRefreshing] = useState(false);
   const [manualRefreshAt, setManualRefreshAt] = useState<number | null>(null);
 
@@ -109,6 +121,21 @@ export function Shell({ children }: { children: ReactNode }) {
       /* ignore */
     }
   }, [collapsed]);
+
+  useEffect(() => {
+    const tick = () =>
+      setNyTime(
+        new Date().toLocaleString("en-US", {
+          weekday: "short",
+          hour: "numeric",
+          minute: "2-digit",
+          timeZone: "America/New_York",
+        }),
+      );
+    tick();
+    const timer = window.setInterval(tick, 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
@@ -152,39 +179,27 @@ export function Shell({ children }: { children: ReactNode }) {
     error: health.error,
     staleAfterMs: 60_000,
   });
-  const brokerTone =
-    apiState === "loading" || apiState === "disconnected"
-      ? "info"
-      : health.data?.broker_status === "connected"
-        ? "ok"
-        : health.data?.broker_status === "error"
-          ? "err"
-          : "warn";
+  const systemOk = apiState !== "disconnected" && health.data?.broker_status !== "error";
 
   const sidebar = (
     <aside
       className={cn(
-        "flex h-full flex-col border-[var(--line)] bg-[rgba(6,10,16,0.96)] transition-[width] duration-200",
+        "flex h-full flex-col border-[var(--line)] bg-[linear-gradient(180deg,#0c0a07,#050505)] transition-[width] duration-200",
         collapsed ? "w-[72px]" : "w-[248px]",
         "border-r",
       )}
     >
-      <div className={cn("flex items-center gap-3 px-4 py-5", collapsed && "justify-center px-2")}>
-        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-[rgba(103,240,224,0.28)] bg-[rgba(103,240,224,0.08)] font-mono text-sm font-semibold text-[var(--cyan)]">
+      <div className={cn("flex items-center gap-3 px-4 py-6", collapsed && "justify-center px-2")}>
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[linear-gradient(140deg,#f7e3a6,#d4a73c_55%,#8a6a1f)] font-mono text-sm font-bold text-[#140e02] shadow-[0_6px_20px_rgba(212,167,60,0.35)]">
           NQ
         </div>
         {!collapsed ? (
           <div className="min-w-0">
-            <p className="truncate text-sm font-semibold tracking-tight">NomadQuant</p>
-            <p className="truncate text-[11px] text-[var(--muted)]">Research terminal</p>
+            <p className="gold-text truncate text-base font-semibold tracking-tight">NomadQuant</p>
+            <p className="truncate text-xs text-[var(--muted)]">Intelligence in motion</p>
           </div>
         ) : null}
       </div>
-      {!collapsed ? (
-        <p className="mx-4 mb-3 inline-flex w-fit rounded-full border border-[rgba(240,195,108,0.35)] bg-[rgba(240,195,108,0.08)] px-2.5 py-1 text-[10px] font-semibold tracking-wide text-[var(--warn)]">
-          PAPER ONLY
-        </p>
-      ) : null}
       <nav className="flex-1 overflow-y-auto px-2 pb-4">
         {NAV.map((group) => (
           <div key={group.title} className="mb-4">
@@ -206,16 +221,25 @@ export function Shell({ children }: { children: ReactNode }) {
                       href={item.href}
                       title={collapsed ? item.label : undefined}
                       onClick={() => setMobileOpen(false)}
+                      onMouseEnter={() => setHovered(item.href)}
+                      onMouseLeave={() => setHovered(null)}
                       className={cn(
-                        "group flex items-center gap-3 rounded-xl px-3 py-2 text-sm transition-colors",
+                        "group relative flex items-center gap-3 rounded-xl px-3 py-2.5 text-[15px] transition-colors",
                         active
-                          ? "bg-[rgba(103,240,224,0.12)] text-[var(--cyan)]"
-                          : "text-[var(--muted)] hover:bg-[rgba(255,255,255,0.04)] hover:text-[var(--ink)]",
+                          ? "bg-[linear-gradient(90deg,rgba(224,184,79,0.18),rgba(224,184,79,0.04))] text-[var(--gold-soft)]"
+                          : "text-[var(--muted)] hover:bg-[rgba(224,184,79,0.05)] hover:text-[var(--ink)]",
                         !item.available && "opacity-55",
                         collapsed && "justify-center px-2",
                       )}
                     >
-                      <Icon className="h-4 w-4 shrink-0" aria-hidden />
+                      {active ? (
+                        <span className="absolute inset-y-2 left-0 w-[3px] rounded-full bg-[var(--gold)]" />
+                      ) : null}
+                      {item.animated ? (
+                        <AnimatedIcon icon={item.animated} active={hovered === item.href} size={18} />
+                      ) : (
+                        <Icon className="h-4 w-4 shrink-0" aria-hidden />
+                      )}
                       {!collapsed ? (
                         <span className="flex min-w-0 flex-1 items-center justify-between gap-2">
                           <span className="truncate">{item.label}</span>
@@ -262,7 +286,7 @@ export function Shell({ children }: { children: ReactNode }) {
       ) : null}
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-30 flex flex-wrap items-center gap-3 border-b border-[var(--line)] bg-[rgba(7,11,16,0.92)] px-4 py-3 backdrop-blur-md md:px-6">
+        <header className="sticky top-0 z-30 flex flex-wrap items-center gap-3 border-b border-[var(--line)] bg-[rgba(9,8,6,0.92)] px-4 py-3 backdrop-blur-md md:px-6">
           <button
             type="button"
             className="rounded-lg border border-[var(--line)] p-2 text-[var(--muted)] md:hidden"
@@ -276,47 +300,38 @@ export function Shell({ children }: { children: ReactNode }) {
             <h1 className="truncate text-base font-semibold tracking-tight">{pageTitle(pathname)}</h1>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <Badge tone={connectionTone(apiState)}>
-              <StatusDot tone={connectionTone(apiState)} />
-              API {connectionLabel(apiState)}
-            </Badge>
-            <Badge tone={brokerTone}>
-              Broker{" "}
-              {apiState === "loading"
-                ? "…"
-                : apiState === "disconnected"
-                  ? "unreachable"
-                  : (health.data?.broker_status ?? "unknown")}
-            </Badge>
-            <Badge tone="warn">Paper · no orders</Badge>
-            {lastRefresh ? (
-              <span className="hidden text-[11px] text-[var(--muted)] lg:inline">
-                Updated {lastRefresh.toLocaleTimeString()}
-              </span>
+            {nyTime ? (
+              <span className="hidden font-mono text-sm text-[var(--muted)] lg:inline">{nyTime} New York</span>
             ) : null}
+            <Pill tone={apiState === "loading" ? "muted" : systemOk ? "ok" : "err"}>
+              {apiState === "loading" ? "Connecting…" : systemOk ? "System OK" : "Needs attention"}
+            </Pill>
+            <Pill tone="muted">Paper only</Pill>
             <button
               type="button"
               onClick={() => void onRefresh()}
-              className="inline-flex items-center gap-1.5 rounded-xl border border-[var(--line)] px-2.5 py-1.5 text-xs text-[var(--muted)] hover:text-[var(--ink)]"
+              className="ghost-button inline-flex items-center gap-1.5 px-3 py-1.5 text-xs"
               aria-label="Refresh data"
+              title={lastRefresh ? `Updated ${lastRefresh.toLocaleTimeString()}` : undefined}
             >
               <RefreshCw className={cn("h-3.5 w-3.5", refreshing && "animate-spin")} />
               Refresh
             </button>
             <button
               type="button"
-              onClick={() => setCopilotOpen(true)}
-              className="inline-flex items-center gap-1.5 rounded-xl border border-[rgba(103,240,224,0.28)] px-2.5 py-1.5 text-xs text-[var(--cyan)]"
-            >
-              Copilot
-            </button>
-            <button
-              type="button"
               onClick={() => setPaletteOpen(true)}
-              className="inline-flex items-center gap-1.5 rounded-xl border border-[var(--line)] px-2.5 py-1.5 text-xs text-[var(--muted)]"
+              className="hidden items-center gap-1.5 rounded-full border border-[var(--line)] px-3 py-1.5 text-xs text-[var(--muted)] md:inline-flex"
             >
               <Command className="h-3.5 w-3.5" />
               Ctrl+K
+            </button>
+            <button
+              type="button"
+              onClick={() => setCopilotOpen(true)}
+              className="gold-button inline-flex items-center gap-1.5 px-4 py-1.5 text-sm"
+            >
+              <AnimatedIcon icon={SparklesIcon} size={16} />
+              Copilot
             </button>
           </div>
         </header>
@@ -326,7 +341,9 @@ export function Shell({ children }: { children: ReactNode }) {
       {paletteOpen ? (
         <CommandPalette onClose={() => setPaletteOpen(false)} onNavigate={navigate} />
       ) : null}
-      {copilotOpen ? <CopilotPanel onClose={() => setCopilotOpen(false)} /> : null}
+      <AnimatePresence>
+        {copilotOpen ? <CopilotPanel key="copilot" onClose={() => setCopilotOpen(false)} /> : null}
+      </AnimatePresence>
     </div>
   );
 }
@@ -381,7 +398,7 @@ function CommandPalette({
               <li key={item.href}>
                 <button
                   type="button"
-                  className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm hover:bg-[rgba(103,240,224,0.08)]"
+                  className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm hover:bg-[rgba(224,184,79,0.08)]"
                   onClick={() => onNavigate(item.href)}
                 >
                   <Icon className="h-4 w-4 text-[var(--cyan)]" />

@@ -293,17 +293,17 @@ export function Overview() {
             <div className="h-48">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={histData}>
-                  <CartesianGrid stroke="rgba(94,214,201,0.08)" vertical={false} />
-                  <XAxis dataKey="t" tick={{ fill: "#8ea3ab", fontSize: 10 }} />
-                  <YAxis tick={{ fill: "#8ea3ab", fontSize: 10 }} width={28} />
+                  <CartesianGrid stroke="rgba(224,184,79,0.08)" vertical={false} />
+                  <XAxis dataKey="t" tick={{ fill: "#a39a87", fontSize: 10 }} />
+                  <YAxis tick={{ fill: "#a39a87", fontSize: 10 }} width={28} />
                   <Tooltip
                     contentStyle={{
-                      background: "#0d151c",
-                      border: "1px solid rgba(94,214,201,0.2)",
+                      background: "#0e0c09",
+                      border: "1px solid rgba(224,184,79,0.2)",
                       borderRadius: 12,
                     }}
                   />
-                  <Bar dataKey="count" fill="#67f0e0" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="count" fill="#e8c766" radius={[4, 4, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -465,7 +465,7 @@ export function Overview() {
 
 function StatusChip({ label, value, ok }: { label: string; value: string; ok: boolean }) {
   return (
-    <div className="rounded-xl border border-[var(--line)] bg-[rgba(10,16,22,0.7)] px-3 py-2">
+    <div className="rounded-xl border border-[var(--line)] bg-[rgba(12,10,7,0.7)] px-3 py-2">
       <p className="text-[10px] uppercase tracking-wide text-[var(--muted)]">{label}</p>
       <p className={`mt-1 truncate text-xs font-semibold ${ok ? "text-[var(--ok)]" : "text-[var(--warn)]"}`}>
         {value}
