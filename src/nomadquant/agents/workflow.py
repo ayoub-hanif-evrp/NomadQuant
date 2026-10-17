@@ -251,6 +251,7 @@ def run_research_review(
     max_calls_per_stage: int = DEFAULT_MAX_CALLS_PER_STAGE,
     max_turns_per_stage: int = MAX_TURNS_PER_STAGE,
     timeout: float = DEFAULT_TIMEOUT_SECONDS,
+    on_run_created: Callable[[int], None] | None = None,
 ) -> dict[str, Any]:
     """Run (or resume) the three-stage review and return the persisted run detail."""
     if provider is None and chat_fn is None:
@@ -290,6 +291,8 @@ def run_research_review(
             config=config,
         )
     agent_run_id = int(run_row["id"])
+    if on_run_created is not None:
+        on_run_created(agent_run_id)
     _audit(audit, agent_run_id, "agent.run.started", "started", "Agent review started", "")
 
     if research_run is None or research_run["status"] != "succeeded":

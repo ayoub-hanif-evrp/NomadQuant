@@ -270,6 +270,8 @@ def test_no_order_submission_endpoint(client: TestClient) -> None:
         "/api/news/refresh",
         "/api/news/analyze",
         "/api/agents/reviews",
+        "/api/agents/jobs",
+        "/api/agents/jobs/{job_id}",
     }
     from nomadquant.api.mutations import assert_route_safety
 

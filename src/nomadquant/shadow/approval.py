@@ -16,7 +16,15 @@ from nomadquant.shadow.store import ShadowStore
 APPROVAL_KEY = "shadow_apply_approval"
 SCHEDULE_KEY = "scheduled_shadow_cycles"
 AUDIT_KEY = "shadow_authorization_audit"
-APPROVABLE_STATES = frozenset({"READY_TO_START"})
+APPROVABLE_STATES = frozenset({"READY_TO_START", "AWAITING_USER_APPROVAL"})
+ARMABLE_STATES = frozenset(
+    {
+        "READY_TO_START",
+        "WAITING_FOR_SESSION",
+        "WAITING_FOR_DATA",
+        "AWAITING_USER_APPROVAL",
+    }
+)
 APPROVAL_TTL = timedelta(minutes=30)
 SCHEDULE_MAX = timedelta(days=31)
 SCOPE = "internal_shadow_simulation_only"
@@ -28,6 +36,11 @@ FINGERPRINT_VERSION = "v2"
 
 def state_can_be_approved(state: str) -> bool:
     return state in APPROVABLE_STATES
+
+
+def state_can_be_armed(state: str) -> bool:
+    """True when the user may persist the pilot clock without a fill grant."""
+    return state in ARMABLE_STATES
 
 
 def issue_shadow_approval(

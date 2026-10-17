@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import threading
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +11,7 @@ from pydantic import BaseModel, Field
 from nomadquant.agents.benchmark import BENCHMARK_VERSION, BenchmarkStore
 from nomadquant.agents.constants import PROMPT_VERSION, RUN_LABEL, TOOL_SCHEMA_VERSION
 from nomadquant.agents.guarded_tools import ALLOWED_TOOLS
+from nomadquant.agents.jobs import ReviewRefused, start_review_job
 from nomadquant.agents.ollama import OllamaError, OllamaProvider
 from nomadquant.agents.store import AgentStore
 from nomadquant.api.csrf import require_local_mutation
@@ -94,7 +94,19 @@ def agent_run_detail(run_id: int, request: Request) -> dict[str, Any]:
     return detail
 
 
-_REVIEW_LOCK = threading.Lock()
+@router.get("/jobs")
+def review_jobs(request: Request, limit: int = Query(default=20, ge=1, le=100)) -> dict[str, Any]:
+    store = _store(request)
+    return {"items": [] if store is None else store.list_jobs(limit=limit)}
+
+
+@router.get("/jobs/{job_id}")
+def review_job(job_id: int, request: Request) -> dict[str, Any]:
+    store = _store(request)
+    job = None if store is None else store.get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Review job not found.")
+    return job
 
 
 class ReviewBody(BaseModel):
@@ -109,37 +121,20 @@ def start_research_review(body: ReviewBody, request: Request) -> dict[str, Any]:
     require_local_mutation(request)
     if body.confirm != "RUN_LOCAL_RESEARCH_REVIEW":
         raise HTTPException(status_code=409, detail="Confirmation phrase does not match.")
-    if not _REVIEW_LOCK.acquire(blocking=False):
-        raise HTTPException(status_code=409, detail="A local review is already running.")
     settings = request.app.state.settings
-    health = OllamaProvider(settings.ollama_base_url).health()
-    if body.model not in set(health.get("models") or []):
-        _REVIEW_LOCK.release()
-        raise HTTPException(
-            status_code=409,
-            detail="That model is not installed. No download was started.",
+    provider = getattr(request.app.state, "ollama_provider", None) or OllamaProvider(
+        settings.ollama_base_url
+    )
+    try:
+        job = start_review_job(
+            settings, provider, research_run_id=body.research_run_id, model=body.model
         )
-
-    def _job() -> None:
-        try:
-            from nomadquant.agents.workflow import run_research_review
-            from nomadquant.audit import AuditLog
-
-            run_research_review(
-                body.research_run_id,
-                body.model,
-                research_path=settings.research_path,
-                market_path=settings.market_data_path,
-                memo_root=settings.agent_memo_root,
-                store=AgentStore(settings.agents_path),
-                audit=AuditLog(settings.database_path, settings.secret_values),
-            )
-        finally:
-            _REVIEW_LOCK.release()
-
-    threading.Thread(target=_job, name="nomadquant-review", daemon=True).start()
+    except ReviewRefused as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
     return {
         "started": True,
+        "job": job,
+        "job_id": job["id"],
         "broker_orders": False,
         "model": body.model,
         "research_run_id": body.research_run_id,

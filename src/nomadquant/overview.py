@@ -86,7 +86,7 @@ def overview(settings: Settings, *, now: datetime | None = None) -> dict[str, An
     stored = spy.get("latest_stored")
     missing = list(spy.get("missing_sessions") or [])
     data_current = bool(stored) and stored == eligible
-    readiness = supervised_readiness(settings)
+    readiness = supervised_readiness(settings, now=current)
     report = forward_pilot_report(settings)
     rebalance = next_rebalance(date.fromisoformat(clock["today"]))
     fills = int(report.get("hypothetical_fills") or 0)
@@ -157,6 +157,8 @@ def overview(settings: Settings, *, now: datetime | None = None) -> dict[str, An
             "summary": summary,
             "checks": checks,
             "state": readiness.get("state"),
+            "lifecycle": readiness.get("lifecycle"),
+            "armable": bool(readiness.get("armable")),
             "next_rebalance": rebalance,
             "recent_decisions": [
                 {

@@ -92,6 +92,21 @@ CREATE TABLE IF NOT EXISTS agent_artifacts (
     UNIQUE (run_id, kind, name),
     FOREIGN KEY (run_id) REFERENCES agent_runs(id)
 );
+CREATE TABLE IF NOT EXISTS review_jobs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TEXT NOT NULL,
+    started_at TEXT,
+    finished_at TEXT,
+    status TEXT NOT NULL,
+    research_run_id INTEGER NOT NULL,
+    model TEXT NOT NULL,
+    model_digest TEXT NOT NULL DEFAULT '',
+    dataset_fingerprint TEXT NOT NULL DEFAULT '',
+    prompt_version TEXT NOT NULL,
+    agent_run_id INTEGER,
+    error_code TEXT NOT NULL DEFAULT '',
+    error_message_safe TEXT NOT NULL DEFAULT ''
+);
 CREATE INDEX IF NOT EXISTS agent_runs_research ON agent_runs (research_run_id);
 CREATE INDEX IF NOT EXISTS agent_tool_calls_run ON agent_tool_calls (run_id, seq);
 """
@@ -513,6 +528,130 @@ class AgentStore:
             for row in rows
         ]
 
+    # -- review jobs --------------------------------------------------------
+
+    def create_job(
+        self,
+        *,
+        research_run_id: int,
+        model: str,
+        model_digest: str = "",
+        dataset_fingerprint: str = "",
+    ) -> dict[str, Any]:
+        """Persist a queued job. Refuses while another job is queued or running."""
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            active = connection.execute(
+                "SELECT id FROM review_jobs WHERE status IN ('queued', 'running') LIMIT 1"
+            ).fetchone()
+            if active is not None:
+                raise AgentStoreError(f"Review job {active['id']} is still active.")
+            cursor = connection.execute(
+                """
+                INSERT INTO review_jobs (
+                    created_at, status, research_run_id, model, model_digest,
+                    dataset_fingerprint, prompt_version
+                ) VALUES (?, 'queued', ?, ?, ?, ?, ?)
+                """,
+                (_now(), research_run_id, model, model_digest, dataset_fingerprint, PROMPT_VERSION),
+            )
+            job_id = int(cursor.lastrowid or 0)
+        job = self.get_job(job_id)
+        assert job is not None
+        return job
+
+    def mark_job_running(self, job_id: int) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                "UPDATE review_jobs SET status = 'running', started_at = ? "
+                "WHERE id = ? AND status = 'queued'",
+                (_now(), job_id),
+            )
+
+    def attach_job_run(self, job_id: int, agent_run_id: int) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                "UPDATE review_jobs SET agent_run_id = ? WHERE id = ?", (agent_run_id, job_id)
+            )
+
+    def finish_job(
+        self, job_id: int, *, status: str, error_code: str = "", error_message_safe: str = ""
+    ) -> None:
+        if status not in {"succeeded", "failed"}:
+            raise AgentStoreError(f"Unsupported job status {status!r}.")
+        with self._connect() as connection:
+            connection.execute(
+                """
+                UPDATE review_jobs
+                SET status = ?, finished_at = ?, error_code = ?, error_message_safe = ?
+                WHERE id = ? AND status IN ('queued', 'running')
+                """,
+                (status, _now(), error_code, error_message_safe[:500], job_id),
+            )
+
+    def recover_interrupted_jobs(self) -> int:
+        """Mark jobs left active by a stopped process, and their agent runs, as interrupted.
+
+        Review jobs run inside the API process, so at startup none can still be alive.
+        """
+        message = "The API stopped before this review finished."
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT id, agent_run_id FROM review_jobs WHERE status IN ('queued', 'running')"
+            ).fetchall()
+            for row in rows:
+                connection.execute(
+                    """
+                    UPDATE review_jobs
+                    SET status = 'interrupted', finished_at = ?, error_code = 'interrupted',
+                        error_message_safe = ?
+                    WHERE id = ?
+                    """,
+                    (_now(), message, row["id"]),
+                )
+                if row["agent_run_id"] is not None:
+                    connection.execute(
+                        """
+                        UPDATE agent_runs
+                        SET status = 'failed', finished_at = ?, error_code = 'interrupted',
+                            error_message_safe = ?
+                        WHERE id = ? AND status = 'running'
+                        """,
+                        (_now(), message, row["agent_run_id"]),
+                    )
+                    connection.execute(
+                        """
+                        UPDATE agent_stages
+                        SET status = 'failed', finished_at = ?, error_code = 'interrupted'
+                        WHERE run_id = ? AND status = 'running'
+                        """,
+                        (_now(), row["agent_run_id"]),
+                    )
+        return len(rows)
+
+    def fail_open_stages(self, run_id: int, *, error_code: str, error_message_safe: str) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                """
+                UPDATE agent_stages
+                SET status = 'failed', finished_at = ?, error_code = ?, error_message_safe = ?
+                WHERE run_id = ? AND status = 'running'
+                """,
+                (_now(), error_code, error_message_safe[:500], run_id),
+            )
+
+    def get_job(self, job_id: int) -> dict[str, Any] | None:
+        with self._connect() as connection:
+            row = connection.execute("SELECT * FROM review_jobs WHERE id = ?", (job_id,)).fetchone()
+        return None if row is None else _job(row)
+
+    def list_jobs(self, limit: int = 20) -> list[dict[str, Any]]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM review_jobs ORDER BY id DESC LIMIT ?", (limit,)
+            ).fetchall()
+        return [_job(row) for row in rows]
+
     # -- views --------------------------------------------------------------
 
     def get_run_detail(self, run_id: int) -> dict[str, Any] | None:
@@ -552,6 +691,25 @@ def _loads(raw: str) -> Any:
         return json.loads(raw)
     except json.JSONDecodeError:
         return raw
+
+
+def _job(row: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "id": row["id"],
+        "created_at": row["created_at"],
+        "started_at": row["started_at"],
+        "finished_at": row["finished_at"],
+        "status": row["status"],
+        "research_run_id": row["research_run_id"],
+        "model": row["model"],
+        "model_digest": row["model_digest"],
+        "dataset_fingerprint": row["dataset_fingerprint"],
+        "prompt_version": row["prompt_version"],
+        "agent_run_id": row["agent_run_id"],
+        "error_code": row["error_code"],
+        "error_message_safe": row["error_message_safe"],
+        "broker_orders": False,
+    }
 
 
 def _run(row: sqlite3.Row) -> dict[str, Any]:

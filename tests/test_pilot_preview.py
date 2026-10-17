@@ -27,8 +27,10 @@ def test_preview_does_not_mutate_and_stale_token_is_rejected(tmp_path: Path) -> 
     assert rejected["status"] == "REJECTED"
     assert rejected["applied"] is False
     accepted = confirm_pilot_start(settings, preview["preview_hash"])
-    assert accepted["status"] == "REJECTED"
     assert accepted["applied"] is False
-    assert accepted["stored"] is False
+    assert accepted["stored"] is True
+    assert accepted["fill_grant_issued"] is False
+    assert accepted["status"] == "PILOT_ARMED"
     assert ShadowStore(shadow, namespace="forward").snapshot()["version"] == 1
     assert ShadowStore(shadow, namespace="forward").get_meta("shadow_apply_approval") is None
+    assert ShadowStore(shadow, namespace="forward").get_meta("forward_pilot_started_at")

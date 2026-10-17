@@ -194,12 +194,19 @@ def run_preflight(settings: Settings, *, as_of: datetime | None = None) -> dict[
     else:
         rows = list(market.session_ohlc(SYMBOL, FEED, fill_day, fill_day))
         has_open = bool(rows)
-        add(
-            "observation",
-            has_open,
-            f"fill_session={fill_day} open={'yes' if has_open else 'missing'}",
-        )
-        if not has_open and status == "READY":
+        fill_due = modeled_available_at(fill_day) <= now
+        if has_open:
+            detail = f"fill_session={fill_day} open=yes"
+        elif fill_due:
+            detail = f"fill_session={fill_day} open=missing"
+        else:
+            detail = (
+                f"fill_session={fill_day} open=not_yet_available "
+                f"(expected after {modeled_available_at(fill_day).isoformat()}); "
+                "the signal is recorded as pending until then"
+            )
+        add("observation", has_open, detail)
+        if not has_open and fill_due and status == "READY":
             status = "WAITING_FOR_DATA"
 
     add(

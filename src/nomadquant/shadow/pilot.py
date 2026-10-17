@@ -156,7 +156,7 @@ def forward_pilot_report(settings: Settings, *, verify_limit: int = 5) -> dict[s
     }
 
 
-def supervised_readiness(settings: Settings) -> dict[str, Any]:
+def supervised_readiness(settings: Settings, *, now: datetime | None = None) -> dict[str, Any]:
     """Read-only answer to whether a forward shadow pilot may be started.
 
     Does not create a ledger, sync market data, or apply a fill.
@@ -165,8 +165,9 @@ def supervised_readiness(settings: Settings) -> dict[str, Any]:
     from nomadquant.shadow.gate import application_guard
     from nomadquant.shadow.preflight import run_preflight
 
-    coverage = data_check(settings, feed="sip")
-    preflight = run_preflight(settings)
+    clock = now or datetime.now(UTC)
+    coverage = data_check(settings, feed="sip", as_of=clock)
+    preflight = run_preflight(settings, as_of=clock)
     reconcile = run_reconcile(settings)
     guard = application_guard(settings)
     path = Path(settings.shadow_path)
@@ -190,6 +191,7 @@ def supervised_readiness(settings: Settings) -> dict[str, Any]:
     rebalance_scheduled = bool(checks.get("rebalance_due", {}).get("ok"))
     signal_eligible = bool(checks.get("eligible_signal_session", {}).get("ok"))
     observation_available = bool(checks.get("observation", {}).get("ok"))
+    signal_session = preflight.get("signal_session")
     recovery = bool(preflight.get("recovery_required")) or any(
         str(item.get("state") or item.get("status") or "") == "RESERVED" for item in pending
     )
@@ -198,7 +200,7 @@ def supervised_readiness(settings: Settings) -> dict[str, Any]:
     lock = Path(settings.shadow_path).parent / "shadow_worker.lock"
     pilot_running = False
     if lock.exists():
-        age = datetime.now(UTC) - datetime.fromtimestamp(lock.stat().st_mtime, tz=UTC)
+        age = clock - datetime.fromtimestamp(lock.stat().st_mtime, tz=UTC)
         pilot_running = age < timedelta(hours=2)
     failed_daily = 0
     if path.exists():
@@ -222,6 +224,8 @@ def supervised_readiness(settings: Settings) -> dict[str, Any]:
         reasons.append("pending_observation_not_executable")
     if not pilot_raw:
         reasons.append("pilot_clock_unset")
+    proposal_ready = eligible_pending > 0
+    awaiting_approval = proposal_ready and not _has_live_fill_grant(path, clock)
     state = _pilot_state(
         configured=path.exists(),
         recovery=recovery,
@@ -232,13 +236,15 @@ def supervised_readiness(settings: Settings) -> dict[str, Any]:
         pending=len(pending),
         eligible_pending=eligible_pending,
         rebalance_scheduled=rebalance_scheduled,
-        observation_available=observation_available,
         failed_daily=failed_daily,
         clock_started=pilot_raw is not None,
+        awaiting_approval=awaiting_approval,
     )
     return {
         "readiness": state,
         "state": state,
+        "as_of": clock.isoformat(),
+        "signal_session": signal_session if rebalance_scheduled else None,
         "reasons": reasons,
         "data_status": data_status,
         "data_complete": data_complete,
@@ -258,6 +264,23 @@ def supervised_readiness(settings: Settings) -> dict[str, Any]:
         "pilot_running": pilot_running,
         "shadow_fill_model": "delayed_hypothetical_daily_open",
         "user_confirmation_required": pilot_raw is None,
+        "armable": (
+            pilot_raw is None
+            and state
+            in {
+                "READY_TO_START",
+                "WAITING_FOR_SESSION",
+                "WAITING_FOR_DATA",
+            }
+        )
+        or awaiting_approval,
+        "lifecycle": _lifecycle(
+            state=state,
+            clock_started=pilot_raw is not None,
+            pending=len(pending),
+            proposal_ready=proposal_ready,
+            awaiting_approval=awaiting_approval,
+        ),
         "preflight_status": preflight.get("status"),
         "application_blocked": not bool(guard.get("allowed")),
         "guard_reasons": list(guard.get("reasons") or []),
@@ -276,12 +299,27 @@ def supervised_readiness(settings: Settings) -> dict[str, Any]:
 _STATE_NOTES = {
     "NOT_CONFIGURED": "The forward ledger file is absent. Inspection does not create it.",
     "READY_TO_START": (
-        "A scheduled rebalance has an observation and the checks are clear. "
-        "Starting still requires an explicit confirmation. The pilot is not running."
+        "Today's month-start signal can be recorded. Arming the pilot does not need "
+        "the next session's opening price. A simulated fill still waits for that open "
+        "and a separate approval."
     ),
-    "WAITING_FOR_SESSION": "No month-start rebalance is due. This is not a start command.",
+    "WAITING_FOR_SESSION": (
+        "No month-start rebalance is due. You can still arm the pilot so future "
+        "month-start sessions are recorded. That does not create an October trade."
+    ),
     "WAITING_FOR_DATA": "Stored SIP coverage is incomplete for the required window.",
-    "PENDING_OBSERVATION": ("A pending intent exists. Presence alone does not make it executable."),
+    "PENDING_OBSERVATION": (
+        "A recorded signal is waiting for the next session's opening price. "
+        "Presence alone does not make it executable."
+    ),
+    "AWAITING_USER_APPROVAL": (
+        "A sized proposal is ready. Approve the exact internal-shadow operation "
+        "before a simulated fill. This is not an Alpaca order."
+    ),
+    "PILOT_ARMED": (
+        "The forward clock is set. Future month-start sessions can be recorded. "
+        "No simulated fill has been authorized yet."
+    ),
     "BLOCKED": "A guard, reconcile failure, or preflight block prevents application.",
     "RECOVERY_REQUIRED": "An interrupted reservation must be recovered before a new apply.",
     "OBSERVING": (
@@ -300,10 +338,15 @@ def _pilot_state(
     pending: int,
     eligible_pending: int,
     rebalance_scheduled: bool,
-    observation_available: bool,
     failed_daily: int,
     clock_started: bool,
+    awaiting_approval: bool = False,
 ) -> str:
+    """The month-start signal is recordable on its own session.
+
+    The next session's open is needed for the simulated fill, not for recording the
+    decision, so it is never a precondition for READY_TO_START or for arming the clock.
+    """
     if not configured:
         return "NOT_CONFIGURED"
     if recovery:
@@ -314,15 +357,59 @@ def _pilot_state(
         return "WAITING_FOR_DATA"
     if failed_daily:
         return "FAILED"
+    if awaiting_approval:
+        return "AWAITING_USER_APPROVAL"
     if pending and eligible_pending == 0:
         return "PENDING_OBSERVATION"
-    if clock_started:
-        return "OBSERVING"
-    if rebalance_scheduled and observation_available:
+    if rebalance_scheduled and not pending:
         return "READY_TO_START"
-    if rebalance_scheduled and not observation_available:
-        return "PENDING_OBSERVATION"
+    if clock_started:
+        return "PILOT_ARMED"
     return "WAITING_FOR_SESSION"
+
+
+def _lifecycle(
+    *,
+    state: str,
+    clock_started: bool,
+    pending: int,
+    proposal_ready: bool,
+    awaiting_approval: bool,
+) -> str:
+    if state in {"NOT_CONFIGURED", "BLOCKED", "RECOVERY_REQUIRED", "FAILED", "WAITING_FOR_DATA"}:
+        return state
+    if awaiting_approval:
+        return "AWAITING_USER_APPROVAL"
+    if proposal_ready:
+        return "PROPOSAL_READY"
+    if pending:
+        return "PENDING_EXECUTION_OBSERVATION"
+    if state == "READY_TO_START":
+        return "SIGNAL_ELIGIBLE"
+    if clock_started:
+        return "PILOT_ARMED"
+    return "UNARMED"
+
+
+def _has_live_fill_grant(path: Path, now: datetime) -> bool:
+    if not path.exists():
+        return False
+    store = ShadowStore.open_readonly(path)
+    if store is None:
+        return False
+    raw = store.get_meta("shadow_apply_approval")
+    if not raw:
+        return False
+    try:
+        record = json.loads(raw)
+        expires = datetime.fromisoformat(str(record["expires_at"]))
+    except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+        return False
+    if record.get("status") != "pending":
+        return False
+    if expires.tzinfo is None:
+        expires = expires.replace(tzinfo=UTC)
+    return expires > now
 
 
 def _eligible_pending(pending: list[dict[str, Any]], settings: Settings) -> int:
@@ -348,11 +435,11 @@ def _eligible_pending(pending: list[dict[str, Any]], settings: Settings) -> int:
     return count
 
 
-def pilot_start_preview(settings: Settings) -> dict[str, Any]:
+def pilot_start_preview(settings: Settings, *, now: datetime | None = None) -> dict[str, Any]:
     """Read-only preview. Does not start the pilot or mutate the ledger."""
     import hashlib
 
-    readiness = supervised_readiness(settings)
+    readiness = supervised_readiness(settings, now=now)
     path = Path(settings.shadow_path)
     snapshot: dict[str, Any] | None = None
     if path.exists():
@@ -378,6 +465,7 @@ def pilot_start_preview(settings: Settings) -> dict[str, Any]:
         "pending_intent_count": readiness["pending_intent_count"],
         "pending_intent_eligible_count": readiness["pending_intent_eligible_count"],
         "rebalance_scheduled": readiness["rebalance_scheduled"],
+        "signal_session": readiness["signal_session"],
         "signal_eligible": readiness["signal_eligible"],
         "observation_available": readiness["observation_available"],
         "execution_model": "delayed_hypothetical_daily_open",
@@ -403,16 +491,21 @@ def pilot_start_preview(settings: Settings) -> dict[str, Any]:
     return body
 
 
-def confirm_pilot_start(settings: Settings, approval: str) -> dict[str, Any]:
-    """Store a one-time internal-shadow approval. Does not apply a fill or a broker order."""
+def confirm_pilot_start(
+    settings: Settings, approval: str, *, now: datetime | None = None
+) -> dict[str, Any]:
+    """Arm the forward clock and optionally store a fill grant. Never a broker order."""
     from nomadquant.shadow.approval import (
         current_binding,
         issue_shadow_approval,
         market_fingerprint,
         state_can_be_approved,
+        state_can_be_armed,
     )
+    from nomadquant.shadow.missed import PILOT_STARTED_KEY
 
-    current = pilot_start_preview(settings)
+    clock = now or datetime.now(UTC)
+    current = pilot_start_preview(settings, now=clock)
     rejected = {
         "applied": False,
         "stored": False,
@@ -425,14 +518,17 @@ def confirm_pilot_start(settings: Settings, approval: str) -> dict[str, Any]:
             "status": "REJECTED",
             "reason": "approval token does not match the current preview",
         }
-    if not state_can_be_approved(str(current["state"])):
+    state = str(current["state"])
+    may_arm = state_can_be_armed(state)
+    may_grant = state_can_be_approved(state)
+    if not may_arm and not may_grant:
         return {
             **rejected,
             "status": "REJECTED",
-            "reason": f"state {current['state']} cannot receive execution approval",
-            "state": current["state"],
+            "reason": f"state {state} cannot arm the pilot or receive a fill grant",
+            "state": state,
         }
-    again = pilot_start_preview(settings)
+    again = pilot_start_preview(settings, now=clock)
     if again["preview_hash"] != approval:
         return {
             **rejected,
@@ -443,34 +539,56 @@ def confirm_pilot_start(settings: Settings, approval: str) -> dict[str, Any]:
     if not path.exists():
         return {**rejected, "status": "REJECTED", "reason": "shadow ledger is not initialized"}
     store = ShadowStore(path, namespace="forward")
-    from nomadquant.risk.policy import RiskPolicy
+    armed = False
+    if store.get_meta(PILOT_STARTED_KEY) is None and may_arm:
+        store.set_meta(PILOT_STARTED_KEY, clock.isoformat())
+        armed = True
+    record: dict[str, Any] | None = None
+    if may_grant:
+        from nomadquant.risk.policy import RiskPolicy
 
-    policy = RiskPolicy()
-    snap = store.snapshot()
-    binding = current_binding(
-        ledger_version=int(snap["version"]),
-        policy=policy,
-        market_fingerprint=market_fingerprint(Path(settings.market_data_path)),
-        preview_hash=approval,
-    )
-    try:
-        record = issue_shadow_approval(store, binding, now=datetime.now(UTC))
-    except ValueError as exc:
-        return {**rejected, "status": "REJECTED", "reason": str(exc)}
+        policy = RiskPolicy()
+        snap = store.snapshot()
+        binding = current_binding(
+            ledger_version=int(snap["version"]),
+            policy=policy,
+            market_fingerprint=market_fingerprint(Path(settings.market_data_path)),
+            preview_hash=approval,
+        )
+        try:
+            record = issue_shadow_approval(store, binding, now=clock)
+        except ValueError as exc:
+            if not armed:
+                return {**rejected, "status": "REJECTED", "reason": str(exc)}
+    if not armed and record is None:
+        return {
+            **rejected,
+            "status": "REJECTED",
+            "reason": "the forward clock is already set and no fill grant was stored",
+            "state": state,
+        }
     return {
-        "status": "CONFIRMATION_ACCEPTED",
+        "status": "PILOT_ARMED" if record is None else "CONFIRMATION_ACCEPTED",
         "applied": False,
         "stored": True,
         "preview_hash": approval,
-        "state": current["state"],
-        "expires_at": record["expires_at"],
+        "state": "PILOT_ARMED" if record is None else state,
+        "expires_at": None if record is None else record["expires_at"],
+        "fill_grant_issued": record is not None,
+        "pilot_clock_started": True,
         "scope": "internal_shadow_simulation_only",
         "broker_orders": False,
-        "next_command": "nomadquant-shadow worker --mode shadow-apply",
-        "note": (
-            "Approval is stored for one internal shadow apply. "
-            "It is not an Alpaca order authorization and it does not enable scheduled applies."
+        "next_command": (
+            "nomadquant-shadow worker --mode inspect"
+            if record is None
+            else "nomadquant-shadow worker --mode shadow-apply"
         ),
+        "note": (
+            "The forward clock is set so future month-start sessions can be recorded. "
+            if record is None
+            else "A one-time internal-shadow fill grant is stored. "
+        )
+        + "This is not an Alpaca order authorization and it does not enable scheduled applies.",
     }
 
 

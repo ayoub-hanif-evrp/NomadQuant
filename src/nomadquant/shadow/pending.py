@@ -47,6 +47,7 @@ def resume_pending_intents(
     now: datetime,
     label: str,
     policy: RiskPolicy | None = None,
+    fill_authorized: bool = False,
 ) -> list[dict[str, Any]]:
     """Process unresolved intents oldest-first. Terminal intents are skipped."""
     if mode not in {"dry-run", "apply"}:
@@ -57,7 +58,8 @@ def resume_pending_intents(
 
     for intent in shadow.list_pending_intents():
         if mode == "apply" and label == "forward_shadow":
-            if not intent_authorized(shadow, intent, now=now, policy=policy or RiskPolicy()):
+            stamped = intent_authorized(shadow, intent, now=now, policy=policy or RiskPolicy())
+            if not stamped and not fill_authorized:
                 continue
         state = intent.get("state")
         if state not in {"PENDING_DATA", "RISK_APPROVED", "SIGNAL_RECORDED"}:

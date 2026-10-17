@@ -16,6 +16,7 @@ from nomadquant.shadow.approval import (
     enable_scheduled_shadow_cycles,
     issue_shadow_approval,
     state_can_be_approved,
+    state_can_be_armed,
 )
 from nomadquant.shadow.cycle import LABEL_FORWARD, run_shadow_cycle
 from nomadquant.shadow.store import ShadowStore
@@ -44,6 +45,10 @@ def test_blocked_and_waiting_states_cannot_be_approved() -> None:
     for state in ("BLOCKED", "WAITING_FOR_DATA", "WAITING_FOR_SESSION", "FAILED"):
         assert state_can_be_approved(state) is False
     assert state_can_be_approved("READY_TO_START") is True
+    assert state_can_be_approved("AWAITING_USER_APPROVAL") is True
+    assert state_can_be_armed("WAITING_FOR_SESSION") is True
+    assert state_can_be_armed("WAITING_FOR_DATA") is True
+    assert state_can_be_armed("BLOCKED") is False
 
 
 def test_apply_without_approval_is_blocked(tmp_path: Path) -> None:

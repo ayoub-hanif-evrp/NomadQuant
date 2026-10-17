@@ -59,6 +59,8 @@ def _require_forward_approval(
     policy: RiskPolicy | None,
     now: datetime,
     started: float,
+    *,
+    record_missing: bool = True,
 ) -> dict[str, Any] | None:
     """Block a new forward apply unless a matching one-time approval or schedule exists."""
     from nomadquant.shadow.approval import (
@@ -85,7 +87,8 @@ def _require_forward_approval(
     decision = approval_decision(shadow, binding, now=now)
     shadow.approval_checked_at = now
     if not decision["allowed"]:
-        record_authorization_denial(shadow, str(decision["reason"]), now=now)
+        if record_missing:
+            record_authorization_denial(shadow, str(decision["reason"]), now=now)
         return {
             "id": None,
             "cycle_key": "blocked:missing_shadow_approval",
@@ -258,17 +261,37 @@ def run_shadow_cycle(
     from nomadquant.shadow.pending import awaited_fill_session, resume_pending_intents
 
     authorized_pending = []
+    fill_authorized = False
+    clock_set = bool(shadow.get_meta("forward_pilot_started_at"))
     if mode == "apply" and label == LABEL_FORWARD:
+        refused = _require_forward_approval(
+            shadow,
+            Path(market_path),
+            policy,
+            now,
+            started,
+            record_missing=not clock_set,
+        )
+        fill_authorized = refused is None
+        if refused is not None and not clock_set:
+            return refused
+        if refused is not None:
+            shadow.pending_approval_binding = None
+            from nomadquant.shadow.approval import SCOPE as _SCOPE
+
+            shadow.authorization_grant = {
+                "source": "pilot_armed",
+                "scope": _SCOPE,
+                "broker_orders": False,
+                "fill_authorized": False,
+            }
         authorized_pending = [
             row
             for row in shadow.list_pending_intents()
             if intent_authorized(shadow, row, now=now, policy=policy or RiskPolicy())
+            or fill_authorized
         ]
     continuing = bool(authorized_pending)
-    if mode == "apply" and label == LABEL_FORWARD and not continuing:
-        refused = _require_forward_approval(shadow, Path(market_path), policy, now, started)
-        if refused is not None:
-            return refused
 
     # 0.1 — Resume unresolved intents chronologically before any new signal.
     # An interrupted application finishes without a second approval token.
@@ -280,6 +303,7 @@ def run_shadow_cycle(
         now=now,
         label=label,
         policy=policy,
+        fill_authorized=fill_authorized,
     )
     if mode == "apply" and resumed:
         deliver_outbox(shadow, risk_path)
@@ -842,6 +866,51 @@ def run_shadow_cycle(
         )
 
     # Apply: reserve in shadow DB → simulate fill → commit with OCC.
+    if label == LABEL_FORWARD and not fill_authorized:
+        if mode == "apply":
+            shadow.upsert_intent(
+                intent_id=intent_id,
+                cycle_key=cycle_key,
+                state="PENDING_DATA",
+                strategy_id=STRATEGY_ID,
+                feed=FEED,
+                symbol=SYMBOL,
+                evidence=evidence,
+                evidence_hash=_hash(evidence),
+                signal_session=signal_day.isoformat(),
+                fill_session=fill_day.isoformat(),
+                target_weight=str(target),
+                from_state="SIGNAL_RECORDED",
+                reason="Proposal ready; waiting for a one-time internal-shadow fill grant",
+                source_price=str(open_price),
+                price_as_of=observation_market_at.isoformat(),
+                risk_verdict=risk.verdict,
+                ledger_version=before["version"],
+            )
+        return _finish(
+            shadow,
+            mode=mode,
+            label=label,
+            before=before,
+            status="awaiting_approval",
+            intent=intent,
+            warnings=warnings
+            + [
+                "A sized proposal is ready. Approve the exact internal-shadow "
+                "operation before a simulated fill. No Alpaca order was sent."
+            ],
+            evidence=evidence,
+            duration_ms=_ms(started),
+            mutate=False,
+            signal_session=signal_day,
+            fill_session=fill_day,
+            momentum=mom,
+            target_weight=target,
+            proposal_id=proposal.id,
+            risk_verdict=risk.verdict,
+            risk_reasons=risk.reasons,
+        )
+
     reserve_amt = risk.notional_usd or _ZERO
     if side == "sell":
         reserve_amt = _ZERO

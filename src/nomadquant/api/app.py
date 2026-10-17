@@ -5,11 +5,13 @@ GET is read-only. POST is a localhost allowlist and never submits a broker order
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from nomadquant.agents.store import AgentStore
 from nomadquant.api.agent_routes import router as agent_router
 from nomadquant.api.approval_routes import router as approval_router
 from nomadquant.api.copilot_routes import router as copilot_router
@@ -49,6 +51,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         init_db(app.state.settings.database_path)
+        agents_path = Path(app.state.settings.agents_path)
+        if agents_path.exists():
+            interrupted = AgentStore(agents_path).recover_interrupted_jobs()
+            if interrupted:
+                logger.warning("review_jobs_interrupted count=%s", interrupted)
         app.state.audit.record_event(
             event_type="system.startup",
             event_level="info",
