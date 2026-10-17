@@ -21,7 +21,7 @@ def test_negative_and_nonfinite_costs_are_rejected() -> None:
         {"commission_usd": "Infinity"},
         {"quantity_precision": -1},
         {"quantity_precision": 12},
-        {"spread_bps": "1001"},
+        {"spread_bps": "20001"},
     ):
         with pytest.raises(ValidationError):
             CostModel.model_validate(

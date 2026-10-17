@@ -8,8 +8,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-# Stress ceiling: 10 percent of mid. Higher values are not a supported scenario.
-_MAX_BPS = Decimal("1000")
+# Absolute ceiling used by the risk stress test (200 percent). Not a recommended cost.
+_MAX_BPS = Decimal("20000")
 _MAX_CASH_ITEM = Decimal("100")
 
 
@@ -21,9 +21,9 @@ def _finite_nonnegative(name: str, value: Decimal, maximum: Decimal) -> None:
 class CostModel(BaseModel):
     """Adverse execution costs. Negative or non-finite values are rejected.
 
-    ``spread_bps`` and ``slippage_bps`` may be zero (an optimistic case) and
-    may rise to 1000 (10 percent) for a documented stress case. Commission and
-    minimum notional stay within the $100 simulation.
+    ``spread_bps`` and ``slippage_bps`` may be zero and may rise to 20000 for
+    the existing risk-engine stress case. Commission and minimum notional stay
+    within the $100 simulation.
     """
 
     commission_usd: Decimal = Decimal("0")
