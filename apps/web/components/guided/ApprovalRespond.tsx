@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useState } from "react";
-import { API_URL } from "@/lib/api";
+import { decideApproval } from "@/lib/api";
 
 export function ApprovalRespond({ requestId }: { requestId: string }) {
   const params = useSearchParams();
@@ -15,23 +15,19 @@ export function ApprovalRespond({ requestId }: { requestId: string }) {
   async function send(action: "approve" | "reject") {
     setBusy(true);
     try {
-      const query = new URLSearchParams({
+      const body = await decideApproval({
+        requestId,
         token,
         action,
-        confirm: "1",
         reason,
       });
-      const response = await fetch(`${API_URL}/api/approvals/${requestId}/decide?${query.toString()}`);
-      const body = (await response.json()) as { status?: string; detail?: string; broker_orders?: boolean };
-      if (!response.ok) {
-        setResult(body.detail ?? "The token could not be used.");
-        return;
-      }
       setResult(
         body.status === "approved"
-          ? "Recorded. This does not submit a broker order and does not apply the live shadow ledger by itself."
+          ? "Recorded. A matching preview can store an internal shadow grant. No broker order was sent, and the ledger was not filled from this page."
           : `Recorded as ${body.status ?? "updated"}. No broker order was sent.`,
       );
+    } catch (error) {
+      setResult(error instanceof Error ? error.message : "The token could not be used.");
     } finally {
       setBusy(false);
     }

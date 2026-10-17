@@ -1,10 +1,10 @@
 import { Agents } from "@/components/Agents";
-import { AgentFlow } from "@/components/guided/AgentFlow";
+import { AgentWorkspace } from "@/components/terminal/AgentWorkspace";
 
 export default function AgentsPage() {
   return (
     <>
-      <AgentFlow />
+      <AgentWorkspace />
       <Agents />
     </>
   );

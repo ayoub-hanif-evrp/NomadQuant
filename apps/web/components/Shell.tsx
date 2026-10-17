@@ -30,6 +30,7 @@ import {
 import { cn } from "@/lib/cn";
 import { connectionLabel, connectionState, connectionTone } from "@/lib/connection";
 import { useRefreshAll, useSystemHealth } from "@/lib/hooks";
+import { CopilotPanel } from "@/components/terminal/CopilotPanel";
 import { Badge, StatusDot } from "@/components/ui";
 
 type NavItem = {
@@ -46,10 +47,10 @@ const NAV: NavGroup[] = [
     title: "Guided",
     items: [
       { href: "/", label: "Home", icon: LayoutDashboard, available: true },
-      { href: "/decisions", label: "Decisions", icon: Workflow, available: true },
+      { href: "/decisions", label: "Intelligence", icon: Workflow, available: true },
       { href: "/agents", label: "Agents", icon: Bot, available: true },
+      { href: "/market", label: "Markets", icon: LineChart, available: true },
       { href: "/portfolio", label: "Portfolio", icon: LineChart, available: true },
-      { href: "/market", label: "Market", icon: LineChart, available: true },
       { href: "/approvals", label: "Approvals", icon: ShieldAlert, available: true },
       { href: "/advanced", label: "Advanced", icon: FlaskConical, available: true },
     ],
@@ -94,6 +95,7 @@ export function Shell({ children }: { children: ReactNode }) {
   });
   const [mobileOpen, setMobileOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [copilotOpen, setCopilotOpen] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [manualRefreshAt, setManualRefreshAt] = useState<number | null>(null);
 
@@ -303,8 +305,15 @@ export function Shell({ children }: { children: ReactNode }) {
             </button>
             <button
               type="button"
-              onClick={() => setPaletteOpen(true)}
+              onClick={() => setCopilotOpen(true)}
               className="inline-flex items-center gap-1.5 rounded-xl border border-[rgba(103,240,224,0.28)] px-2.5 py-1.5 text-xs text-[var(--cyan)]"
+            >
+              Copilot
+            </button>
+            <button
+              type="button"
+              onClick={() => setPaletteOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-[var(--line)] px-2.5 py-1.5 text-xs text-[var(--muted)]"
             >
               <Command className="h-3.5 w-3.5" />
               Ctrl+K
@@ -317,6 +326,7 @@ export function Shell({ children }: { children: ReactNode }) {
       {paletteOpen ? (
         <CommandPalette onClose={() => setPaletteOpen(false)} onNavigate={navigate} />
       ) : null}
+      {copilotOpen ? <CopilotPanel onClose={() => setCopilotOpen(false)} /> : null}
     </div>
   );
 }

@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import type { ReactNode } from "react";
+import { Suspense, type ReactNode } from "react";
 import { IBM_Plex_Mono, IBM_Plex_Sans } from "next/font/google";
 import { QueryProvider } from "@/components/providers/QueryProvider";
 import { Shell } from "@/components/Shell";
@@ -27,7 +27,9 @@ export default function RootLayout({ children }: { children: ReactNode }) {
     <html lang="en" className={`h-full ${plexSans.variable} ${plexMono.variable}`}>
       <body className="min-h-full antialiased">
         <QueryProvider>
-          <Shell>{children}</Shell>
+          <Suspense fallback={null}>
+            <Shell>{children}</Shell>
+          </Suspense>
         </QueryProvider>
       </body>
     </html>

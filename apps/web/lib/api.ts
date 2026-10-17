@@ -1950,6 +1950,135 @@ export async function loadShadowTimeline(
   };
 }
 
+export type FreshnessReport = {
+  as_of: string;
+  feed: string;
+  timeframe: string;
+  live: false;
+  eligible_session: string | null;
+  missing_count: number | null;
+  status: string;
+  note: string;
+  symbols: Record<string, { latest_stored?: string | null; missing_count?: number }>;
+};
+
+export async function loadFreshness(): Promise<FreshnessReport> {
+  const value = await readJson("/api/market-data/freshness");
+  if (!isRecord(value) || value.live !== false || typeof value.note !== "string") {
+    throw new Error("Unexpected freshness report");
+  }
+  return value as FreshnessReport;
+}
+
+export type NewsHeadline = {
+  id: string;
+  headline: string;
+  source: string;
+  url: string;
+  published_at: string;
+  symbols: string;
+};
+
+export async function loadNews(): Promise<{
+  status: string;
+  detail?: string;
+  items: NewsHeadline[];
+  live: false;
+}> {
+  const value = await readJson("/api/news/headlines");
+  if (!isRecord(value) || !Array.isArray(value.items) || value.live !== false) {
+    throw new Error("Unexpected news feed");
+  }
+  return {
+    status: String(value.status),
+    detail: typeof value.detail === "string" ? value.detail : undefined,
+    live: false,
+    items: value.items.filter(isRecord).map((item) => item as NewsHeadline),
+  };
+}
+
+export type CopilotAnswer = {
+  answer: string;
+  evidence_ids: string[];
+  evidence: Array<{ id: string; source: string; text: string }>;
+  mode: string;
+  model: string | null;
+  ollama_available: boolean;
+  note: string;
+  broker_orders: false;
+};
+
+async function mutate<T>(path: string, body: unknown): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetch(`${API_URL}${path}`, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        "X-NomadQuant-Intent": "mutate",
+      },
+      body: JSON.stringify(body),
+    });
+  } catch {
+    throw new Error("API unreachable");
+  }
+  if (!response.ok) {
+    let detail = `Request failed (${response.status})`;
+    try {
+      const payload = (await response.json()) as { detail?: string };
+      if (payload.detail) {
+        detail = payload.detail;
+      }
+    } catch {
+      /* keep the status */
+    }
+    throw new Error(detail);
+  }
+  return (await response.json()) as T;
+}
+
+export function askCopilot(question: string): Promise<CopilotAnswer> {
+  return mutate<CopilotAnswer>("/api/copilot/ask", { question });
+}
+
+export function refreshNews(): Promise<{ status: string; detail?: string; items: NewsHeadline[] }> {
+  return mutate("/api/news/refresh", {});
+}
+
+export function analyzeNews(articleId: string): Promise<{ status: string; report?: Record<string, string> }> {
+  return mutate("/api/news/analyze", { article_id: articleId });
+}
+
+export function syncHistoricalBars(): Promise<{ sync?: string; status?: string; broker_orders: false }> {
+  return mutate("/api/market-data/sync", { confirm: "SYNC_HISTORICAL_BARS" });
+}
+
+export function startResearchReview(input: {
+  researchRunId: number;
+  model: string;
+}): Promise<{ started: boolean; broker_orders: false; model: string }> {
+  return mutate("/api/agents/reviews", {
+    research_run_id: input.researchRunId,
+    model: input.model,
+    confirm: "RUN_LOCAL_RESEARCH_REVIEW",
+  });
+}
+
+export function decideApproval(input: {
+  requestId: string;
+  token: string;
+  action: "approve" | "reject";
+  reason: string;
+}): Promise<{ status?: string; detail?: string; broker_orders?: boolean }> {
+  return mutate(`/api/approvals/${input.requestId}/decide`, {
+    token: input.token,
+    action: input.action,
+    confirm: "1",
+    reason: input.reason,
+  });
+}
+
 export type ApprovalRequest = {
   id: string;
   status: string;
