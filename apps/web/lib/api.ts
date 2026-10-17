@@ -2189,7 +2189,13 @@ export async function confirmPilotArm(): Promise<{ status: string; applied: bool
 export function startResearchReview(input: {
   researchRunId: number;
   model: string;
-}): Promise<{ started: boolean; broker_orders: false; model: string }> {
+}): Promise<{
+  started: boolean;
+  broker_orders: false;
+  model: string;
+  job_id: number;
+  job?: { id: number; agent_run_id?: number | null };
+}> {
   return mutate("/api/agents/reviews", {
     research_run_id: input.researchRunId,
     model: input.model,

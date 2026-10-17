@@ -34,7 +34,7 @@
 - Daily worker (`nomadquant-shadow worker`) supports inspect / dry-run / shadow-apply with structured statuses and outcome JSON under `data/shadow_logs/`.
 - Duplicate `cycle_key` apply is idempotent (no double fill).
 - `APPROVE` is not an execution; dry-run never mutates the ledger.
-- API remains GET-only with no order routes.
+- API POST is an explicit localhost allowlist. There are still no order routes.
 - Forward `--signal-session` overrides older than five days are blocked as chronology violations.
 
 ## Remaining risks
@@ -219,6 +219,34 @@ A pending row is not executable by itself. `pilot_running` is true only while `d
 ## Future Alpaca paper-order milestone (not enabled)
 
 This sprint does **not** turn on broker submission. `ALLOW_ORDER_SUBMISSION` stays false. Agents still have no order tools.
+
+## Prompt 19 workstation evidence (2026-10-17, this PC)
+
+Observed on Saturday 17 October 2026. This is not a completed forward fill and not Alpaca trading.
+
+| Check | Result |
+|-------|--------|
+| Doctor | PASS: Python 3.12, uv, Node v24.21.0, `.env` present, web build present, data files present, API `:8000`, dashboard `:3000`, Ollama tags endpoint responded. |
+| SIP coverage | SPY and QQQ each 2210 sessions through **2026-10-16**. Missing 0. Warm-up complete. The earlier note that bars stopped at 2026-10-15 is stale. |
+| IEX snapshot | Last trade **$763.31**, Friday 16 Oct 4:47 PM New York, labeled **Last IEX trade (market closed)**. Not used by the strategy. |
+| Market clock | Saturday. Regular session closed until Mon 19 Oct 9:30 New York. |
+| Preflight | `NO_REBALANCE_DUE`. Cash 100, version 1, no reservations. Next strategy signal 2026-11-02, hypothetical fill 2026-11-03. |
+| Reconcile | `ok=true`. Equity 100. Holdings empty. |
+| Pilot | `WAITING_FOR_SESSION`, lifecycle **UNARMED**, **armable=true**. Clock unset. 0 pending intents. 0 hypothetical fills. |
+| Daily inspect | `COMPLETED`, worker `WAITING_FOR_SESSION`. Ledger unchanged. |
+| Daily dry-run | `COMPLETED_NO_TRADE`. Wrote prospective cycle 3 for 2026-10-16 (`no_trade`, not month-start). Cash stayed 100, version 1. |
+| Shadow-apply / schedule / Alpaca orders | **Not run.** `ALLOW_ORDER_SUBMISSION=false`. |
+| Isolated BUY/HOLD/SELL | Passed in a temporary database (`tests/test_shadow_lifecycle_parity.py`). Not the live $100 book. |
+| Month-start arm | Passed with fixtures (`tests/test_pilot_month_start_lifecycle.py`). Live clock remains unset. |
+| Ollama | `qwen3.5:9b` installed. `ollama ps` was empty before the review. No model was downloaded. |
+| Live web review | Button started **run 6** of research run 2 with `qwen3.5:9b`. Researcher 63.7s (`read_run_card`), Skeptic 21.0s (`read_run_card`), Reviewer 10.4s (`verify_backtest`), Verifier 0ms. Status succeeded. Verdict **verification_failed** because invented numbers did not match stored test-window metrics, and independent replay was FAIL. Browser showed LIVE working, then recorded run 6 with Verifier **Flagged**. |
+| Copilot | `qwen3.5:9b` answered why there are no trades from stored evidence: Saturday, monthly schedule, pilot not started, next fill 2026-11-03. Desktop and mobile screenshots captured. |
+| News analysis | Sequential three-stage pipeline is implemented and fixture-tested. Live Scout was not sent; no headlines were on the workstation, so Analyze was not clicked. |
+| Email approval | Inbox empty, which is correct: no eligible BUY/SELL proposal exists. Localhost-only links are documented on the page. |
+| `verify-all.ps1` | ALL CHECKS PASSED after updating route safety to the POST allowlist. No order routes. |
+| Paper orders | Still disabled. Future milestone remains the ten-point plan above. |
+
+**No genuine fill occurred. Zero trades is the expected Saturday state, not proof that execution works.**
 
 When a later written authorization is given, paper orders should be a separate gateway that:
 

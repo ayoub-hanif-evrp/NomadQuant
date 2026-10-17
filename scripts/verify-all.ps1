@@ -37,6 +37,7 @@ Invoke-Native {
     uv run --no-sync python -c @"
 from fastapi.testclient import TestClient
 from nomadquant.api.app import create_app
+from nomadquant.api.mutations import POST_ROUTES, assert_route_safety
 from tests.conftest import make_settings
 from pathlib import Path
 import gc
@@ -47,10 +48,8 @@ try:
     app = create_app(make_settings(tmp))
     with TestClient(app) as client:
         paths = client.app.openapi()['paths']
-    for path, ops in paths.items():
-        assert 'order' not in path.lower()
-        assert set(ops).intersection({'get','post','put','patch','delete'}) == {'get'}
-    print('PASS no order routes; GET-only API')
+    assert_route_safety(paths)
+    print('PASS no order routes; POST allowlist', sorted(POST_ROUTES))
 finally:
     gc.collect()
     shutil.rmtree(tmp, ignore_errors=True)

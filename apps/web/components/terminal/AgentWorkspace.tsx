@@ -452,11 +452,13 @@ export function AgentWorkspace() {
               }
               setReviewNote("Starting one local review. This does not trade.");
               void startResearchReview({ researchRunId: id, model })
-                .then(() => {
+                .then(async (payload) => {
                   setReviewNote("Review started. Watch the crew above.");
                   setReviewOpen(false);
-                  setChosenRun(null);
-                  void runs.refetch();
+                  const attached = Number(payload.job?.agent_run_id ?? 0);
+                  await runs.refetch();
+                  const latest = (await loadAgentRuns("?limit=8")).items.find((item) => item.status === "running");
+                  setChosenRun(attached > 0 ? attached : latest?.id ?? null);
                 })
                 .catch((exc: unknown) => setReviewNote(exc instanceof Error ? exc.message : "The review did not start."));
             }}
