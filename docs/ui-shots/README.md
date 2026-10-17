@@ -44,7 +44,10 @@ Re-check with the API and dashboard already running:
 ```powershell
 Set-Location apps\web
 node .\scripts-guided-smoke.mjs
+node .\scripts-premium-smoke.mjs
 ```
+
+Premium screens from the production build are `premium-home-1920x1080.png`, `premium-home-1280x800.png`, `premium-intelligence-1280x800.png`, `premium-agents-1280x800.png`, `premium-agents-replay-1280x800.png`, `premium-markets-1280x800.png`, `premium-portfolio-1280x800.png`, `premium-approvals-1280x800.png`, `premium-copilot-1280x800.png`, and `premium-copilot-390x844.png`.
 
 ## Re-capture earlier screens
 

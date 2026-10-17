@@ -43,7 +43,7 @@ uv run nomadquant-shadow pilot confirm --approval PREVIEW_HASH
 uv run nomadquant-shadow worker --mode shadow-apply
 ```
 
-Run these only after you decide to change the forward ledger. `confirm` stores a one-time internal approval when the state is `READY_TO_START` and the preview hash still matches. It expires in 30 minutes, binds the ledger version, policy hash, feed, and market fingerprint, and is consumed by one `shadow-apply`. It does not place a broker order and does not enable later scheduled applies. Blocked, waiting, and failed states cannot be approved. Today the workstation is `WAITING_FOR_SESSION`, so confirm will reject.
+Run these only after you decide to change the forward ledger. `confirm` stores a one-time internal approval when the state is `READY_TO_START` and the preview hash still matches. It expires in 30 minutes, binds the ledger version, policy hash, feed, and market fingerprint, and is consumed by one `shadow-apply`. It does not place a broker order and does not enable later scheduled applies. Blocked, waiting, and failed states cannot be approved. On 2026-10-17 the workstation was `WAITING_FOR_DATA`: the stored SIP daily session was 2026-10-15 and the eligible completed session was 2026-10-16. Confirm rejects that state.
 
 A later unattended schedule is separate. It requires the exact phrase and an expiry within 31 days, and it is not enabled by installation or by `confirm`. The daily steps are in `docs/FORWARD_PILOT_RUNBOOK.md`.
 
@@ -80,16 +80,16 @@ Stop affects only process IDs recorded by the start script. It does not stop eve
 
 | Page | Use |
 | --- | --- |
-| Home | What is happening, what needs attention, and the next step. |
-| Decisions | The decision story: market, signal, agents, risk, recommendation, approval. |
-| Agents | How Researcher, Skeptic, Reviewer, and the deterministic risk gate relate. |
-| Portfolio | The internal $100 shadow book. |
-| Market | Stored SPY and QQQ coverage in plain English. |
+| Home | Current session, delayed SIP chart, shadow cash, approvals, and headlines. |
+| Intelligence | Evidence steps for a stored decision. Agent stages appear only when a review actually participated. |
+| Agents | Researcher, Skeptic, Reviewer, and deterministic verification. Replay is labeled. A new review is an explicit local job. |
+| Portfolio | The internal $100 shadow book. No invented equity curve. |
+| Markets | Stored SPY and QQQ daily candles. Not an intraday or live quote. |
 | Approvals | One-time internal shadow permissions. Not broker orders. |
 | Advanced | The previous workbench: research, runs, risk, shadow operations, and health. |
 
 ## Approval email
 
-An approval request is stored in `data/approvals.sqlite`. The email, or the local file under `data/approval-outbox` when `SMTP_HOST` or `APPROVAL_EMAIL_TO` is blank, contains a review link. Opening the link does not use the token. Confirming on that page does. The token is one-time, expires, and is stored only as a hash. Approval records permission for an internal shadow step. It does not apply the live ledger by itself, does not bypass risk checks, and does not submit an Alpaca order.
+An approval request is stored in `data/approvals.sqlite`. The email, or the local file under `data/approval-outbox` when `SMTP_HOST` or `APPROVAL_EMAIL_TO` is blank, contains a review link. A phone cannot open that localhost link unless it is the same computer. Opening the link does not use the token, and a GET request cannot approve. The decision is a POST from the confirmation page, with a local origin check and an explicit confirm field. The token is one-time, expires, and is stored only as a hash. If the request is bound to a preview hash, approval calls the existing pilot confirmation and can store an internal shadow grant. It does not fill the ledger by itself, does not bypass risk checks, and does not submit an Alpaca order. An unbound request records permission only.
 
 Set `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, and `APPROVAL_EMAIL_TO` only in `.env`. Do not put those values in the frontend.

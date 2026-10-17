@@ -77,7 +77,7 @@ npm install
 npm run dev
 ```
 
-The dashboard listens on `http://127.0.0.1:3000`. The default navigation is Home, Decisions, Agents, Portfolio, Market, Approvals, and Advanced. The earlier workbench pages remain under Advanced and at their previous routes, with the old command center at `/workbench`.
+The dashboard listens on `http://127.0.0.1:3000`. The default navigation is Home, Intelligence, Agents, Markets, Portfolio, Approvals, and Advanced. Home shows stored SIP daily charts and a freshness label. Nomad Copilot is a local read-only assistant. The earlier workbench pages remain under Advanced and at their previous routes, with the old command center at `/workbench`.
 
 Equivalent scripts: `.\scripts\dev-api.ps1` and `.\scripts\dev-web.ps1`.
 
