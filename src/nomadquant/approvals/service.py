@@ -23,6 +23,10 @@ def create_approval_request(
     risk_summary: str,
     caveats: str,
     now: datetime | None = None,
+    preview_hash: str = "",
+    ledger_version: int = 0,
+    policy_hash: str = "",
+    market_fingerprint: str = "",
 ) -> dict[str, Any]:
     """Store one request and deliver the review link. The raw token is not returned."""
     clock = now or datetime.now(UTC)
@@ -47,6 +51,10 @@ def create_approval_request(
             "scope": SCOPE,
             "created_at": clock.isoformat(),
             "expires_at": expires.isoformat(),
+            "preview_hash": preview_hash,
+            "ledger_version": ledger_version,
+            "policy_hash": policy_hash,
+            "market_fingerprint": market_fingerprint,
         }
     )
     review_url = _review_url(settings, request_id, token)
@@ -158,7 +166,15 @@ def decide_approval_request(
         viewed = public_view(updated, now=clock)
         viewed["audit"] = store.audit_for(request_id)
         viewed["applied"] = False
+        viewed["shadow_grant_issued"] = False
         return viewed
+    grant: dict[str, Any] | None = None
+    if action == "approve" and str(row.get("preview_hash") or ""):
+        from nomadquant.shadow.pilot import confirm_pilot_start
+
+        grant = confirm_pilot_start(settings, str(row["preview_hash"]))
+        if grant.get("status") != "CONFIRMATION_ACCEPTED":
+            raise ValueError(str(grant.get("reason") or "The shadow preview no longer matches."))
     status = "approved" if action == "approve" else "rejected"
     note = reason.strip() or (
         "Approved for a later internal shadow cycle. No broker order was sent."
@@ -172,6 +188,8 @@ def decide_approval_request(
     viewed["audit"] = store.audit_for(request_id)
     viewed["applied"] = False
     viewed["broker_orders"] = False
+    viewed["shadow_grant_issued"] = bool(grant and grant.get("status") == "CONFIRMATION_ACCEPTED")
+    viewed["shadow_authorization"] = grant
     return viewed
 
 

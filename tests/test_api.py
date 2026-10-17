@@ -15,7 +15,6 @@ from nomadquant.api.schemas import (
 from nomadquant.broker.alpaca import AlpacaReadOnlyBroker
 from tests.conftest import make_settings
 
-_HTTP_METHODS = {"get", "post", "put", "patch", "delete", "options", "head", "trace"}
 _PLANTED_SECRET = "PLANTED-ALPACA-SECRET-9f3c"
 
 
@@ -262,11 +261,17 @@ def test_no_order_submission_endpoint(client: TestClient) -> None:
         "/api/approvals/inbox",
         "/api/approvals/{request_id}",
         "/api/approvals/{request_id}/decide",
+        "/api/market-data/freshness",
+        "/api/market-data/sync",
+        "/api/copilot/ask",
+        "/api/news/headlines",
+        "/api/news/refresh",
+        "/api/news/analyze",
+        "/api/agents/reviews",
     }
-    for path, operations in paths.items():
-        assert "order" not in path.lower()
-        methods = _HTTP_METHODS.intersection(operations)
-        assert methods == {"get"}
+    from nomadquant.api.mutations import assert_route_safety
+
+    assert_route_safety(paths)
 
 
 def test_broker_module_has_no_order_methods() -> None:

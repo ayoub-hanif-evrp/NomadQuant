@@ -27,7 +27,11 @@ CREATE TABLE IF NOT EXISTS approval_requests (
     created_at TEXT NOT NULL,
     expires_at TEXT NOT NULL,
     decided_at TEXT,
-    decision_reason TEXT NOT NULL DEFAULT ''
+    decision_reason TEXT NOT NULL DEFAULT '',
+    preview_hash TEXT NOT NULL DEFAULT '',
+    ledger_version INTEGER NOT NULL DEFAULT 0,
+    policy_hash TEXT NOT NULL DEFAULT '',
+    market_fingerprint TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS approval_audit (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -46,6 +50,7 @@ class ApprovalStore:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as conn:
             conn.executescript(SCHEMA)
+            _migrate(conn)
             conn.commit()
 
     @classmethod
@@ -74,8 +79,9 @@ class ApprovalStore:
                 INSERT INTO approval_requests (
                     id, status, token_hash, instrument, action, quantity, notional_usd,
                     why, risk_summary, caveats, scope, broker_orders, created_at,
-                    expires_at, decided_at, decision_reason
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    expires_at, decided_at, decision_reason,
+                    preview_hash, ledger_version, policy_hash, market_fingerprint
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     record["id"],
@@ -91,9 +97,13 @@ class ApprovalStore:
                     record["scope"],
                     0,
                     record["created_at"],
-                    record["expires_at"],
+                    record.get("expires_at"),
                     None,
                     "",
+                    record.get("preview_hash") or "",
+                    int(record.get("ledger_version") or 0),
+                    record.get("policy_hash") or "",
+                    record.get("market_fingerprint") or "",
                 ),
             )
             self._audit(conn, record["id"], "created", "Internal shadow approval requested.")
@@ -184,5 +194,22 @@ def public_view(row: dict[str, Any], *, now: datetime) -> dict[str, Any]:
         "expires_at": row["expires_at"],
         "decided_at": row["decided_at"],
         "decision_reason": row["decision_reason"],
+        "preview_hash": row.get("preview_hash") or "",
+        "ledger_version": row.get("ledger_version") or 0,
+        "policy_hash": row.get("policy_hash") or "",
+        "market_fingerprint": row.get("market_fingerprint") or "",
         "effect": "records_internal_shadow_permission_only",
     }
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    have = {str(row[1]) for row in conn.execute("PRAGMA table_info(approval_requests)")}
+    additions = {
+        "preview_hash": "TEXT NOT NULL DEFAULT ''",
+        "ledger_version": "INTEGER NOT NULL DEFAULT 0",
+        "policy_hash": "TEXT NOT NULL DEFAULT ''",
+        "market_fingerprint": "TEXT NOT NULL DEFAULT ''",
+    }
+    for name, declaration in additions.items():
+        if name not in have:
+            conn.execute(f"ALTER TABLE approval_requests ADD COLUMN {name} {declaration}")

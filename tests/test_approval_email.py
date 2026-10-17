@@ -10,6 +10,16 @@ from nomadquant.approvals.service import create_approval_request
 from tests.conftest import make_settings
 
 
+def _post(client: TestClient, request_id: str, token: str, **fields: str) -> object:
+    body = {"token": token, "action": "approve", "confirm": "0", "reason": ""}
+    body.update(fields)
+    return client.post(
+        f"/api/approvals/{request_id}/decide",
+        json=body,
+        headers={"Origin": "http://127.0.0.1:3000", "X-NomadQuant-Intent": "mutate"},
+    )
+
+
 def _token(letter: str) -> str:
     for line in letter.splitlines():
         if "token=" in line:
@@ -21,6 +31,7 @@ def _proposal(tmp_path: Path, **overrides: object) -> tuple[object, dict[str, ob
     now = datetime.now(UTC)
     if "now" in overrides:
         now = overrides.pop("now")  # type: ignore[assignment]
+    preview_hash = str(overrides.pop("preview_hash", "") or "")
     settings = make_settings(
         tmp_path,
         approval_path=str(tmp_path / "approvals.sqlite"),
@@ -39,6 +50,7 @@ def _proposal(tmp_path: Path, **overrides: object) -> tuple[object, dict[str, ob
         risk_summary="Cash reserve held. No broker route.",
         caveats="Delayed hypothetical daily open. Not a live order.",
         now=now,
+        preview_hash=preview_hash,
     )
     return settings, created
 
@@ -66,27 +78,22 @@ def test_local_outbox_and_one_time_decision(tmp_path: Path) -> None:
     token = _token(letter)
     app = create_app(settings)
     with TestClient(app) as client:
-        preview = client.get(
-            f"/api/approvals/{created['id']}/decide", params={"token": token, "action": "approve"}
-        )
+        preview = _post(client, str(created["id"]), token)
         assert preview.status_code == 200
         assert preview.json()["status"] == "pending"
         assert preview.json()["applied"] is False
-        first = client.get(
-            f"/api/approvals/{created['id']}/decide",
-            params={"token": token, "action": "approve", "confirm": "1"},
-        )
+        first = _post(client, str(created["id"]), token, confirm="1")
         assert first.status_code == 200
         body = first.json()
         assert body["status"] == "approved"
         assert body["broker_orders"] is False
         assert body["applied"] is False
+        assert body["shadow_grant_issued"] is False
         assert any(row["event"] == "approved" for row in body["audit"])
-        replay = client.get(
-            f"/api/approvals/{created['id']}/decide",
-            params={"token": token, "action": "approve", "confirm": "1"},
-        )
+        replay = _post(client, str(created["id"]), token, confirm="1")
         assert replay.status_code == 409
+        scanned = client.get(f"/api/approvals/{created['id']}/decide", params={"token": token})
+        assert scanned.status_code == 405
 
 
 def test_reject_and_expiry_are_audited(tmp_path: Path) -> None:
@@ -95,9 +102,13 @@ def test_reject_and_expiry_are_audited(tmp_path: Path) -> None:
     token = _token(letter)
     app = create_app(settings)
     with TestClient(app) as client:
-        rejected = client.get(
-            f"/api/approvals/{created['id']}/decide",
-            params={"token": token, "action": "reject", "confirm": "1", "reason": "Not this week."},
+        rejected = _post(
+            client,
+            str(created["id"]),
+            token,
+            action="reject",
+            confirm="1",
+            reason="Not this week.",
         )
         assert rejected.status_code == 200
         assert rejected.json()["status"] == "rejected"
@@ -115,10 +126,7 @@ def test_reject_and_expiry_are_audited(tmp_path: Path) -> None:
     token = _token(letter)
     app = create_app(expired_settings)
     with TestClient(app) as client:
-        response = client.get(
-            f"/api/approvals/{expired['id']}/decide",
-            params={"token": token, "action": "approve", "confirm": "1"},
-        )
+        response = _post(client, str(expired["id"]), token, confirm="1")
         assert response.status_code == 200
         assert response.json()["status"] == "expired"
         assert any(row["event"] == "expired" for row in response.json()["audit"])
@@ -168,3 +176,44 @@ def test_smtp_delivery_does_not_put_the_password_in_the_letter(
     assert "local-secret" not in letter
     assert "token=" in letter
     assert not Path(settings.shadow_path).exists()
+
+
+def test_missing_mutation_header_does_not_consume_the_token(tmp_path: Path) -> None:
+    settings, created = _proposal(tmp_path)
+    letter = Path(settings.approval_outbox_dir, f"{created['id']}.txt").read_text(encoding="utf-8")
+    token = _token(letter)
+    app = create_app(settings)
+    with TestClient(app) as client:
+        blocked = client.post(
+            f"/api/approvals/{created['id']}/decide",
+            json={"token": token, "action": "approve", "confirm": "1"},
+        )
+        assert blocked.status_code == 403
+        inbox = client.get("/api/approvals/inbox")
+    assert inbox.json()["items"][0]["status"] == "pending"
+
+
+def test_bound_approval_rechecks_the_shadow_preview(tmp_path: Path, monkeypatch: object) -> None:
+    seen: dict[str, str] = {}
+
+    def _confirm(settings: object, approval: str) -> dict[str, object]:
+        seen["approval"] = approval
+        return {
+            "status": "CONFIRMATION_ACCEPTED",
+            "applied": False,
+            "broker_orders": False,
+            "stored": True,
+        }
+
+    monkeypatch.setattr("nomadquant.shadow.pilot.confirm_pilot_start", _confirm)  # type: ignore[attr-defined]
+    settings, created = _proposal(tmp_path / "bound", preview_hash="abc123")
+    letter = Path(settings.approval_outbox_dir, f"{created['id']}.txt").read_text(encoding="utf-8")
+    token = _token(letter)
+    app = create_app(settings)
+    with TestClient(app) as client:
+        refused = _post(client, str(created["id"]), token, confirm="1")
+    # The patch is on the service function, which the route imports at call time.
+    assert refused.status_code == 200
+    assert refused.json()["shadow_grant_issued"] is True
+    assert refused.json()["applied"] is False
+    assert seen["approval"] == "abc123"

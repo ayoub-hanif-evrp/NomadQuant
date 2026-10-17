@@ -1,4 +1,7 @@
-"""FastAPI application. Every route is read-only."""
+"""FastAPI application.
+
+GET is read-only. POST is a localhost allowlist and never submits a broker order.
+"""
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -9,7 +12,9 @@ from fastapi.responses import JSONResponse
 
 from nomadquant.api.agent_routes import router as agent_router
 from nomadquant.api.approval_routes import router as approval_router
+from nomadquant.api.copilot_routes import router as copilot_router
 from nomadquant.api.market_routes import router as market_router
+from nomadquant.api.news_routes import router as news_router
 from nomadquant.api.observe import router as observability_router
 from nomadquant.api.research_routes import router as research_router
 from nomadquant.api.risk_routes import router as risk_router
@@ -78,8 +83,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=_LOCAL_ORIGINS,
-        allow_methods=["GET"],
-        allow_headers=["Accept"],
+        allow_methods=["GET", "POST"],
+        allow_headers=["Accept", "Content-Type", "X-NomadQuant-Intent"],
     )
     app.state.settings = active
     app.state.audit = AuditLog(active.database_path, active.secret_values)
@@ -91,6 +96,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(risk_router)
     app.include_router(shadow_router)
     app.include_router(approval_router)
+    app.include_router(copilot_router)
+    app.include_router(news_router)
 
     @app.exception_handler(Exception)
     async def unhandled(request: object, exc: Exception) -> JSONResponse:

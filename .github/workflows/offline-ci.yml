@@ -52,7 +52,8 @@ jobs:
                   paths = client.app.openapi()['paths']
               for path, ops in paths.items():
                   assert 'order' not in path.lower()
-                  assert set(ops).intersection({'get','post','put','patch','delete'}) == {'get'}
+              from nomadquant.api.mutations import assert_route_safety
+              assert_route_safety(paths)
               print('PASS')
           "
 

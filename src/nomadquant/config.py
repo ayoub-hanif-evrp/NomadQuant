@@ -79,6 +79,7 @@ class Settings(BaseSettings):
     smtp_port: int = 587
     smtp_username: str = ""
     smtp_password: SecretStr | None = None
+    news_path: str = "data/news.sqlite"
 
     @field_validator("ollama_base_url")
     @classmethod

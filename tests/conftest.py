@@ -47,6 +47,7 @@ def make_settings(tmp_path: Path, **overrides: object) -> Settings:
         "shadow_path": str(tmp_path / "shadow.sqlite"),
         "approval_path": str(tmp_path / "approvals.sqlite"),
         "approval_outbox_dir": str(tmp_path / "approval-outbox"),
+        "news_path": str(tmp_path / "news.sqlite"),
     }
     values.update(overrides)
     return Settings(_env_file=None, **values)

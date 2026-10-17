@@ -1,10 +1,12 @@
-"""Read-only market-data chart routes. No broker orders."""
+"""Market-data routes. Chart reads are GET. Sync is an explicit localhost POST."""
 
-from datetime import date
+from datetime import UTC, date, datetime
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
+from nomadquant.api.csrf import require_local_mutation
 from nomadquant.marketdata.store import MarketStore
 from nomadquant.marketdata.validate import ADJUSTMENT, PROVIDER, TIMEFRAME
 
@@ -128,3 +130,48 @@ def market_bars(
         start=start_date.isoformat(),
         end=end_date.isoformat(),
     )
+
+
+@router.get("/freshness")
+def market_freshness(request: Request) -> dict[str, Any]:
+    """Compare the stored daily bar with the latest eligible session. Does not download."""
+    from nomadquant.marketdata.availability import latest_safe_session
+    from nomadquant.shadow.data_ops import data_check
+
+    now = datetime.now(UTC)
+    settings = request.app.state.settings
+    try:
+        eligible = latest_safe_session(now, "sip").isoformat()
+    except Exception:  # noqa: BLE001 - the page must still explain the gap
+        eligible = None
+    report = data_check(settings, feed="sip")
+    return {
+        "as_of": now.isoformat(),
+        "feed": "sip",
+        "timeframe": "1Day",
+        "live": False,
+        "entitlement": "historical_daily_bars",
+        "eligible_session": eligible,
+        "symbols": report.get("symbols") or {},
+        "missing_count": report.get("missing_count"),
+        "status": report.get("status"),
+        "note": "Daily bars are delayed historical records. A page refresh is not a live quote.",
+        "broker_orders": False,
+    }
+
+
+class SyncBody(BaseModel):
+    confirm: str
+
+
+@router.post("/sync")
+def sync_historical_bars(body: SyncBody, request: Request) -> dict[str, Any]:
+    """Opt-in download of missing daily bars. Does not change the strategy feed."""
+    require_local_mutation(request)
+    if body.confirm != "SYNC_HISTORICAL_BARS":
+        raise HTTPException(status_code=409, detail="Confirmation phrase does not match.")
+    from nomadquant.shadow.data_ops import data_sync
+
+    result = data_sync(request.app.state.settings, feed="sip")
+    result["broker_orders"] = False
+    return result
