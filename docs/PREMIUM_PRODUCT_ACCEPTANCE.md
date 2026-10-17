@@ -107,7 +107,7 @@ A live GET of `/api/approvals/scanner/decide` returned 405. Pytest covers the PO
 
 ## GitHub Actions
 
-The link for this push is recorded after the workflow finishes.
+Offline CI succeeded for `e62e10f`: https://github.com/ayoub-hanif-evrp/NomadQuant/actions/runs/39030626826
 
 ## Known limits
 
