@@ -36,8 +36,8 @@ _TWO = Decimal("2")
 def execution_price(mid: Decimal, costs: CostModel, *, side: str) -> Decimal:
     if side not in {"buy", "sell"}:
         raise ValueError(f"side must be buy or sell, got {side}")
-    if mid <= 0:
-        raise ValueError("execution price requires a positive mid")
+    if not isinstance(mid, Decimal) or not mid.is_finite() or mid <= 0:
+        raise ValueError("execution price requires a finite positive mid")
     half_spread, slippage = adverse_components(mid, costs)
     if side == "buy":
         return mid + half_spread + slippage

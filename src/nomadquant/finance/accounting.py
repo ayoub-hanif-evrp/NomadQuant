@@ -54,9 +54,13 @@ def apply_fill(
     mid: Decimal,
     costs: CostModel,
 ) -> tuple[Book, FillResult]:
-    if quantity <= 0:
-        raise ValueError("quantity must be positive")
+    if not isinstance(quantity, Decimal) or not quantity.is_finite() or quantity <= 0:
+        raise ValueError("quantity must be a finite positive Decimal")
+    if not isinstance(mid, Decimal) or not mid.is_finite():
+        raise ValueError("mid must be a finite Decimal")
     price = execution_price(mid, costs, side=side)
+    if not price.is_finite() or price <= 0:
+        raise ValueError("execution price must stay finite and positive")
     costs_row = attribute_costs(mid, quantity, costs)
     notional = quantity * price
     commission = costs_row["commission"]

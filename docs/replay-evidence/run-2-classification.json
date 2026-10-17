@@ -1,0 +1,44 @@
+{
+  "run_id": 2,
+  "stored_engine_version": "1.0.0",
+  "created_at": "2026-10-15T20:14:22.591902+00:00",
+  "dataset_fingerprint_matches": true,
+  "current_engine_without_legacy_mode": {
+    "verdict": "FAIL",
+    "mismatch_count": 2,
+    "mismatches": [
+      {
+        "kind": "extra_recomputed_decision",
+        "session_date": "2019-02-01",
+        "signal": "insufficient_data"
+      },
+      {
+        "kind": "missing_recomputed_decision",
+        "session_date": "2019-02-01"
+      }
+    ]
+  },
+  "stored_2019_02_01": {
+    "signal": "tsmom_rebalance",
+    "action": "hold",
+    "proposed_target_weight": "0",
+    "momentum_return": "null",
+    "close": "270.08",
+    "fill_session": "2019-02-04"
+  },
+  "root_cause": "The stored run treated unavailable momentum as a cash hold. The current engine records that case as insufficient_data and does not simulate an order. Trades, equity, and the test net return already matched. The row was not rewritten.",
+  "legacy_replay": {
+    "convention": "legacy_null_is_cash_v1",
+    "verdict": "PASS",
+    "mismatch_count": 0
+  },
+  "fresh_experiment": {
+    "experiment_id": "spy-tsmom-v1-insufficient-data",
+    "run_id": 3,
+    "convention": "insufficient_data_v1",
+    "replay_verdict": "PASS"
+  },
+  "audit_status": "NOT_EVALUABLE",
+  "audit_reason": "No point-in-time split or dividend file. Sampled look-ahead checks passed.",
+  "broker_orders": false
+}

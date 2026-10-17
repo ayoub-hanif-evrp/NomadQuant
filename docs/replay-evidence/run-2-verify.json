@@ -1,0 +1,74 @@
+{
+  "run_id": 2,
+  "verdict": "FAIL",
+  "checks": [
+    {
+      "name": "run_exists",
+      "verdict": "PASS",
+      "detail": "Run row exists."
+    },
+    {
+      "name": "configuration",
+      "verdict": "PASS",
+      "detail": "Configuration parsed."
+    },
+    {
+      "name": "dataset_fingerprint_recorded",
+      "verdict": "PASS",
+      "detail": "21ba1cf71817e7da86f682a7e282a09c148573f722959fb0bd3581fc37f95302"
+    },
+    {
+      "name": "independent_replay",
+      "verdict": "FAIL",
+      "detail": "Independent recomputation finished. PASS covers decisions, trades, equity points, portfolio cash/equity snapshots, and locked-test net return when present."
+    },
+    {
+      "name": "no_same_day_close_fill",
+      "verdict": "PASS",
+      "detail": "0 same-day momentum fills."
+    },
+    {
+      "name": "timestamps_ordered",
+      "verdict": "PASS",
+      "detail": "Decision timestamp is at or after the data cutoff."
+    },
+    {
+      "name": "cash_non_negative",
+      "verdict": "PASS",
+      "detail": "Portfolio snapshots stay non-negative."
+    },
+    {
+      "name": "no_short",
+      "verdict": "PASS",
+      "detail": "No short quantity in snapshots."
+    },
+    {
+      "name": "benchmarks_present",
+      "verdict": "PASS",
+      "detail": "Benchmarks stored."
+    },
+    {
+      "name": "trade_history_stored",
+      "verdict": "PASS",
+      "detail": "7 simulated primary trades."
+    },
+    {
+      "name": "no_credentials",
+      "verdict": "PASS",
+      "detail": "No credential fields in the run row."
+    },
+    {
+      "name": "backtest_label",
+      "verdict": "PASS",
+      "detail": "Run is labeled as an offline backtest."
+    },
+    {
+      "name": "statistical_significance",
+      "verdict": "NOT_EVALUABLE",
+      "detail": "A reproducible backtest is not a significance result."
+    }
+  ],
+  "label": "backtest_verification",
+  "is_statistical_claim": false,
+  "is_broker_execution": false
+}

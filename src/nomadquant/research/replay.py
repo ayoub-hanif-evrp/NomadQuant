@@ -48,6 +48,9 @@ def replay_run(
         )
     from nomadquant.research.runner import load_session_bars
 
+    recorded_decisions = store.decisions(run_id, strategy_id=config.strategy_id)
+    convention, convention_source = _replay_convention(recorded_decisions, config)
+    config = config.model_copy(update={"signal_convention": convention})
     bars = load_session_bars(
         market_path,
         symbol=config.symbols[0],
@@ -69,7 +72,6 @@ def replay_run(
         mode="momentum",
     )
     mismatches: list[dict[str, object]] = []
-    recorded_decisions = store.decisions(run_id, strategy_id=config.strategy_id)
     recomputed_by_key = {
         (item.session_date.isoformat(), item.signal): item for item in recomputed.decisions
     }
@@ -229,6 +231,8 @@ def replay_run(
         "equity points, portfolio cash/equity snapshots, and locked-test net return when present.",
     )
     payload["checked_decisions"] = len(recorded_decisions)
+    payload["replay_convention"] = convention
+    payload["convention_source"] = convention_source
     payload["checks_scope"] = [
         "dataset_fingerprint",
         "decision_count_and_keys",
@@ -239,6 +243,21 @@ def replay_run(
         "test_net_return_when_present",
     ]
     return payload
+
+
+def _replay_convention(
+    decisions: list[dict[str, object]], config: ExperimentConfig
+) -> tuple[str, str]:
+    """Pick the convention that was actually stored. Do not rewrite the run."""
+    for item in decisions:
+        features = item.get("feature_inputs")
+        if not isinstance(features, dict):
+            continue
+        momentum = features.get("momentum_return")
+        if item.get("signal") == "tsmom_rebalance" and momentum in {"null", "None", None}:
+            if "momentum_return" in features and momentum in {"null", "None"}:
+                return "legacy_null_is_cash_v1", "stored_null_momentum"
+    return config.signal_convention, "config"
 
 
 def _decimal_field(payload: Mapping[str, object], key: str) -> Decimal | None:

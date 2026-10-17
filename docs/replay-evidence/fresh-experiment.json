@@ -1,0 +1,18 @@
+{
+  "run_id": 3,
+  "audit_run_id": 25573,
+  "fingerprint": {
+    "algorithm": "sha256",
+    "digest": "21ba1cf71817e7da86f682a7e282a09c148573f722959fb0bd3581fc37f95302",
+    "symbols": [
+      "SPY"
+    ],
+    "feed": "sip",
+    "adjustment": "raw",
+    "start": "2018-01-02",
+    "end": "2026-10-14",
+    "bar_count": 2208,
+    "revision_count": 0,
+    "encoding": "symbol|session_date|content_hash newline"
+  }
+}

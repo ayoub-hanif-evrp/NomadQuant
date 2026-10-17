@@ -186,7 +186,20 @@ class DailyBacktestEngine:
                     buy_hold_done = True
             elif mode == "momentum" and _is_month_start(session, sessions):
                 value = momentum_return(closes, sessions, session, lookback, skip)
-                if value is None:
+                if value is None and config.signal_convention == "legacy_null_is_cash_v1":
+                    # Frozen behavior of runs stored before insufficient_data was distinct.
+                    # Missing momentum was written as the string "null" and a cash weight.
+                    pending_weight = _ZERO
+                    pending_reason = "tsmom_rebalance"
+                    pending_decision_date = session
+                    pending_features = {
+                        "lookback_sessions": str(lookback),
+                        "skip_sessions": str(skip),
+                        "momentum_return": "null",
+                        "close": str(bar.close),
+                        "information_cutoff": modeled_available_at(session).isoformat(),
+                    }
+                elif value is None:
                     decisions.append(
                         SimulatedDecision(
                             session_date=session,

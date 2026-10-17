@@ -1,18 +1,46 @@
 """Immutable experiment configuration and result shapes."""
 
+from __future__ import annotations
+
 from datetime import date
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+# Stress ceiling: 10 percent of mid. Higher values are not a supported scenario.
+_MAX_BPS = Decimal("1000")
+_MAX_CASH_ITEM = Decimal("100")
+
+
+def _finite_nonnegative(name: str, value: Decimal, maximum: Decimal) -> None:
+    if not isinstance(value, Decimal) or not value.is_finite() or value < 0 or value > maximum:
+        raise ValueError(f"{name} must be a finite Decimal from 0 through {maximum}.")
 
 
 class CostModel(BaseModel):
+    """Adverse execution costs. Negative or non-finite values are rejected.
+
+    ``spread_bps`` and ``slippage_bps`` may be zero (an optimistic case) and
+    may rise to 1000 (10 percent) for a documented stress case. Commission and
+    minimum notional stay within the $100 simulation.
+    """
+
     commission_usd: Decimal = Decimal("0")
     spread_bps: Decimal = Decimal("1")
     slippage_bps: Decimal = Decimal("1")
     min_notional_usd: Decimal = Decimal("1")
     quantity_precision: int = 6
+
+    @model_validator(mode="after")
+    def _bounded(self) -> CostModel:
+        _finite_nonnegative("commission_usd", self.commission_usd, _MAX_CASH_ITEM)
+        _finite_nonnegative("spread_bps", self.spread_bps, _MAX_BPS)
+        _finite_nonnegative("slippage_bps", self.slippage_bps, _MAX_BPS)
+        _finite_nonnegative("min_notional_usd", self.min_notional_usd, _MAX_CASH_ITEM)
+        if not isinstance(self.quantity_precision, int) or not 0 <= self.quantity_precision <= 9:
+            raise ValueError("quantity_precision must be an integer from 0 through 9.")
+        return self
 
 
 class WindowSpec(BaseModel):
@@ -50,6 +78,9 @@ class ExperimentConfig(BaseModel):
     benchmarks: list[str] = Field(default_factory=lambda: ["spy_buy_hold", "cash", "tsmom_6m"])
     caveats: list[str] = Field(default_factory=list)
     engine_version: str = "1.0.0"
+    signal_convention: Literal["insufficient_data_v1", "legacy_null_is_cash_v1"] = (
+        "insufficient_data_v1"
+    )
 
 
 class EquityPoint(BaseModel):
