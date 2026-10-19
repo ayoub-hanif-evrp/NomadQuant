@@ -59,8 +59,8 @@ export function MarketData() {
 
   const window = useMemo(() => {
     // Chart window comes only from the selected symbol/feed coverage — never a cross-feed span.
-    const latest = coverage?.latest_session ?? null;
-    const earliest = coverage?.earliest_session ?? null;
+    const latest = coverage?.stored_latest_session ?? null;
+    const earliest = coverage?.stored_earliest_session ?? null;
     if (!latest || !earliest) {
       return null;
     }

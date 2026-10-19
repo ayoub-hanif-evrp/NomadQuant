@@ -418,6 +418,39 @@ def test_short_span_is_not_complete_for_a_longer_request(tmp_path: Path) -> None
     assert wide.coverage[0].missing_end == 0
 
 
+def test_last_download_window_does_not_hide_older_stored_bars(tmp_path: Path) -> None:
+    store = MarketStore(tmp_path / "market.sqlite")
+    sync_daily_bars(
+        store,
+        lambda symbols, start, end, requested: [
+            _bar(session=date(2024, 1, day)) for day in (2, 3, 4, 5)
+        ],
+        ["SPY"],
+        date(2024, 1, 2),
+        date(2024, 1, 5),
+        "sip",
+        now=NOW,
+    )
+    sync_daily_bars(
+        store,
+        lambda symbols, start, end, requested: [_bar(session=date(2024, 1, 5))],
+        ["SPY"],
+        date(2024, 1, 5),
+        date(2024, 1, 5),
+        "sip",
+        now=NOW,
+    )
+    status = market_data_status(str(store.path))
+    item = status.coverage[0]
+    assert status.requested_start == "2024-01-05"
+    assert item.earliest_session == "2024-01-05"
+    assert item.latest_session == "2024-01-05"
+    assert item.bar_count == 1
+    assert item.stored_earliest_session == "2024-01-02"
+    assert item.stored_latest_session == "2024-01-05"
+    assert item.stored_bar_count == 4
+
+
 def test_missing_edges_and_middle_are_reported(tmp_path: Path) -> None:
     store = MarketStore(tmp_path / "market.sqlite")
     result = sync_daily_bars(

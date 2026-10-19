@@ -27,6 +27,9 @@ class SymbolCoverage(BaseModel):
     missing_start: int = 0
     missing_middle: int = 0
     missing_end: int = 0
+    stored_bar_count: int = 0
+    stored_earliest_session: str | None = None
+    stored_latest_session: str | None = None
 
 
 class MarketDataStatus(BaseModel):
@@ -93,6 +96,9 @@ def market_data_status(
                 missing_start=len(begin),
                 missing_middle=len(middle),
                 missing_end=len(finish),
+                stored_bar_count=len(stored),
+                stored_earliest_session=None if not stored else min(stored).isoformat(),
+                stored_latest_session=None if not stored else max(stored).isoformat(),
             )
         )
         if missing:

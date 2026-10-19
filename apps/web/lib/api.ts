@@ -60,6 +60,9 @@ export type SymbolCoverage = {
   missing_start: number;
   missing_middle: number;
   missing_end: number;
+  stored_bar_count: number;
+  stored_earliest_session: string | null;
+  stored_latest_session: string | null;
 };
 
 export type AuditEvent = {
@@ -326,8 +329,11 @@ export function parseMarketDataStatus(value: unknown): MarketDataStatus {
       typeof item.missing_start !== "number" ||
       typeof item.missing_middle !== "number" ||
       typeof item.missing_end !== "number" ||
+      typeof item.stored_bar_count !== "number" ||
       !isOptionalString(item.earliest_session) ||
-      !isOptionalString(item.latest_session)
+      !isOptionalString(item.latest_session) ||
+      !isOptionalString(item.stored_earliest_session) ||
+      !isOptionalString(item.stored_latest_session)
     ) {
       throw new Error("Unexpected coverage field");
     }
@@ -341,6 +347,9 @@ export function parseMarketDataStatus(value: unknown): MarketDataStatus {
       missing_start: item.missing_start,
       missing_middle: item.missing_middle,
       missing_end: item.missing_end,
+      stored_bar_count: item.stored_bar_count,
+      stored_earliest_session: item.stored_earliest_session,
+      stored_latest_session: item.stored_latest_session,
     };
   });
   if (

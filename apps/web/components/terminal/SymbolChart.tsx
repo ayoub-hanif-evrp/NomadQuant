@@ -45,8 +45,10 @@ export function SymbolChart({
   const [range, setRange] = useState<RangeKey>(compact ? "6M" : "1Y");
   const [mode, setMode] = useState<"candle" | "line">("candle");
   const coverage = status.data?.coverage.find((item) => item.symbol === symbol && item.feed === "sip");
-  const latest = coverage?.latest_session ?? null;
-  const earliest = coverage?.earliest_session ?? null;
+  // The status window is the last download request, which can be a single day.
+  // The chart must use the full stored span.
+  const latest = coverage?.stored_latest_session ?? null;
+  const earliest = coverage?.stored_earliest_session ?? null;
   const window = useMemo(() => {
     if (!latest || !earliest) {
       return null;

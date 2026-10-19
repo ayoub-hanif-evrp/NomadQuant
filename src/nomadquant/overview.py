@@ -24,6 +24,33 @@ STRATEGY_PLAIN = (
 )
 
 
+def _pilot_check(clock_started: bool, worker_running: bool) -> dict[str, str]:
+    """Separate an armed clock from a live worker and from a fill grant."""
+    if worker_running:
+        return {
+            "title": "Forward worker lock is active",
+            "detail": (
+                "A daily worker lock is present. That is not a broker order, "
+                "and a simulated fill still needs your approval."
+            ),
+        }
+    if clock_started:
+        return {
+            "title": "Forward clock is armed",
+            "detail": (
+                "Future month-start decisions can be recorded. "
+                "No simulated fill is authorized until you approve one."
+            ),
+        }
+    return {
+        "title": "Forward pilot has not been started",
+        "detail": (
+            "The system checks each day, but it will not record a simulated trade "
+            "until you start the pilot."
+        ),
+    }
+
+
 def market_clock(now: datetime) -> dict[str, Any]:
     ny = now.astimezone(NEW_YORK)
     today = ny.date()
@@ -92,7 +119,9 @@ def overview(settings: Settings, *, now: datetime | None = None) -> dict[str, An
     fills = int(report.get("hypothetical_fills") or 0)
     decisions = list(report.get("decisions") or [])[:5]
     pilot_started = bool(readiness.get("pilot_clock_started"))
+    worker_running = bool(readiness.get("pilot_running"))
     rebalance_due = bool(readiness.get("rebalance_scheduled"))
+    pilot_check = _pilot_check(pilot_started, worker_running)
 
     checks = [
         {
@@ -110,15 +139,8 @@ def overview(settings: Settings, *, now: datetime | None = None) -> dict[str, An
         {
             "key": "pilot",
             "ok": pilot_started,
-            "title": "Forward pilot is running"
-            if pilot_started
-            else "Forward pilot has not been started",
-            "detail": (
-                "Simulated trades can be recorded in the $100 book."
-                if pilot_started
-                else "The system checks each day, but it will not record a simulated trade "
-                "until you start the pilot."
-            ),
+            "title": pilot_check["title"],
+            "detail": pilot_check["detail"],
             "action": None if pilot_started else "start_pilot",
         },
         {
