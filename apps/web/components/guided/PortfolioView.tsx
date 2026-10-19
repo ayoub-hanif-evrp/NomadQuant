@@ -3,13 +3,20 @@
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { loadShadowEquity, loadShadowStatus, loadShadowValuation, loadSimulationPerformance } from "@/lib/api";
+import {
+  loadLatestLab,
+  loadShadowEquity,
+  loadShadowStatus,
+  loadShadowValuation,
+  loadSimulationPerformance,
+} from "@/lib/api";
 
 export function PortfolioView() {
   const status = useQuery({ queryKey: ["portfolio-status"], queryFn: loadShadowStatus });
   const value = useQuery({ queryKey: ["portfolio-value"], queryFn: loadShadowValuation });
   const equity = useQuery({ queryKey: ["portfolio-equity"], queryFn: () => loadShadowEquity(60) });
   const performance = useQuery({ queryKey: ["simulation-performance"], queryFn: loadSimulationPerformance });
+  const lab = useQuery({ queryKey: ["lab-latest"], queryFn: loadLatestLab });
   const points = (equity.data?.items ?? [])
     .map((item) => ({
       at: String(item.recorded_at ?? item.session ?? ""),
@@ -57,12 +64,48 @@ export function PortfolioView() {
             </ResponsiveContainer>
           </div>
         )}
-        <Link href="/shadow" className="mt-4 inline-block text-sm text-[var(--cyan)]">
-          Open the full shadow record
-        </Link>
+        {lab.data ? (
+          <div className="mt-4 border-t border-[var(--line)] pt-4 text-sm">
+            <p className="kicker text-[var(--gold)]">{lab.data.label}</p>
+            <p className="mt-2">
+              Isolated {lab.data.scenario} session {lab.data.id}. Started {money(lab.data.starting_usd)}. Ended{" "}
+              {money(lab.data.ending_usd)}. Buys {lab.data.buys}. Sells {lab.data.sells}. Wins {lab.data.wins}. Losses{" "}
+              {lab.data.losses}. Realized {money(lab.data.realized_pnl_usd)}. Unrealized{" "}
+              {money(lab.data.unrealized_pnl_usd)}. Costs {money(lab.data.costs_usd)}. Exposure{" "}
+              {money(lab.data.exposure_usd)}. Max drawdown {percent(lab.data.max_drawdown)}. Cash comparison{" "}
+              {money(lab.data.comparisons.cash)}. SPY buy-and-hold{" "}
+              {lab.data.comparisons.spy_buy_hold_price_only ?? "not computed"}.
+            </p>
+            <p className="mt-2 text-[var(--warn)]">{lab.data.limitations} This is not forward profit.</p>
+          </div>
+        ) : null}
+        <div className="mt-4 flex flex-wrap gap-4 text-sm">
+          <Link href="/lab" className="text-[var(--gold)]">
+            Open Simulation Lab
+          </Link>
+          <Link href="/shadow" className="text-[var(--cyan)]">
+            Open the full shadow record
+          </Link>
+        </div>
       </section>
     </div>
   );
+}
+
+function money(value: string): string {
+  const number = Number(value);
+  if (!Number.isFinite(number)) {
+    return value;
+  }
+  return number.toLocaleString("en-US", { style: "currency", currency: "USD" });
+}
+
+function percent(value: string): string {
+  const number = Number(value);
+  if (!Number.isFinite(number)) {
+    return value;
+  }
+  return `${(number * 100).toFixed(2)}%`;
 }
 
 function Card({ label, value }: { label: string; value: string }) {

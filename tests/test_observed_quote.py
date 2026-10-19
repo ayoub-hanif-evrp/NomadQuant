@@ -91,7 +91,42 @@ def test_missing_stale_closed_and_future_quotes_do_not_fill() -> None:
         held_quantity=Decimal("0"),
         costs=_COSTS,
     )
-    assert future["reason"] == "quote_known_only_after_decision"
+    assert future["reason"] == "quote_retrieved_after_decision"
+
+
+def test_small_exchange_clock_skew_still_allows_a_fresh_quote() -> None:
+    result = simulate_observed_fill(
+        _quote(
+            market_timestamp=_NOW + timedelta(seconds=1),
+            retrieved_at=_NOW - timedelta(seconds=1),
+        ),
+        side="buy",
+        decision_time=_NOW + timedelta(seconds=1),
+        market_open=True,
+        cash=Decimal("100"),
+        held_quantity=Decimal("0"),
+        costs=_COSTS,
+    )
+    assert result["status"] == "SIMULATED_FILL"
+
+
+def test_quote_retrieved_after_the_decision_cannot_fill_that_decision() -> None:
+    """The print can be older than the decision and still be unavailable then."""
+    late = simulate_observed_fill(
+        _quote(
+            market_timestamp=_NOW - timedelta(minutes=2),
+            retrieved_at=_NOW + timedelta(seconds=1),
+        ),
+        side="buy",
+        decision_time=_NOW,
+        market_open=True,
+        cash=Decimal("100"),
+        held_quantity=Decimal("0"),
+        costs=_COSTS,
+    )
+    assert late["status"] == "NO_FILL"
+    assert late["reason"] == "quote_retrieved_after_decision"
+    assert late["quantity"] == "0"
     crossed = simulate_observed_fill(
         _quote(bid=Decimal("101"), ask=Decimal("100")),
         side="buy",

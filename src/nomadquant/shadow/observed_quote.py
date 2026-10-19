@@ -8,7 +8,7 @@ Nothing here submits a broker order or writes a SIP bar.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import ROUND_DOWN, Decimal
 from typing import Any, Literal
 
@@ -18,6 +18,7 @@ from nomadquant.risk.policy import RiskPolicy
 
 EXECUTION_OBSERVED_QUOTE = "OBSERVED_QUOTE_SHADOW"
 _BPS = Decimal("10000")
+_CLOCK_SKEW = timedelta(seconds=2)
 
 
 @dataclass(frozen=True)
@@ -63,8 +64,12 @@ def simulate_observed_fill(
         return {**base, "status": "WAIT", "reason": "no_quote_captured"}
     if quote.feed not in {"iex", "sip"}:
         return {**base, "reason": "unknown_feed"}
-    if quote.retrieved_at < quote.market_timestamp:
+    if quote.retrieved_at + _CLOCK_SKEW < quote.market_timestamp:
         return {**base, "reason": "retrieved_before_market_timestamp"}
+    # A market timestamp from the past is not enough. The quote must have been
+    # retrieved before the decision, or it was not available yet.
+    if quote.retrieved_at > decision_time:
+        return {**base, "reason": "quote_retrieved_after_decision"}
     if quote.market_timestamp > decision_time:
         return {**base, "reason": "quote_known_only_after_decision"}
     age = decision_time - quote.market_timestamp

@@ -134,6 +134,7 @@ def collect_evidence(
     facts.append(_live_fact(settings, quotes))
     facts.append(_news_fact(settings))
     facts.append(_agent_fact(settings))
+    facts.append(_lab_fact(settings))
     return facts
 
 
@@ -166,7 +167,7 @@ def answer_question(
     if health.get("available"):
         installed = [str(item) for item in health.get("models") or []]
         model_name = _choose_model(settings, installed)
-    if model_name:
+    if model_name and "lab" not in grounded["evidence_ids"]:
         drafted = _ask_model(local, model_name, text, evidence, history or [])
         if drafted is not None:
             answer = drafted["answer"]
@@ -176,6 +177,8 @@ def answer_question(
             note = "Written by the local model from the evidence cards below."
         else:
             note = "The model reply was not used because it was unsupported or late."
+    elif model_name:
+        note = "The stored Simulation Lab record was kept. A model rewrite was not used."
     return {
         "answer": answer,
         "evidence": [item for item in evidence if item["id"] in used],
@@ -315,10 +318,78 @@ _TOPICS: tuple[tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]], ...] = 
     ),
     (
         ("backtest", "2019", "historical", "real trading", "alpaca", "order"),
-        ("scope.locks",),
+        ("scope.locks", "lab"),
         ("How does the strategy decide?", "Why are there no trades yet?"),
     ),
+    (
+        (
+            "simulation",
+            "replay",
+            "drawdown",
+            "cost",
+            "costs",
+            "rejected",
+            "lab",
+            "buy",
+            "sell",
+            "risk",
+        ),
+        ("lab", "scope.locks"),
+        ("Why did the strategy buy?", "Is this forward profit?"),
+    ),
 )
+
+
+def _lab_fact(settings: Settings) -> dict[str, str]:
+    from nomadquant.lab.runner import latest_session
+
+    session = latest_session(settings)
+    if not session:
+        return {
+            "id": "lab",
+            "source": "simulation lab",
+            "text": (
+                "No Simulation Lab session is stored. A lab run is an isolated historical "
+                "replay or a synthetic mechanics test. It is not the forward $100 book."
+            ),
+        }
+    comparisons = session.get("comparisons") or {}
+    approval = session.get("approval") or {}
+    requests = approval.get("requests") or []
+    decisions = "; ".join(
+        f"{item.get('action')} {item.get('result')}" for item in requests if isinstance(item, dict)
+    )
+    buys = [
+        (
+            f"On {item.get('session')} momentum {item.get('momentum')} "
+            f"and risk {item.get('risk_verdict')} recorded a buy."
+        )
+        for item in session.get("events") or []
+        if isinstance(item, dict) and item.get("side") == "buy" and item.get("status") == "filled"
+    ]
+    return {
+        "id": "lab",
+        "source": f"simulation lab {session.get('id')}",
+        "text": (
+            f"Label {session.get('label')}. Scenario {session.get('scenario')}. "
+            f"Started at {session.get('starting_usd')} USD and ended at "
+            f"{session.get('ending_usd')} USD. "
+            f"Buys {session.get('buys')}. Sells {session.get('sells')}. "
+            f"{' '.join(buys) if buys else 'No buy was filled in this session.'} "
+            f"Realized P&L {session.get('realized_pnl_usd')} USD. "
+            f"Unrealized P&L {session.get('unrealized_pnl_usd')} USD. "
+            f"Recorded modeled costs {session.get('costs_usd')} USD. "
+            f"Exposure {session.get('exposure_usd')} USD. "
+            f"Maximum drawdown {session.get('max_drawdown')}. "
+            f"Cash comparison {comparisons.get('cash')} USD. "
+            f"SPY buy-and-hold price-only {comparisons.get('spy_buy_hold_price_only')}. "
+            f"Approval delivery {approval.get('delivery') or approval.get('status')}. "
+            f"Approval results: {decisions or 'none'}. "
+            f"Token reuse blocked: {approval.get('token_reuse_blocked')}. "
+            f"{session.get('limitations')} This is not forward profit and it did not "
+            "change the forward book."
+        ),
+    }
 
 
 def _deterministic(question: str, evidence: list[dict[str, str]]) -> dict[str, Any]:
@@ -334,6 +405,8 @@ def _deterministic(question: str, evidence: list[dict[str, str]]) -> dict[str, A
         chosen = ["trading.status", "data.sip", "portfolio"]
         follow_ups = ["Why are there no trades yet?", "Are my prices up to date?"]
     unique = [item for item in dict.fromkeys(chosen) if item in by_id]
+    if "lab" in unique:
+        unique = ["lab", *[item for item in unique if item != "lab"]]
     sentences = [by_id[item] for item in unique]
     return {
         "answer": " ".join(sentences),

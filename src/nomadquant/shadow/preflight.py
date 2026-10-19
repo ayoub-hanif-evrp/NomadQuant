@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Literal
@@ -36,6 +36,22 @@ PreflightStatus = Literal[
     "BLOCKED",
     "ERROR",
 ]
+
+
+def observation_waiting_detail(
+    fill_day: date,
+    available_at: datetime,
+    *,
+    rebalance_due: bool,
+) -> str:
+    """Describe a future open without inventing a pending trade."""
+    detail = (
+        f"fill_session={fill_day.isoformat()} open=not_yet_available "
+        f"(expected after {available_at.isoformat()})"
+    )
+    if rebalance_due:
+        return f"{detail}; the signal is recorded as pending until then"
+    return f"{detail}; no month-start rebalance is due, so no signal is waiting"
 
 
 def run_preflight(settings: Settings, *, as_of: datetime | None = None) -> dict[str, Any]:
@@ -200,10 +216,10 @@ def run_preflight(settings: Settings, *, as_of: datetime | None = None) -> dict[
         elif fill_due:
             detail = f"fill_session={fill_day} open=missing"
         else:
-            detail = (
-                f"fill_session={fill_day} open=not_yet_available "
-                f"(expected after {modeled_available_at(fill_day).isoformat()}); "
-                "the signal is recorded as pending until then"
+            detail = observation_waiting_detail(
+                fill_day,
+                modeled_available_at(fill_day),
+                rebalance_due=is_rebalance,
             )
         add("observation", has_open, detail)
         if not has_open and fill_due and status == "READY":

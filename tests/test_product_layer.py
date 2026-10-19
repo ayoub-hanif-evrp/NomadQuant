@@ -46,6 +46,33 @@ def test_copilot_explains_why_there_is_no_trade(tmp_path: Path) -> None:
     assert "first trading day of a month" in result["answer"]
 
 
+def test_copilot_keeps_the_lab_record_instead_of_a_model_rewrite(tmp_path: Path) -> None:
+    class _Invented:
+        def health(self, timeout: float = 2.0) -> dict[str, object]:
+            return {"available": True, "models": ["qwen3.5:9b"]}
+
+        def chat_json(
+            self, _model: str, _messages: list[dict[str, str]], *_a: object, **_k: object
+        ):
+            return {
+                "answer": "The simulation made 500 USD.",
+                "used_evidence_ids": ["lab"],
+                "follow_ups": [],
+            }
+
+    settings = make_settings(tmp_path)
+    settings.ollama_model = "qwen3.5:9b"
+    result = answer_question(
+        settings,
+        "Why did the simulation buy?",
+        provider=_Invented(),  # type: ignore[arg-type]
+        quotes=_NO_QUOTES,
+    )
+    assert result["mode"] == "stored_records"
+    assert "500" not in result["answer"]
+    assert "lab" in result["evidence_ids"]
+
+
 def test_copilot_keeps_a_grounded_model_answer_and_history(tmp_path: Path) -> None:
     seen: dict[str, object] = {}
 

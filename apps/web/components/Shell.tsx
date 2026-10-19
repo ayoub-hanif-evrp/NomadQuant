@@ -61,6 +61,7 @@ const NAV: NavGroup[] = [
       { href: "/agents", label: "Agents", icon: Bot, animated: BotIcon, available: true },
       { href: "/market", label: "Markets", icon: LineChart, animated: ChartLineIcon, available: true },
       { href: "/portfolio", label: "Portfolio", icon: LineChart, animated: WalletIcon, available: true },
+      { href: "/lab", label: "Simulation Lab", icon: FlaskConical, animated: SparklesIcon, available: true },
       { href: "/approvals", label: "Approvals", icon: ShieldAlert, animated: ShieldCheckIcon, available: true },
       { href: "/advanced", label: "Advanced", icon: FlaskConical, animated: SettingsIcon, available: true },
     ],

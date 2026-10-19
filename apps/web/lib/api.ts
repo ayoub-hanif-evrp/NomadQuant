@@ -2138,6 +2138,74 @@ export type CopilotAnswer = {
   broker_orders: false;
 };
 
+export type LabEvent = {
+  label: string;
+  session: string | null;
+  decision: string;
+  status: string;
+  risk_verdict: string | null;
+  risk_reasons: string[];
+  side: string | null;
+  quantity: string | null;
+  price: string | null;
+  costs_usd: string | null;
+  cash_usd: string;
+  holdings: Record<string, string>;
+  equity_usd: string;
+  realized_pnl_usd: string;
+  momentum: string | null;
+  close: string | null;
+  note: string;
+};
+
+export type LabSession = {
+  id: string;
+  scenario: string;
+  label: string;
+  created_at: string;
+  starting_usd: string;
+  ending_usd: string;
+  cash_usd: string;
+  holdings: Record<string, string>;
+  buys: number;
+  sells: number;
+  wins: number;
+  losses: number;
+  realized_pnl_usd: string;
+  unrealized_pnl_usd: string;
+  costs_usd: string;
+  max_drawdown: string;
+  exposure_usd: string;
+  comparisons: { cash: string; spy_buy_hold_price_only: string | null; note: string };
+  events: LabEvent[];
+  bars: Array<{ session: string; close: string }>;
+  approval: {
+    status: string;
+    delivery?: string;
+    smtp_used?: boolean;
+    requests: Array<{ action: string; result: string; fill_authorized: boolean }>;
+    token_reuse_blocked?: boolean;
+  };
+  verification: { checked: number; passed: number; results: Array<{ cycle_id: number; status: string }> };
+  limitations: string;
+  forward_profit: false;
+  broker_orders: false;
+  forward_ledger_touched: boolean;
+  live_quote?: { status: string; reason?: string; earlier_decision?: string; same_time_decision?: string };
+};
+
+export async function loadLatestLab(): Promise<LabSession | null> {
+  const value = await readJson("/api/lab/latest");
+  if (!isRecord(value)) {
+    throw new Error("Unexpected lab payload");
+  }
+  return (value.session as LabSession | null) ?? null;
+}
+
+export function runLab(scenario: string): Promise<LabSession> {
+  return mutate<LabSession>("/api/lab/run", { scenario });
+}
+
 async function mutate<T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> {
   let response: Response;
   try {
