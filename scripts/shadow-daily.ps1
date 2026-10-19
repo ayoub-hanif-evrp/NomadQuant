@@ -2,7 +2,8 @@
 # Does not launch Ollama. Safe to schedule via Task Scheduler after install.
 param(
     [switch]$ShadowApply,
-    [switch]$DryRun
+    [switch]$DryRun,
+    [switch]$Sync
 )
 
 $ErrorActionPreference = "Stop"
@@ -22,7 +23,7 @@ function Write-Log([string]$msg) {
 }
 
 # Default: inspect (preflight + reconcile only). -DryRun runs cycle dry-run.
-# -ShadowApply opts into simulated ledger apply + outbox — still no broker orders.
+# -ShadowApply opts into simulated ledger apply + outbox. Still no broker orders.
 if ($ShadowApply -and $DryRun) {
     throw "Use either -DryRun or -ShadowApply, not both."
 }
@@ -38,8 +39,17 @@ if (-not $gate.eligible) {
     exit 0
 }
 
-Write-Log "worker --mode $Mode (ShadowApply=$ShadowApply)"
-uv run --no-sync nomadquant-shadow worker --mode $Mode *>> $LogFile
+if ($Sync -and $ShadowApply) {
+    Write-Log "REFUSING: historical sync and shadow-apply are separate decisions"
+    exit 2
+}
+if ($Sync) {
+    Write-Log "historical SIP sync plus inspect. This does not trade and does not shadow-apply."
+    uv run --no-sync nomadquant-shadow daily --mode inspect --sync *>> $LogFile
+} else {
+    Write-Log "worker --mode $Mode (ShadowApply=$ShadowApply DryRun=$DryRun Sync=false)"
+    uv run --no-sync nomadquant-shadow worker --mode $Mode *>> $LogFile
+}
 $code = $LASTEXITCODE
 if ($code -eq 2) {
     Write-Log "RECOVERY_REQUIRED: run nomadquant-shadow recover before shadow-apply"

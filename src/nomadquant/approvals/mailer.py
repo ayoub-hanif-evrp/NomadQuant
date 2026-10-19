@@ -45,6 +45,31 @@ def render_approval_message(
     )
 
 
+SMTP_TEST_CONFIRM = "SEND_HARMLESS_SMTP_TEST"
+
+
+def send_harmless_smtp_test(settings: Settings, *, confirm: str) -> dict[str, str]:
+    """Send one non-financial test after the exact phrase. Does not approve or trade."""
+    if confirm != SMTP_TEST_CONFIRM:
+        raise ValueError("Refusing to send until the exact confirmation phrase is provided.")
+    if not settings.smtp_host.strip() or not settings.approval_email_to.strip():
+        return {"sent": "false", "reason": "smtp_not_configured"}
+    body = "\n".join(
+        [
+            "NomadQuant SMTP test.",
+            "This message does not approve a proposal and does not place an order.",
+            "Approval links use http://127.0.0.1 and open only on this computer.",
+        ]
+    )
+    delivery = deliver_approval_email(
+        settings,
+        request_id="smtp-test",
+        subject="NomadQuant SMTP test",
+        body=body,
+    )
+    return {"sent": "true" if delivery["delivery"] == "smtp" else "false", **delivery}
+
+
 def deliver_approval_email(
     settings: Settings,
     *,

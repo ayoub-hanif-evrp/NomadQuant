@@ -157,3 +157,27 @@ Restore uses allowlisted artifact names. If a replacement fails, the safety copy
 - Missing bars: status is `WAITING_FOR_DATA`. Sync if you want the historical bars, then inspect again. Do not approve a blocked or waiting state.
 - Ollama stopped: Agents shows disconnected. Shadow inspection does not need a model.
 - Alpaca credentials absent: market sync stays disconnected. Stored bars can still be inspected.
+
+## 15. Approval email on this computer
+
+Put SMTP values in the local `.env` only. Do not commit that file and do not paste the password into chat.
+
+```
+SMTP_HOST=smtp.example.com
+SMTP_PORT=587
+SMTP_USERNAME=you@example.com
+SMTP_PASSWORD=set-this-locally
+APPROVAL_EMAIL_TO=you@example.com
+APPROVAL_EMAIL_FROM=you@example.com
+APPROVAL_PUBLIC_BASE_URL=http://127.0.0.1:3000
+```
+
+A review link is `http://127.0.0.1:3000/approvals/respond/...`. It opens only while this Windows machine is running the dashboard. A phone or another computer cannot reach `127.0.0.1` on this PC. Opening the link does not approve. The page requires an explicit confirm. GET never approves.
+
+After those values are saved, one harmless test is:
+
+```powershell
+uv run nomadquant-shadow smtp-test --confirm SEND_HARMLESS_SMTP_TEST
+```
+
+That message does not approve a proposal and does not change the $100 book. Leave SMTP blank to keep letters in `data/approval-outbox`.

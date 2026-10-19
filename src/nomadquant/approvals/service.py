@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import secrets
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal, InvalidOperation
 from typing import Any
 from urllib.parse import urlencode
 
@@ -27,6 +28,7 @@ def create_approval_request(
     ledger_version: int = 0,
     policy_hash: str = "",
     market_fingerprint: str = "",
+    proposal_id: str = "",
 ) -> dict[str, Any]:
     """Store one request and deliver the review link. The raw token is not returned."""
     clock = now or datetime.now(UTC)
@@ -55,6 +57,7 @@ def create_approval_request(
             "ledger_version": ledger_version,
             "policy_hash": policy_hash,
             "market_fingerprint": market_fingerprint,
+            "proposal_id": proposal_id,
         }
     )
     review_url = _review_url(settings, request_id, token)
@@ -86,7 +89,12 @@ def create_approval_request(
     return viewed
 
 
-def issue_proposal_from_cycle(settings: Settings, detail: dict[str, Any]) -> dict[str, Any] | None:
+def issue_proposal_from_cycle(
+    settings: Settings,
+    detail: dict[str, Any],
+    *,
+    now: datetime | None = None,
+) -> dict[str, Any] | None:
     """Email a real sized proposal. Does nothing for no_trade or missing evidence."""
     if str(detail.get("status") or "") != "awaiting_approval":
         return None
@@ -98,15 +106,29 @@ def issue_proposal_from_cycle(settings: Settings, detail: dict[str, Any]) -> dic
     if action not in {"BUY", "SELL"}:
         return None
     quantity = str(proposal.get("quantity") or evidence.get("sizing", {}).get("quantity") or "")
-    notional = str(evidence.get("open_price") or "")
-    preview = str(evidence.get("proposal", {}).get("id") or detail.get("proposal_id") or "")
+    price = str(evidence.get("open_price") or "")
+    try:
+        notional = quantity_times_price(quantity, price)
+    except ValueError:
+        return None
+    proposal_id = str(proposal.get("id") or detail.get("proposal_id") or "")
+    if not proposal_id:
+        return None
+    from nomadquant.shadow.pilot import pilot_start_preview
+
+    preview_body = pilot_start_preview(settings, now=now)
+    preview = str(preview_body.get("preview_hash") or "")
+    if not preview or preview == proposal_id:
+        return None
     store = ApprovalStore(settings.approval_path)
-    if preview and store.pending_with_preview(preview):
+    if store.pending_with_proposal(proposal_id):
         return None
     why = (
         f"Month-start momentum {evidence.get('momentum')} on "
         f"{evidence.get('signal_session')}. Fill session {evidence.get('fill_session')} "
-        f"at delayed hypothetical open {evidence.get('open_price')}."
+        f"at delayed hypothetical open {price}. "
+        "Notional is quantity times that open, not the open by itself. "
+        "This daily-open model is not a 60-second executable quote."
     )
     risk = f"Verdict {evidence.get('risk_verdict')}. Reasons: " + ", ".join(
         str(item) for item in (evidence.get("risk_reasons") or []) or ["none"]
@@ -121,14 +143,16 @@ def issue_proposal_from_cycle(settings: Settings, detail: dict[str, Any]) -> dic
         instrument=str(proposal.get("symbol") or "SPY"),
         action=action,
         quantity=quantity or "0",
-        notional_usd=notional or "0",
+        notional_usd=notional,
         why=why,
         risk_summary=risk,
         caveats=caveats,
+        now=now,
         preview_hash=preview,
         ledger_version=int((detail.get("ledger_before") or {}).get("version") or 0),
         policy_hash=str(evidence.get("policy_hash") or ""),
-        market_fingerprint="",
+        market_fingerprint=str(preview_body.get("market_fingerprint") or ""),
+        proposal_id=proposal_id,
     )
 
 
@@ -215,10 +239,33 @@ def decide_approval_request(
         viewed["shadow_grant_issued"] = False
         return viewed
     grant: dict[str, Any] | None = None
+    proposal_id = str(row.get("proposal_id") or "")
+    if action == "approve" and proposal_id:
+        current_proposal = _current_proposal_id(settings)
+        if current_proposal != proposal_id:
+            store.decide(
+                request_id,
+                status="rejected",
+                reason="The proposal changed after this email was sent.",
+                now=clock,
+            )
+            updated = store.get(request_id)
+            assert updated is not None
+            viewed = public_view(updated, now=clock)
+            viewed["audit"] = store.audit_for(request_id)
+            viewed["applied"] = False
+            viewed["broker_orders"] = False
+            viewed["shadow_grant_issued"] = False
+            return viewed
     if action == "approve" and str(row.get("preview_hash") or ""):
         from nomadquant.shadow.pilot import confirm_pilot_start
 
-        grant = confirm_pilot_start(settings, str(row["preview_hash"]))
+        grant = confirm_pilot_start(
+            settings,
+            str(row["preview_hash"]),
+            now=clock,
+            proposal_id=proposal_id,
+        )
         if grant.get("status") != "CONFIRMATION_ACCEPTED":
             raise ValueError(str(grant.get("reason") or "The shadow preview no longer matches."))
     status = "approved" if action == "approve" else "rejected"
@@ -237,6 +284,29 @@ def decide_approval_request(
     viewed["shadow_grant_issued"] = bool(grant and grant.get("status") == "CONFIRMATION_ACCEPTED")
     viewed["shadow_authorization"] = grant
     return viewed
+
+
+def quantity_times_price(quantity: str, price: str) -> str:
+    """Transaction amount for the email. The open price alone is not a notional."""
+    try:
+        shares = Decimal(quantity)
+        mark = Decimal(price)
+    except InvalidOperation as exc:
+        raise ValueError("Quantity and price must be decimal numbers.") from exc
+    if shares <= 0 or mark <= 0:
+        raise ValueError("Quantity and price must be positive.")
+    return format(shares * mark, "f")
+
+
+def _current_proposal_id(settings: Settings) -> str:
+    from nomadquant.shadow.store import ShadowStore
+
+    store = ShadowStore.open_readonly(settings.shadow_path)
+    if store is None:
+        return ""
+    from nomadquant.shadow.cycle import _pending_proposal_id
+
+    return _pending_proposal_id(store)
 
 
 def _review_url(settings: Settings, request_id: str, token: str) -> str:

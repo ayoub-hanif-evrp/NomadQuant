@@ -196,7 +196,7 @@ def test_missing_mutation_header_does_not_consume_the_token(tmp_path: Path) -> N
 def test_bound_approval_rechecks_the_shadow_preview(tmp_path: Path, monkeypatch: object) -> None:
     seen: dict[str, str] = {}
 
-    def _confirm(settings: object, approval: str) -> dict[str, object]:
+    def _confirm(settings: object, approval: str, **_extra: object) -> dict[str, object]:
         seen["approval"] = approval
         return {
             "status": "CONFIRMATION_ACCEPTED",

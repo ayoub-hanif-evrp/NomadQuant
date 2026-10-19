@@ -86,6 +86,11 @@ def main(argv: list[str] | None = None) -> None:
     )
 
     sub.add_parser("quote-observe", help="Read one IEX quote. Does not fill or trade.")
+    smtp_test = sub.add_parser(
+        "smtp-test",
+        help="Send one harmless SMTP test after the exact confirmation phrase.",
+    )
+    smtp_test.add_argument("--confirm", default="")
     sub.add_parser("supervise", help="Inspect the bounded daily workflow. Does not apply.")
     daily = sub.add_parser("daily", help="Supervised daily procedure. Default is inspect.")
     daily.add_argument("--mode", choices=["inspect", "dry-run", "shadow-apply"], default="inspect")
@@ -140,6 +145,16 @@ def _dispatch(args: argparse.Namespace, settings: Settings) -> int:
 
         _print(run_supervised(settings, mode="inspect", sync=False))
         return 0
+    if args.command == "smtp-test":
+        from nomadquant.approvals.mailer import send_harmless_smtp_test
+
+        try:
+            payload = send_harmless_smtp_test(settings, confirm=args.confirm)
+        except ValueError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        _print(payload)
+        return 0 if payload.get("sent") == "true" else 1
     if args.command == "daily":
         code, payload = run_daily_operation(
             settings,

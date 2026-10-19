@@ -492,7 +492,11 @@ def pilot_start_preview(settings: Settings, *, now: datetime | None = None) -> d
 
 
 def confirm_pilot_start(
-    settings: Settings, approval: str, *, now: datetime | None = None
+    settings: Settings,
+    approval: str,
+    *,
+    now: datetime | None = None,
+    proposal_id: str = "",
 ) -> dict[str, Any]:
     """Arm the forward clock and optionally store a fill grant. Never a broker order."""
     from nomadquant.shadow.approval import (
@@ -540,7 +544,8 @@ def confirm_pilot_start(
         return {**rejected, "status": "REJECTED", "reason": "shadow ledger is not initialized"}
     store = ShadowStore(path, namespace="forward")
     armed = False
-    if store.get_meta(PILOT_STARTED_KEY) is None and may_arm:
+    existing_clock = store.get_meta(PILOT_STARTED_KEY)
+    if existing_clock is None and may_arm:
         store.set_meta(PILOT_STARTED_KEY, clock.isoformat())
         armed = True
     record: dict[str, Any] | None = None
@@ -554,6 +559,7 @@ def confirm_pilot_start(
             policy=policy,
             market_fingerprint=market_fingerprint(Path(settings.market_data_path)),
             preview_hash=approval,
+            proposal_id=proposal_id,
         )
         try:
             record = issue_shadow_approval(store, binding, now=clock)

@@ -20,8 +20,12 @@ Windows Task Scheduler support is **opt-in**. Nothing is installed automatically
 # Disable / remove
 .\scripts\shadow-schedule.ps1 -Action disable
 
-# Manual once (inspect default)
+# Manual once (inspect default). This is not automatic trading.
 .\scripts\shadow-schedule.ps1 -Action run-once
+
+# Inspect plus an authorized historical SIP download. Still no simulated fill.
+.\scripts\shadow-schedule.ps1 -Action install -Sync
+.\scripts\shadow-schedule.ps1 -Action run-once -Sync
 
 # Manual dry-run cycle once
 .\scripts\shadow-schedule.ps1 -Action run-once -DryRun
@@ -55,4 +59,5 @@ uv run nomadquant-shadow recover   # explicit reservation recovery + outbox
 - Exit codes: `0` ok/waiting/no_trade, `2` recovery_required (run `recover` before apply), `1` error.
 - NYSE calendar / holidays enforced in Python preflight, cycle, and `ny_daily_gate`.
 - A missed 17:45 stays due until that session is processed. Weekends and holidays catch up the previous session; they do not invent a new one.
-- Authenticated `data-sync` is a separate command. The scheduled task does not download bars or call Ollama.
+- Authenticated `data-sync` stays off unless the task was installed with `-Sync`. That download is historical bars only. Inspect mode does not apply a simulated fill. `-ShadowApply` is a separate install and is not enabled by `-Sync`.
+- The forward cycle uses a delayed hypothetical daily open. A 60-second bid/ask check belongs only to the observed-quote simulator.

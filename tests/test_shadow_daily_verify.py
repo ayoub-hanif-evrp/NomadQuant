@@ -33,6 +33,26 @@ def test_daily_inspect_does_not_sync_or_change_cash(tmp_path: Path) -> None:
     assert saved[0]["operation_id"] == record["operation_id"]
 
 
+def test_inspect_sync_records_the_download_and_does_not_trade(
+    tmp_path: Path, monkeypatch: object
+) -> None:
+    def _sync(settings: object, *, feed: str = "sip") -> dict[str, object]:
+        assert feed == "sip"
+        return {"sync": "noop", "inserted": 0, "broker_orders": False}
+
+    monkeypatch.setattr("nomadquant.shadow.daily.data_sync", _sync)  # type: ignore[attr-defined]
+    settings = make_settings(tmp_path)
+    ShadowStore(settings.shadow_path, namespace="forward")
+    code, record = run_daily_operation(settings, mode="inspect", sync=True)
+    after = ShadowStore(settings.shadow_path, namespace="forward").snapshot()
+    assert code == 0
+    assert record["mode"] == "inspect"
+    assert record["data_sync"]["sync"] == "noop"
+    assert record["data_sync"]["inserted"] == 0
+    assert after["cash_usd"] == Decimal("100")
+    assert after["holdings"] == {}
+
+
 def test_verifier_rejects_a_tampered_evidence_hash(tmp_path: Path) -> None:
     settings = make_settings(tmp_path)
     market = Path(settings.market_data_path)

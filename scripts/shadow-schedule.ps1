@@ -5,7 +5,8 @@ param(
     [ValidateSet("install", "status", "disable", "run-once")]
     [string]$Action,
     [switch]$ShadowApply,
-    [switch]$DryRun
+    [switch]$DryRun,
+    [switch]$Sync
 )
 
 $ErrorActionPreference = "Stop"
@@ -26,8 +27,10 @@ switch ($Action) {
     "install" {
         $when = Get-NextNyWindow
         $dailyArgs = "-NoProfile -ExecutionPolicy Bypass -File `"$Script`""
+        if ($ShadowApply -and $Sync) { throw "Install historical sync and shadow-apply as separate tasks." }
         if ($ShadowApply) { $dailyArgs += " -ShadowApply" }
         elseif ($DryRun) { $dailyArgs += " -DryRun" }
+        if ($Sync) { $dailyArgs += " -Sync" }
         $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $dailyArgs
         # Repeat through the day. shadow-daily.ps1 applies the NYSE/New York gate,
         # so daylight-saving changes do not freeze a host-local 17:45.
@@ -40,14 +43,16 @@ switch ($Action) {
             -StartWhenAvailable `
             -MultipleInstances IgnoreNew
         $modeNote = if ($ShadowApply) {
-            "shadow-apply (simulated ledger only)"
+            "shadow-apply (simulated ledger only, not installed unless you pass -ShadowApply)"
         } elseif ($DryRun) {
             "dry-run cycle"
+        } elseif ($Sync) {
+            "inspect plus historical SIP sync. Not automatic trading."
         } else {
-            "inspect (default, no cycle apply)"
+            "inspect only. Not automatic trading."
         }
         Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger `
-            -Settings $settings -Description "NomadQuant shadow daily worker: $modeNote — no broker orders" -Force
+            -Settings $settings -Description "NomadQuant shadow daily worker: $modeNote - no broker orders" -Force
         Write-Host "Installed task '$TaskName' every 30 minutes. The script skips until the NY gate is due."
         Write-Host "Next NYSE 17:45 America/New_York: $($when.ny_local) (UTC $($when.utc))."
         Write-Host "Default mode is inspect unless you passed -ShadowApply. Disable: .\scripts\shadow-schedule.ps1 -Action disable"
@@ -66,8 +71,10 @@ switch ($Action) {
         Write-Host "Disabled/removed task '$TaskName'."
     }
     "run-once" {
+        if ($ShadowApply -and $Sync) { throw "Run historical sync and shadow-apply separately." }
         if ($ShadowApply) { & $Script -ShadowApply }
         elseif ($DryRun) { & $Script -DryRun }
+        elseif ($Sync) { & $Script -Sync }
         else { & $Script }
     }
 }

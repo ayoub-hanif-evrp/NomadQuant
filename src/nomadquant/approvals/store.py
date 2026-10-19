@@ -31,7 +31,8 @@ CREATE TABLE IF NOT EXISTS approval_requests (
     preview_hash TEXT NOT NULL DEFAULT '',
     ledger_version INTEGER NOT NULL DEFAULT 0,
     policy_hash TEXT NOT NULL DEFAULT '',
-    market_fingerprint TEXT NOT NULL DEFAULT ''
+    market_fingerprint TEXT NOT NULL DEFAULT '',
+    proposal_id TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS approval_audit (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -80,8 +81,9 @@ class ApprovalStore:
                     id, status, token_hash, instrument, action, quantity, notional_usd,
                     why, risk_summary, caveats, scope, broker_orders, created_at,
                     expires_at, decided_at, decision_reason,
-                    preview_hash, ledger_version, policy_hash, market_fingerprint
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    preview_hash, ledger_version, policy_hash, market_fingerprint,
+                    proposal_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     record["id"],
@@ -104,6 +106,7 @@ class ApprovalStore:
                     int(record.get("ledger_version") or 0),
                     record.get("policy_hash") or "",
                     record.get("market_fingerprint") or "",
+                    record.get("proposal_id") or "",
                 ),
             )
             self._audit(conn, record["id"], "created", "Internal shadow approval requested.")
@@ -128,6 +131,20 @@ class ApprovalStore:
                 ORDER BY created_at DESC LIMIT 1
                 """,
                 (preview_hash,),
+            ).fetchone()
+        return None if row is None else dict(row)
+
+    def pending_with_proposal(self, proposal_id: str) -> dict[str, Any] | None:
+        if not proposal_id:
+            return None
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM approval_requests
+                WHERE proposal_id = ? AND status = 'pending'
+                ORDER BY created_at DESC LIMIT 1
+                """,
+                (proposal_id,),
             ).fetchone()
         return None if row is None else dict(row)
 
@@ -212,6 +229,7 @@ def public_view(row: dict[str, Any], *, now: datetime) -> dict[str, Any]:
         "ledger_version": row.get("ledger_version") or 0,
         "policy_hash": row.get("policy_hash") or "",
         "market_fingerprint": row.get("market_fingerprint") or "",
+        "proposal_id": row.get("proposal_id") or "",
         "effect": "records_internal_shadow_permission_only",
     }
 
@@ -223,6 +241,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         "ledger_version": "INTEGER NOT NULL DEFAULT 0",
         "policy_hash": "TEXT NOT NULL DEFAULT ''",
         "market_fingerprint": "TEXT NOT NULL DEFAULT ''",
+        "proposal_id": "TEXT NOT NULL DEFAULT ''",
     }
     for name, declaration in additions.items():
         if name not in have:
