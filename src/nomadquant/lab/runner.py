@@ -542,6 +542,16 @@ def _summary(
             "cash": "100",
             "spy_buy_hold_price_only": spy,
             "note": "SPY buy-and-hold uses raw closes in this window. It is not total return.",
+            "policy_constrained": {
+                "policy_version": "1.2.0",
+                "starting_usd": "100",
+                "max_single_transaction_usd": "50",
+                "min_cash_reserve_usd": "5",
+                "note": (
+                    "This simulation uses the operational risk policy. The stored research "
+                    "experiment still targets full allocation and was not overwritten."
+                ),
+            },
         },
         "events": events,
         "forward_profit": False,

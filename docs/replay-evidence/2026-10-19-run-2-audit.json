@@ -1,0 +1,146 @@
+{
+  "run_id": 2,
+  "status": "NOT_EVALUABLE",
+  "comprehensive": false,
+  "sample_limit": 5,
+  "sample_coverage": 5,
+  "decision_count": 93,
+  "checks": [
+    {
+      "name": "future_bars_do_not_change_past_signal",
+      "status": "PASS",
+      "detail": "2019-02-01"
+    },
+    {
+      "name": "prefix_preserves_signal",
+      "status": "PASS",
+      "detail": "2019-02-01"
+    },
+    {
+      "name": "identical_inputs",
+      "status": "PASS",
+      "detail": "2019-02-01"
+    },
+    {
+      "name": "same_close_fill_forbidden",
+      "status": "PASS",
+      "detail": "momentum fills must use a later session"
+    },
+    {
+      "name": "future_bars_do_not_change_past_signal",
+      "status": "PASS",
+      "detail": "2019-03-01"
+    },
+    {
+      "name": "prefix_preserves_signal",
+      "status": "PASS",
+      "detail": "2019-03-01"
+    },
+    {
+      "name": "identical_inputs",
+      "status": "PASS",
+      "detail": "2019-03-01"
+    },
+    {
+      "name": "same_close_fill_forbidden",
+      "status": "PASS",
+      "detail": "momentum fills must use a later session"
+    },
+    {
+      "name": "future_bars_do_not_change_past_signal",
+      "status": "PASS",
+      "detail": "2019-04-01"
+    },
+    {
+      "name": "prefix_preserves_signal",
+      "status": "PASS",
+      "detail": "2019-04-01"
+    },
+    {
+      "name": "identical_inputs",
+      "status": "PASS",
+      "detail": "2019-04-01"
+    },
+    {
+      "name": "same_close_fill_forbidden",
+      "status": "PASS",
+      "detail": "momentum fills must use a later session"
+    },
+    {
+      "name": "future_bars_do_not_change_past_signal",
+      "status": "PASS",
+      "detail": "2019-05-01"
+    },
+    {
+      "name": "prefix_preserves_signal",
+      "status": "PASS",
+      "detail": "2019-05-01"
+    },
+    {
+      "name": "identical_inputs",
+      "status": "PASS",
+      "detail": "2019-05-01"
+    },
+    {
+      "name": "same_close_fill_forbidden",
+      "status": "PASS",
+      "detail": "momentum fills must use a later session"
+    },
+    {
+      "name": "future_bars_do_not_change_past_signal",
+      "status": "PASS",
+      "detail": "2019-06-03"
+    },
+    {
+      "name": "prefix_preserves_signal",
+      "status": "PASS",
+      "detail": "2019-06-03"
+    },
+    {
+      "name": "identical_inputs",
+      "status": "PASS",
+      "detail": "2019-06-03"
+    },
+    {
+      "name": "same_close_fill_forbidden",
+      "status": "PASS",
+      "detail": "momentum fills must use a later session"
+    },
+    {
+      "name": "warmup_stability",
+      "status": "PASS",
+      "detail": "history before the warm-up window does not change the signal"
+    },
+    {
+      "name": "missing_bar_fails_closed",
+      "status": "PASS",
+      "detail": "a removed close must not still produce a target"
+    },
+    {
+      "name": "unsafe_prices",
+      "status": "PASS",
+      "detail": "zero, negative, NaN, and Infinity closes do not produce a momentum target"
+    },
+    {
+      "name": "revision_changes_fingerprint",
+      "status": "PASS",
+      "detail": "a revised close changes the bar fingerprint"
+    },
+    {
+      "name": "corporate_action_discontinuity",
+      "status": "NOT_EVALUABLE",
+      "detail": "No large raw-price jump in this sample. Split treatment is still unresolved."
+    },
+    {
+      "name": "cost_sensitivity_explained",
+      "status": "PASS",
+      "detail": "1bp buy 100.015 vs 10bp buy 100.15; higher costs raise the buy price"
+    },
+    {
+      "name": "adjustment_evidence",
+      "status": "NOT_EVALUABLE",
+      "detail": "No point-in-time split or dividend file is stored. Raw prices stay unresolved."
+    }
+  ],
+  "note": "sampled prefix audit; not comprehensive proof"
+}

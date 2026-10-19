@@ -76,7 +76,10 @@ export function PortfolioView() {
               {money(lab.data.comparisons.cash)}. SPY buy-and-hold{" "}
               {lab.data.comparisons.spy_buy_hold_price_only ?? "not computed"}.
             </p>
-            <p className="mt-2 text-[var(--warn)]">{lab.data.limitations} This is not forward profit.</p>
+            <p className="mt-2 text-[var(--warn)]">
+              {lab.data.limitations} Reconciliation {lab.data.reconciliation?.status ?? "not recorded"}. This is not
+              forward profit.
+            </p>
           </div>
         ) : null}
         <div className="mt-4 flex flex-wrap gap-4 text-sm">

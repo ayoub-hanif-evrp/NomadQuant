@@ -9,3 +9,5 @@
 `npm ls braces micromatch fast-glob --omit=dev` does not place this chain in the production dependency tree. The running dashboard is `next start` of the compiled app. A malicious glob is not accepted from NomadQuant users.
 
 No production package was upgraded in this pass. Forcing an ESLint-tree override would not change the served application and could break the pinned Next 16 lint plugin. The mitigation is to keep lint tooling on the developer machine and not to expose the ESLint process to untrusted glob patterns.
+
+Reviewed again on 2026-10-19. `npm audit --omit=dev` reports zero findings. The full audit still reports the same five high findings in the ESLint toolchain. `npm audit fix --force` would downgrade `eslint-config-next` to 14.2.35, which is incompatible with the pinned Next 16 application, so it was not applied.

@@ -1,0 +1,23 @@
+{
+  "run_id": 3,
+  "checked_decisions": 93,
+  "mismatch_count": 0,
+  "mismatches": [],
+  "ok": true,
+  "verdict": "PASS",
+  "summary": "Independent recomputation finished. PASS covers decisions, trades, equity points, portfolio cash/equity snapshots, and locked-test net return when present.",
+  "label": "simulated_replay",
+  "is_broker_execution": false,
+  "independent": true,
+  "replay_convention": "insufficient_data_v1",
+  "convention_source": "config",
+  "checks_scope": [
+    "dataset_fingerprint",
+    "decision_count_and_keys",
+    "decision_weights_features_fills_hashes",
+    "portfolio_cash_equity_snapshots",
+    "trades",
+    "equity_points",
+    "test_net_return_when_present"
+  ]
+}

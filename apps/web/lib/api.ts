@@ -2176,7 +2176,15 @@ export type LabSession = {
   costs_usd: string;
   max_drawdown: string;
   exposure_usd: string;
-  comparisons: { cash: string; spy_buy_hold_price_only: string | null; note: string };
+  comparisons: {
+    cash: string;
+    spy_buy_hold_price_only: string | null;
+    note: string;
+    policy_constrained?: { policy_version: string; note: string };
+  };
+  equity_curve?: Array<{ session: string; equity: string | null; status: string }>;
+  reconciliation?: { status: string; residual: string | null };
+  pnl_convention?: string;
   events: LabEvent[];
   bars: Array<{ session: string; close: string }>;
   approval: {

@@ -386,6 +386,7 @@ def _lab_fact(settings: Settings) -> dict[str, str]:
             f"Approval delivery {approval.get('delivery') or approval.get('status')}. "
             f"Approval results: {decisions or 'none'}. "
             f"Token reuse blocked: {approval.get('token_reuse_blocked')}. "
+            f"Accounting reconciliation {((session.get('reconciliation') or {}).get('status'))}. "
             f"{session.get('limitations')} This is not forward profit and it did not "
             "change the forward book."
         ),

@@ -43,12 +43,16 @@ export function SimulationLab() {
   }, [playing, session, speed]);
 
   const event = session?.events[index];
-  const chart = session
-    ? session.events.slice(0, index + 1).map((item, position) => ({
+  const cutoff = session ? throughOrEnd(session, index) : "";
+  const marked = (session?.equity_curve ?? [])
+    .filter((point) => point.status === "ok" && point.equity != null && point.session <= cutoff)
+    .map((point) => ({ at: point.session, equity: Number(point.equity) }));
+  const chart = marked.length
+    ? marked
+    : (session?.events.slice(0, index + 1) ?? []).map((item, position) => ({
         at: item.session ?? String(position),
         equity: Number(item.equity_usd),
-      }))
-    : [];
+      }));
   const through = event?.session ?? "";
   const market =
     session && through
@@ -226,7 +230,7 @@ export function SimulationLab() {
             {session.limitations} Realized {money(session.realized_pnl_usd)}. Unrealized{" "}
             {money(session.unrealized_pnl_usd)}. Cash comparison {money(session.comparisons.cash)}. SPY
             buy-and-hold {session.comparisons.spy_buy_hold_price_only ?? "not computed"}.{" "}
-            {session.comparisons.note}
+            {session.comparisons.note} {session.comparisons.policy_constrained?.note}
           </p>
           <section className="panel p-4 text-sm">
             <p className="kicker">Approval drill</p>
@@ -244,12 +248,18 @@ export function SimulationLab() {
             <p className="mt-2 text-[var(--muted)]">
               Verification {session.verification.passed} of {session.verification.checked} checked cycles passed.
               A reused approval token was blocked: {String(session.approval.token_reuse_blocked ?? false)}.
+              Accounting reconciliation: {session.reconciliation?.status ?? "not recorded"}.
+              An approved email does not by itself authorize a fill.
             </p>
           </section>
         </>
       ) : null}
     </div>
   );
+}
+
+function throughOrEnd(session: LabSession, index: number): string {
+  return session.events[index]?.session ?? session.events.at(-1)?.session ?? "";
 }
 
 function Stat({ label, value }: { label: string; value: string }) {
