@@ -69,6 +69,7 @@ class Settings(BaseSettings):
     agent_benchmark_path: str = "data/agent-benchmarks.sqlite"
     risk_path: str = "data/risk.sqlite"
     shadow_path: str = "data/shadow.sqlite"
+    paper_path: str = "data/paper_orders.sqlite"
     approval_path: str = "data/approvals.sqlite"
     approval_outbox_dir: str = "data/approval-outbox"
     approval_ttl_minutes: int = 60

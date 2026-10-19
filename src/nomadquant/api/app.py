@@ -20,6 +20,7 @@ from nomadquant.api.market_routes import router as market_router
 from nomadquant.api.news_routes import router as news_router
 from nomadquant.api.observe import router as observability_router
 from nomadquant.api.overview_routes import router as overview_router
+from nomadquant.api.paper_routes import router as paper_router
 from nomadquant.api.research_routes import router as research_router
 from nomadquant.api.risk_routes import router as risk_router
 from nomadquant.api.schemas import (
@@ -109,6 +110,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(news_router)
     app.include_router(overview_router)
     app.include_router(lab_router)
+    app.include_router(paper_router)
 
     @app.exception_handler(Exception)
     async def unhandled(request: object, exc: Exception) -> JSONResponse:

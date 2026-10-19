@@ -217,6 +217,7 @@ def test_no_order_submission_endpoint(client: TestClient) -> None:
         "/api/system/status",
         "/api/broker/account",
         "/api/broker/positions",
+        "/api/paper/status",
         "/api/market-data/status",
         "/api/market-data/bars",
         "/api/observability/overview",

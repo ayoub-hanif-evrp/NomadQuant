@@ -86,6 +86,7 @@ def main(argv: list[str] | None = None) -> None:
     )
 
     sub.add_parser("quote-observe", help="Read one IEX quote. Does not fill or trade.")
+    sub.add_parser("paper-status", help="Read Alpaca paper status. Does not submit an order.")
     smtp_test = sub.add_parser(
         "smtp-test",
         help="Send one harmless SMTP test after the exact confirmation phrase.",
@@ -144,6 +145,11 @@ def _dispatch(args: argparse.Namespace, settings: Settings) -> int:
         from nomadquant.shadow.supervise import run_supervised
 
         _print(run_supervised(settings, mode="inspect", sync=False))
+        return 0
+    if args.command == "paper-status":
+        from nomadquant.broker.paper_pilot import paper_status, redact
+
+        print(redact(paper_status(settings)))
         return 0
     if args.command == "smtp-test":
         from nomadquant.approvals.mailer import send_harmless_smtp_test

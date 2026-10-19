@@ -2329,6 +2329,40 @@ export type ApprovalRequest = {
   effect: string;
 };
 
+export type PaperStatus = {
+  label: string;
+  connected: boolean;
+  blocked: boolean;
+  reason: string | null;
+  market_open?: boolean;
+  market_timestamp?: string | null;
+  account_cash_usd?: string;
+  account_equity_usd?: string;
+  account_buying_power_usd?: string;
+  sleeve_usd?: string;
+  sleeve_remaining_usd?: string;
+  spy_fractionable?: boolean;
+  spy_tradable?: boolean;
+  submission_enabled?: boolean;
+  ready_for_first_order?: boolean;
+  first_order_authorization?: string;
+  historical_replay_counts_as_performance?: boolean;
+  positions?: Array<{ symbol: string; qty: string; market_value: string; unrealized_pl: string }>;
+  orders?: Array<{ client_order_id: string; broker_status: string; filled_avg_price: string | null }>;
+};
+
+export async function loadPaperStatus(): Promise<PaperStatus> {
+  const value = await readJson("/api/paper/status");
+  if (
+    !isRecord(value) ||
+    typeof value.label !== "string" ||
+    value.broker_orders_submitted_by_this_request !== false
+  ) {
+    throw new Error("Unexpected paper status");
+  }
+  return value as PaperStatus;
+}
+
 export async function loadApprovals(): Promise<{
   initialized: boolean;
   items: ApprovalRequest[];
