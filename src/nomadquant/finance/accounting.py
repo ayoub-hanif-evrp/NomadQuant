@@ -7,6 +7,7 @@ the fill notional and commission only.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import date
 from decimal import Decimal
 
 from nomadquant.finance.execution import attribute_costs, execution_price
@@ -146,3 +147,126 @@ def unrealized_pnl(book: Book, marks: dict[str, Decimal]) -> Decimal | None:
             return None
         total += qty * price - qty * book.cost_basis.get(symbol, _ZERO)
     return total
+
+
+ACCOUNTING_CONVENTION = (
+    "Equity equals cash plus quantity times the mark. "
+    "Unrealized equals quantity times the mark minus quantity times average cost. "
+    "Average cost is the execution price, so spread and slippage are inside the price "
+    "and are not subtracted again. "
+    "A sell's realized increment is (execution price - average cost) times quantity, "
+    "minus that sell's commission. "
+    "A buy commission reduces cash and is subtracted once in the identity. "
+    "Each sell, including a partial sell, is one win or loss observation. "
+    "Cumulative realized P&L is not itself a win or a loss."
+)
+
+
+def economic_identity(
+    book: Book,
+    marks: dict[str, Decimal],
+    *,
+    starting: Decimal,
+    cash_commissions: Decimal = _ZERO,
+) -> dict[str, Decimal | str | None]:
+    """Check starting + realized + unrealized - buy commissions == marked equity."""
+    equity = mark_equity(book, marks)
+    unrealized = unrealized_pnl(book, marks)
+    if equity is None or unrealized is None:
+        return {
+            "status": "UNAVAILABLE",
+            "equity": None,
+            "expected": None,
+            "residual": None,
+            "unrealized": None,
+            "realized": book.realized_pnl,
+            "convention": ACCOUNTING_CONVENTION,
+        }
+    expected = starting + book.realized_pnl + unrealized - cash_commissions
+    residual = equity - expected
+    return {
+        "status": "PASS" if residual == 0 else "FAIL",
+        "equity": equity,
+        "expected": expected,
+        "residual": residual,
+        "unrealized": unrealized,
+        "realized": book.realized_pnl,
+        "convention": ACCOUNTING_CONVENTION,
+    }
+
+
+def sell_observations(cumulative: list[Decimal]) -> list[Decimal]:
+    """Realized increment of each sell. The previous cumulative is the baseline."""
+    previous = _ZERO
+    increments: list[Decimal] = []
+    for total in cumulative:
+        increments.append(total - previous)
+        previous = total
+    return increments
+
+
+def max_drawdown(equities: list[Decimal | None]) -> Decimal | None:
+    """Peak-to-trough drawdown. Missing marks are skipped and never treated as zero."""
+    peak: Decimal | None = None
+    worst = _ZERO
+    seen = False
+    for value in equities:
+        if value is None:
+            continue
+        seen = True
+        peak = value if peak is None else max(peak, value)
+        if peak > 0:
+            worst = max(worst, (peak - value) / peak)
+    return worst if seen else None
+
+
+def mark_sessions(
+    sessions: list[date],
+    closes: dict[date, Decimal],
+    snapshots: list[tuple[date, Book]],
+    *,
+    symbol: str = "SPY",
+    starting_cash: Decimal = Decimal("100"),
+) -> list[dict[str, Decimal | str | None]]:
+    """Mark the book at each session close after adopting fills dated on that session.
+
+    A snapshot becomes effective on its session and stays in force afterward.
+    A later session close is never used to value an earlier session.
+    """
+    ordered = sorted(snapshots, key=lambda item: item[0])
+    current = Book(cash=starting_cash)
+    cursor = 0
+    points: list[dict[str, Decimal | str | None]] = []
+    for session in sessions:
+        while cursor < len(ordered) and ordered[cursor][0] <= session:
+            current = ordered[cursor][1]
+            cursor += 1
+        close = closes.get(session)
+        held = any(qty != 0 for qty in current.holdings.values())
+        if held and (close is None or close <= 0):
+            points.append(
+                {
+                    "session": str(session),
+                    "status": "UNAVAILABLE",
+                    "equity": None,
+                    "unrealized": None,
+                    "cash": current.cash,
+                    "realized": current.realized_pnl,
+                }
+            )
+            continue
+        marks = {} if close is None else {symbol: close}
+        equity = mark_equity(current, marks)
+        unrealized = unrealized_pnl(current, marks)
+        points.append(
+            {
+                "session": str(session),
+                "status": "ok" if equity is not None else "UNAVAILABLE",
+                "equity": equity,
+                "unrealized": unrealized,
+                "cash": current.cash,
+                "realized": current.realized_pnl,
+                "close": close,
+            }
+        )
+    return points

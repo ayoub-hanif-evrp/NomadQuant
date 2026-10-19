@@ -17,6 +17,15 @@ from pathlib import Path
 from typing import Any
 
 from nomadquant.config import Settings
+from nomadquant.finance.accounting import (
+    ACCOUNTING_CONVENTION,
+    Book,
+    economic_identity,
+    mark_equity,
+    mark_sessions,
+    max_drawdown,
+    unrealized_pnl,
+)
 from nomadquant.marketdata.availability import modeled_available_at
 from nomadquant.marketdata.calendar import sessions_between
 from nomadquant.marketdata.store import MarketStore, StoredBar, content_hash
@@ -100,6 +109,8 @@ def _historical(settings: Settings, root: Path, scenario: str) -> dict[str, Any]
     else:
         cut = end - timedelta(days=_WINDOWS[scenario])
         window = [item for item in sessions if item >= cut]
+    if not window:
+        return _empty(_HISTORICAL, "The selected window has no stored sessions.")
     starts = [item for item in _month_starts(window) if sessions.index(item) >= LOOKBACK + SKIP + 1]
     shadow = root / "shadow.sqlite"
     risk = root / "risk.sqlite"
@@ -119,7 +130,7 @@ def _historical(settings: Settings, root: Path, scenario: str) -> dict[str, Any]
             label=LABEL_RETRO,
             context="HISTORICAL_SIMULATION",
         )
-        events.append(_event(result, _HISTORICAL, closes.get(signal)))
+        events.append(_event(result, _HISTORICAL, closes))
     duplicate = _duplicate(shadow, risk, isolated_market, events, sessions)
     if duplicate is not None:
         duplicate["label"] = _HISTORICAL
@@ -129,7 +140,12 @@ def _historical(settings: Settings, root: Path, scenario: str) -> dict[str, Any]
         for item in window
         if item in closes
     ]
-    summary = _summary(events, _HISTORICAL, bars)
+    summary = _summary(
+        events,
+        _HISTORICAL,
+        bars,
+        _curve(_span(sessions, window[0], window[-1], events), closes, events),
+    )
     summary["verification"] = _verify(shadow, risk, isolated_market, events)
     summary["approval"] = _approval_drill(root / "approval")
     summary["limitations"] = (
@@ -168,12 +184,14 @@ def _mechanics(root: Path, *, interrupt: bool) -> dict[str, Any]:
             label=LABEL_RETRO,
             context="SYNTHETIC_MECHANICS_TEST",
         )
-        events.append(_event(result, _SYNTHETIC, closes[signal]))
+        events.append(_event(result, _SYNTHETIC, closes))
     events.append(_duplicate_apply(market_path, shadow, risk, buy_day, sessions, closes))
     events.append(_risk_rejection())
     if interrupt:
         events.append(_interrupt(shadow))
-    summary = _summary(events, _SYNTHETIC, [])
+    summary = _summary(
+        events, _SYNTHETIC, [], _curve(_span(sessions, buy_day, sell_day, events), closes, events)
+    )
     summary["verification"] = _verify(shadow, risk, market_path, events)
     summary["approval"] = _approval_drill(root / "approval")
     summary["bars"] = [
@@ -242,6 +260,7 @@ def _quotes(settings: Settings, root: Path) -> dict[str, Any]:
                 "realized_pnl_usd": "0",
                 "momentum": None,
                 "close": None,
+                "authoritative": False,
                 "note": result["reason"],
             }
         )
@@ -366,20 +385,40 @@ def _approval_drill(root: Path) -> dict[str, Any]:
     }
 
 
-def _event(result: dict[str, Any], label: str, close: Decimal | None) -> dict[str, Any]:
+def _event(result: dict[str, Any], label: str, closes: dict[date, Decimal]) -> dict[str, Any]:
     after_raw = result.get("ledger_after")
     after: dict[str, Any] = after_raw if isinstance(after_raw, dict) else {}
     holdings_raw = after.get("holdings")
     holdings: dict[str, Any] = holdings_raw if isinstance(holdings_raw, dict) else {}
+    basis_raw = after.get("cost_basis")
+    basis: dict[str, Any] = basis_raw if isinstance(basis_raw, dict) else {}
     cash = Decimal(str(after.get("cash_usd") or "100"))
-    marked = close or Decimal("0")
-    held = Decimal(str(holdings.get("SPY") or "0"))
-    equity = cash + held * marked if marked else cash
+    realized = Decimal(str(after.get("realized_pnl_usd") or "0"))
+    status = str(result.get("status") or "")
+    signal = _parse_day(result.get("signal_session"))
+    fill = _parse_day(result.get("fill_session"))
+    # A fill is valued at the fill session's close, after the open execution.
+    # The signal close is only a valid mark when the book has not yet been filled.
+    mark_day = fill if status == "filled" and fill is not None else signal
+    close = None if mark_day is None else closes.get(mark_day)
+    book = _book(cash, holdings, basis, realized)
+    held = any(qty != 0 for qty in book.holdings.values())
+    if held and (close is None or close <= 0):
+        equity: Decimal | None = None
+        unrealized: Decimal | None = None
+        valuation = "UNAVAILABLE"
+    else:
+        marks = {} if close is None else {"SPY": close}
+        equity = mark_equity(book, marks)
+        unrealized = unrealized_pnl(book, marks)
+        valuation = "ok" if equity is not None else "UNAVAILABLE"
     return {
         "label": label,
-        "session": result.get("signal_session"),
+        "session": None if mark_day is None else mark_day.isoformat(),
+        "signal_session": None if signal is None else signal.isoformat(),
+        "fill_session": None if fill is None else fill.isoformat(),
         "decision": result.get("intent") or result.get("status"),
-        "status": result.get("status"),
+        "status": status,
         "risk_verdict": result.get("risk_verdict"),
         "risk_reasons": list(result.get("risk_reasons") or []),
         "side": result.get("fill_side"),
@@ -388,8 +427,16 @@ def _event(result: dict[str, Any], label: str, close: Decimal | None) -> dict[st
         "costs_usd": result.get("costs_usd"),
         "cash_usd": str(cash),
         "holdings": {key: str(value) for key, value in holdings.items()},
-        "equity_usd": str(equity),
-        "realized_pnl_usd": str(after.get("realized_pnl_usd") or "0"),
+        "cost_basis": {key: str(value) for key, value in basis.items()},
+        "equity_usd": "UNAVAILABLE" if equity is None else str(equity),
+        "unrealized_pnl_usd": None if unrealized is None else str(unrealized),
+        "realized_pnl_usd": str(realized),
+        "realized_increment_usd": None,
+        "valuation_status": valuation,
+        "valuation_session": None if mark_day is None else mark_day.isoformat(),
+        "valuation_price": None if close is None else str(close),
+        "valuation_as_of": None if mark_day is None else modeled_available_at(mark_day).isoformat(),
+        "authoritative": status in {"filled", "no_trade"},
         "momentum": result.get("momentum"),
         "close": None if close is None else str(close),
         "cycle_id": result.get("id"),
@@ -398,44 +445,94 @@ def _event(result: dict[str, Any], label: str, close: Decimal | None) -> dict[st
 
 
 def _summary(
-    events: list[dict[str, Any]], label: str, bars: list[dict[str, str]]
+    events: list[dict[str, Any]],
+    label: str,
+    bars: list[dict[str, str]],
+    curve: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    equities = [Decimal(item["equity_usd"]) for item in events] or [Decimal("100")]
-    peak = Decimal("100")
-    drawdown = Decimal("0")
-    for value in equities:
-        peak = max(peak, value)
-        if peak:
-            drawdown = max(drawdown, (peak - value) / peak)
+    _assign_realized_increments(events)
+    financial = [item for item in events if item.get("authoritative")]
+    state = financial[-1] if financial else None
+    marked = [item for item in (curve or []) if item.get("status") == "ok"]
+    ending_point = marked[-1] if marked else None
+    if ending_point is not None and ending_point.get("equity") is not None:
+        ending: Decimal | None = Decimal(str(ending_point["equity"]))
+        ending_text = str(ending)
+        cash_text = str(ending_point["cash"])
+        unrealized_text = str(ending_point["unrealized"])
+        realized = Decimal(str(ending_point["realized"]))
+    elif state is not None and state.get("valuation_status") == "ok":
+        ending = Decimal(str(state["equity_usd"]))
+        ending_text = str(ending)
+        cash_text = str(state["cash_usd"])
+        unrealized_text = str(state.get("unrealized_pnl_usd") or "0")
+        realized = Decimal(str(state["realized_pnl_usd"]))
+    elif state is not None:
+        ending = None
+        ending_text = "UNAVAILABLE"
+        cash_text = str(state["cash_usd"])
+        unrealized_text = "UNAVAILABLE"
+        realized = Decimal(str(state["realized_pnl_usd"]))
+    else:
+        ending = Decimal("100")
+        ending_text = "100"
+        cash_text = "100"
+        unrealized_text = "0"
+        realized = Decimal("0")
+    drawdown = max_drawdown(
+        [None if item.get("equity") is None else Decimal(str(item["equity"])) for item in curve]
+        if curve
+        else [
+            None if item.get("valuation_status") != "ok" else Decimal(str(item["equity_usd"]))
+            for item in financial
+        ]
+    )
     buys = sum(1 for item in events if item.get("side") == "buy" and item.get("status") == "filled")
     sells = sum(
         1 for item in events if item.get("side") == "sell" and item.get("status") == "filled"
     )
-    ending = equities[-1]
-    costs = sum(Decimal(str(item.get("costs_usd") or "0")) for item in events)
-    realized = Decimal(str(events[-1]["realized_pnl_usd"])) if events else Decimal("0")
+    wins, losses = _win_loss(events)
+    costs = sum(
+        (Decimal(str(item.get("costs_usd") or "0")) for item in financial),
+        Decimal("0"),
+    )
     first_close = Decimal(bars[0]["close"]) if bars else None
     last_close = Decimal(bars[-1]["close"]) if bars else None
     spy = None
     if first_close and last_close and first_close > 0:
         spy = str((Decimal("100") * last_close / first_close).quantize(Decimal("0.01")))
+    holdings = {} if state is None else state.get("holdings") or {}
+    identity = _identity(state, ending_point)
+    exposure = "UNAVAILABLE"
+    if ending is not None:
+        exposure = str(max(Decimal("0"), ending - Decimal(cash_text)))
     return {
         "label": label,
         "starting_usd": "100",
-        "ending_usd": str(ending),
-        "cash_usd": events[-1]["cash_usd"] if events else "100",
-        "holdings": events[-1]["holdings"] if events else {},
+        "ending_usd": ending_text,
+        "cash_usd": cash_text,
+        "holdings": holdings,
         "buys": buys,
         "sells": sells,
-        "wins": _closed_trades(events, positive=True),
-        "losses": _closed_trades(events, positive=False),
+        "wins": wins,
+        "losses": losses,
         "realized_pnl_usd": str(realized),
-        "unrealized_pnl_usd": str(ending - Decimal("100") - realized),
+        "unrealized_pnl_usd": unrealized_text,
         "costs_usd": str(costs),
-        "max_drawdown": str(drawdown.quantize(Decimal("0.0001"))),
-        "exposure_usd": str(
-            max(Decimal("0"), ending - Decimal(events[-1]["cash_usd"])) if events else Decimal("0")
+        "max_drawdown": (
+            "UNAVAILABLE" if drawdown is None else str(drawdown.quantize(Decimal("0.0001")))
         ),
+        "exposure_usd": exposure,
+        "pnl_convention": ACCOUNTING_CONVENTION,
+        "reconciliation": identity,
+        "equity_curve": [
+            {
+                "session": item["session"],
+                "equity": None if item.get("equity") is None else str(item["equity"]),
+                "status": item["status"],
+            }
+            for item in (curve or [])
+        ],
         "comparisons": {
             "cash": "100",
             "spy_buy_hold_price_only": spy,
@@ -479,9 +576,12 @@ def _duplicate(
     sessions: list[date],
 ) -> dict[str, Any] | None:
     filled = next((item for item in events if item.get("status") == "filled"), None)
-    if filled is None or not filled.get("session"):
+    if filled is None:
         return None
-    signal = date.fromisoformat(str(filled["session"]))
+    raw_signal = filled.get("signal_session") or filled.get("session")
+    if not raw_signal:
+        return None
+    signal = date.fromisoformat(str(raw_signal))
     event = _duplicate_apply(market, shadow, risk, signal, sessions, {})
     latest = events[-1]
     event["status"] = "duplicate_prevented"
@@ -512,9 +612,10 @@ def _duplicate_apply(
         label=LABEL_RETRO,
         context="DUPLICATE_PREVENTION",
     )
-    event = _event(again, _SYNTHETIC, closes.get(signal))
+    event = _event(again, _SYNTHETIC, closes)
     event["decision"] = "duplicate_prevented"
     event["status"] = "duplicate_prevented"
+    event["authoritative"] = False
     event["note"] = "The same cycle key returned the original row."
     event["side"] = None
     return event
@@ -547,6 +648,7 @@ def _interrupt(shadow: Path) -> dict[str, Any]:
         "holdings": {key: str(value) for key, value in after["holdings"].items()},
         "equity_usd": str(after["cash_usd"]),
         "realized_pnl_usd": str(after["realized_pnl_usd"]),
+        "authoritative": False,
         "momentum": None,
         "close": None,
         "cycle_id": None,
@@ -587,6 +689,7 @@ def _risk_rejection() -> dict[str, Any]:
         "holdings": {},
         "equity_usd": "100",
         "realized_pnl_usd": "0",
+        "authoritative": False,
         "momentum": None,
         "close": "100",
         "cycle_id": None,
@@ -786,17 +889,108 @@ def _fingerprint(path: Path) -> tuple[int, int] | None:
     return stat.st_size, stat.st_mtime_ns
 
 
-def _closed_trades(events: list[dict[str, Any]], *, positive: bool) -> int:
-    count = 0
+def _span(sessions: list[date], start: date, end: date, events: list[dict[str, Any]]) -> list[date]:
+    last = end
     for item in events:
-        if item.get("side") != "sell":
+        day = _parse_day(item.get("fill_session"))
+        if item.get("authoritative") and day is not None and day > last:
+            last = day
+    return [item for item in sessions if start <= item <= last]
+
+
+def _curve(
+    sessions: list[date], closes: dict[date, Decimal], events: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    snapshots: list[tuple[date, Book]] = []
+    for item in events:
+        if not item.get("authoritative") or item.get("status") != "filled":
             continue
-        realized = Decimal(str(item["realized_pnl_usd"]))
-        if positive and realized > 0:
-            count += 1
-        if not positive and realized < 0:
-            count += 1
-    return count
+        day = _parse_day(item.get("fill_session"))
+        if day is None:
+            continue
+        snapshots.append((day, _book_from_event(item)))
+    return mark_sessions(sessions, closes, snapshots)
+
+
+def _book(
+    cash: Decimal,
+    holdings: dict[str, Any],
+    basis: dict[str, Any],
+    realized: Decimal,
+) -> Book:
+    return Book(
+        cash=cash,
+        holdings={str(key): Decimal(str(value)) for key, value in holdings.items()},
+        cost_basis={str(key): Decimal(str(value)) for key, value in basis.items()},
+        realized_pnl=realized,
+    )
+
+
+def _book_from_event(item: dict[str, Any]) -> Book:
+    raw_holdings = item.get("holdings")
+    raw_basis = item.get("cost_basis")
+    holdings: dict[str, Any] = raw_holdings if isinstance(raw_holdings, dict) else {}
+    basis: dict[str, Any] = raw_basis if isinstance(raw_basis, dict) else {}
+    return _book(
+        Decimal(str(item.get("cash_usd") or "0")),
+        holdings,
+        basis,
+        Decimal(str(item.get("realized_pnl_usd") or "0")),
+    )
+
+
+def _assign_realized_increments(events: list[dict[str, Any]]) -> None:
+    previous = Decimal("0")
+    for item in events:
+        if not item.get("authoritative"):
+            item["realized_increment_usd"] = None
+            continue
+        total = Decimal(str(item.get("realized_pnl_usd") or "0"))
+        if item.get("side") == "sell" and item.get("status") == "filled":
+            item["realized_increment_usd"] = str(total - previous)
+        else:
+            item["realized_increment_usd"] = "0"
+        previous = total
+
+
+def _win_loss(events: list[dict[str, Any]]) -> tuple[int, int]:
+    increments = [
+        Decimal(str(item["realized_increment_usd"]))
+        for item in events
+        if item.get("side") == "sell"
+        and item.get("status") == "filled"
+        and item.get("realized_increment_usd") not in {None, ""}
+    ]
+    wins = sum(1 for item in increments if item > 0)
+    losses = sum(1 for item in increments if item < 0)
+    return wins, losses
+
+
+def _identity(state: dict[str, Any] | None, ending_point: dict[str, Any] | None) -> dict[str, Any]:
+    if ending_point is None or ending_point.get("status") != "ok" or state is None:
+        if state is None:
+            return {"status": "PASS", "residual": "0", "convention": ACCOUNTING_CONVENTION}
+        return {"status": "UNAVAILABLE", "residual": None, "convention": ACCOUNTING_CONVENTION}
+    close = ending_point.get("close")
+    book = _book_from_event(state)
+    marks = {} if close is None else {"SPY": Decimal(str(close))}
+    if any(qty != 0 for qty in book.holdings.values()) and not marks:
+        return {"status": "UNAVAILABLE", "residual": None, "convention": ACCOUNTING_CONVENTION}
+    checked = economic_identity(book, marks, starting=Decimal("100"))
+    return {
+        "status": checked["status"],
+        "residual": None if checked["residual"] is None else str(checked["residual"]),
+        "convention": ACCOUNTING_CONVENTION,
+    }
+
+
+def _parse_day(value: object) -> date | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        return None
 
 
 def _empty(label: str, reason: str) -> dict[str, Any]:
