@@ -29,7 +29,39 @@ export function PaperDesk() {
         <p>SPY fractionable: {flag(data?.spy_fractionable)}. Tradable: {flag(data?.spy_tradable)}.</p>
         <p>Market timestamp: {data?.market_timestamp ?? "not reported"}.</p>
         <p>Strategy P&L since a prospective paper test: not started. No paper order has been sent by this page.</p>
+        <p>A fresh bid/ask is required before any order. Accepted or submitted is not filled.</p>
+        <p>Automatic paper pilot: {data?.automatic_pilot?.enabled ? "enabled" : "off"}.</p>
         <p className="mt-2 text-[var(--warn)]">{data?.first_order_authorization}</p>
+      </article>
+      <article className="panel p-4 text-sm">
+        <p className="kicker">NomadQuant paper orders</p>
+        {data?.orders?.length ? (
+          <ul className="mt-2 space-y-1">
+            {data.orders.map((item) => (
+              <li key={item.client_order_id}>
+                {item.label ?? item.purpose} · {item.broker_status} · filled {item.filled_qty ?? "none"} at{" "}
+                {item.filled_avg_price ?? "no broker price"} · remaining {item.remaining_qty ?? "not reported"}
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="mt-2 text-[var(--muted)]">No NomadQuant paper order is stored.</p>
+        )}
+      </article>
+      <article className="panel p-4 text-sm">
+        <p className="kicker">Alpaca order records</p>
+        {data?.broker_orders?.length ? (
+          <ul className="mt-2 space-y-1">
+            {data.broker_orders.map((item) => (
+              <li key={item.client_order_id || `${item.symbol}-${item.status}`}>
+                {item.symbol} {item.side} · {item.status} · filled {item.filled_qty || "none"} at{" "}
+                {item.filled_avg_price || "no broker price"}
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="mt-2 text-[var(--muted)]">Alpaca returned no paper orders.</p>
+        )}
       </article>
       <article className="panel p-4 text-sm">
         <p className="kicker">Broker positions</p>

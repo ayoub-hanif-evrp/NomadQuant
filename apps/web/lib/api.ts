@@ -2348,7 +2348,25 @@ export type PaperStatus = {
   first_order_authorization?: string;
   historical_replay_counts_as_performance?: boolean;
   positions?: Array<{ symbol: string; qty: string; market_value: string; unrealized_pl: string }>;
-  orders?: Array<{ client_order_id: string; broker_status: string; filled_avg_price: string | null }>;
+  broker_orders?: Array<{
+    client_order_id: string;
+    symbol: string;
+    side: string;
+    status: string;
+    filled_qty: string;
+    filled_avg_price: string;
+  }>;
+  orders?: Array<{
+    client_order_id: string;
+    purpose?: string;
+    broker_status: string;
+    filled_qty?: string | null;
+    remaining_qty?: string | null;
+    filled_avg_price: string | null;
+    label?: string;
+  }>;
+  quote_required_before_submit?: boolean;
+  automatic_pilot?: { enabled: boolean; reason?: string | null };
 };
 
 export async function loadPaperStatus(): Promise<PaperStatus> {

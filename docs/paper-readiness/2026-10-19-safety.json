@@ -1,0 +1,41 @@
+{
+  "label": "ALPACA PAPER TRADING \u2014 FAKE MONEY",
+  "as_of": "2026-10-19T20:39:02.439088+00:00",
+  "paper_url": "https://paper-api.alpaca.markets",
+  "live_trading": false,
+  "allow_order_submission": false,
+  "historical_replay_counts_as_performance": false,
+  "execution_model": "alpaca_paper_market_order",
+  "internal_hypothetical_fills": "not_authoritative",
+  "connected": true,
+  "blocked": false,
+  "reason": null,
+  "market_open": false,
+  "market_timestamp": "2026-10-19T16:39:04.975712-04:00",
+  "quote_required_before_submit": true,
+  "account_cash_usd": "100000",
+  "account_equity_usd": "100000",
+  "account_buying_power_usd": "400000",
+  "buying_power_ignored": true,
+  "sleeve_usd": "100",
+  "sleeve_remaining_usd": "100",
+  "attributed_qty": {},
+  "spy_fractionable": true,
+  "spy_tradable": true,
+  "positions": [],
+  "broker_orders": [],
+  "orders": [],
+  "strategy_pnl": "not_started",
+  "authorization": {
+    "enabled": false,
+    "reason": "paper_orders_disabled"
+  },
+  "automatic_pilot": {
+    "enabled": false,
+    "reason": "automatic_pilot_disabled"
+  },
+  "submission_enabled": false,
+  "ready_for_first_order": false,
+  "schedule_installed": false,
+  "first_order_authorization": "During a regular session, enable paper orders for at most 24 hours with ENABLE_ALPACA_PAPER_ORDERS, then authorize one connectivity order with SUBMIT_ONE_FIVE_DOLLAR_PAPER_CONNECTIVITY_ORDER. A fresh bid/ask is required at that moment. No order is sent until then."
+}
