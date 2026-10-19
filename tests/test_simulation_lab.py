@@ -42,6 +42,9 @@ def test_quote_lab_does_not_invent_a_strategy_signal(tmp_path: Path) -> None:
     assert result["buys"] == 0
     late = next(item for item in result["events"] if item["decision"] == "retrieved_after_decision")
     assert late["status"] == "NO_FILL"
+    stale = next(item for item in result["events"] if item["decision"] == "stale")
+    assert stale["status"] == "WAIT"
+    assert stale["risk_reasons"] == ["quote_older_than_policy"]
     assert result["live_quote"]["status"] == "NOT_RUN"
 
 

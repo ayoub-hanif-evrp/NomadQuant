@@ -207,7 +207,7 @@ def _quotes(settings: Settings, root: Path) -> dict[str, Any]:
             True,
             now,
         ),
-        ("stale", _sample(now - timedelta(hours=2), now - timedelta(hours=2)), True, now),
+        ("stale", _sample(now - timedelta(hours=49), now - timedelta(hours=49)), True, now),
         ("crossed", _sample(now, now, bid=Decimal("101"), ask=Decimal("100")), True, now),
         ("closed_market", _sample(now - timedelta(seconds=5), now), False, now),
         ("fresh_open", _sample(now - timedelta(seconds=5), now - timedelta(seconds=1)), True, now),
