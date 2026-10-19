@@ -110,6 +110,61 @@ def test_small_exchange_clock_skew_still_allows_a_fresh_quote() -> None:
     assert result["status"] == "SIMULATED_FILL"
 
 
+def test_ten_minute_and_previous_session_quotes_are_refused() -> None:
+    aged = simulate_observed_fill(
+        _quote(
+            market_timestamp=_NOW - timedelta(minutes=10),
+            retrieved_at=_NOW - timedelta(minutes=10),
+        ),
+        side="buy",
+        decision_time=_NOW,
+        market_open=True,
+        cash=Decimal("100"),
+        held_quantity=Decimal("0"),
+        costs=_COSTS,
+    )
+    assert aged["status"] == "WAIT"
+    assert aged["reason"] == "quote_older_than_observed_policy"
+    previous = simulate_observed_fill(
+        _quote(
+            market_timestamp=_NOW - timedelta(days=3),
+            retrieved_at=_NOW - timedelta(days=3),
+        ),
+        side="buy",
+        decision_time=_NOW,
+        market_open=True,
+        cash=Decimal("100"),
+        held_quantity=Decimal("0"),
+        costs=_COSTS,
+    )
+    assert previous["status"] == "NO_FILL"
+    assert previous["reason"] == "previous_session"
+    after_hours = simulate_observed_fill(
+        _quote(
+            market_timestamp=datetime(2026, 10, 19, 21, 0, tzinfo=UTC),
+            retrieved_at=datetime(2026, 10, 19, 21, 0, tzinfo=UTC),
+        ),
+        side="buy",
+        decision_time=datetime(2026, 10, 19, 21, 0, tzinfo=UTC),
+        market_open=True,
+        cash=Decimal("100"),
+        held_quantity=Decimal("0"),
+        costs=_COSTS,
+    )
+    assert after_hours["reason"] == "after_hours_quote"
+    fresh = simulate_observed_fill(
+        _quote(),
+        side="buy",
+        decision_time=_NOW,
+        market_open=True,
+        cash=Decimal("100"),
+        held_quantity=Decimal("0"),
+        costs=_COSTS,
+    )
+    assert fresh["status"] == "SIMULATED_FILL"
+    assert fresh["execution_evidence"] == "iex_not_sip"
+
+
 def test_quote_retrieved_after_the_decision_cannot_fill_that_decision() -> None:
     """The print can be older than the decision and still be unavailable then."""
     late = simulate_observed_fill(

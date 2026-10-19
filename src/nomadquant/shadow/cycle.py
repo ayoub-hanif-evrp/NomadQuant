@@ -53,6 +53,22 @@ _ONE = Decimal("1")
 _FORWARD_SIGNAL_MAX_AGE = timedelta(days=5)
 
 
+def _pending_proposal_id(shadow: ShadowStore) -> str:
+    """Proposal id already waiting on this ledger, if a prior cycle recorded one."""
+    for intent in reversed(shadow.list_pending_intents()):
+        raw = intent.get("evidence_json")
+        if not isinstance(raw, str) or not raw:
+            continue
+        try:
+            evidence = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        proposal = evidence.get("proposal") if isinstance(evidence, dict) else None
+        if isinstance(proposal, dict) and proposal.get("id"):
+            return str(proposal["id"])
+    return ""
+
+
 def _require_forward_approval(
     shadow: ShadowStore,
     market_path: Path,
@@ -83,6 +99,7 @@ def _require_forward_approval(
         policy=policy or RiskPolicy(),
         market_fingerprint=market_fingerprint(market_path),
         preview_hash=preview_hash,
+        proposal_id=_pending_proposal_id(shadow),
     )
     decision = approval_decision(shadow, binding, now=now)
     shadow.approval_checked_at = now

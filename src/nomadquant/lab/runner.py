@@ -225,7 +225,7 @@ def _quotes(settings: Settings, root: Path) -> dict[str, Any]:
             True,
             now,
         ),
-        ("stale", _sample(now - timedelta(hours=49), now - timedelta(hours=49)), True, now),
+        ("stale", _sample(now - timedelta(minutes=10), now - timedelta(minutes=10)), True, now),
         ("crossed", _sample(now, now, bid=Decimal("101"), ask=Decimal("100")), True, now),
         ("closed_market", _sample(now - timedelta(seconds=5), now), False, now),
         ("fresh_open", _sample(now - timedelta(seconds=5), now - timedelta(seconds=1)), True, now),
@@ -376,7 +376,12 @@ def _approval_drill(root: Path) -> dict[str, Any]:
         "delivery": "local_outbox",
         "smtp_used": False,
         "requests": [
-            {"action": "BUY", "result": approved.get("status"), "fill_authorized": True},
+            {
+                "action": "BUY",
+                "result": approved.get("status"),
+                "fill_authorized": False,
+                "note": "Email approval alone does not authorize a simulated fill.",
+            },
             {"action": "SELL", "result": rejected.get("status"), "fill_authorized": False},
             {"action": "BUY", "result": expired.get("status"), "fill_authorized": False},
         ],

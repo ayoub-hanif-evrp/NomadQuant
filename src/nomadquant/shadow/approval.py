@@ -273,8 +273,9 @@ def current_binding(
     policy: RiskPolicy,
     market_fingerprint: str,
     preview_hash: str,
+    proposal_id: str = "",
 ) -> dict[str, Any]:
-    return {
+    binding = {
         "preview_hash": preview_hash,
         "ledger_version": ledger_version,
         "strategy_id": STRATEGY_ID,
@@ -285,6 +286,9 @@ def current_binding(
         "operation": OPERATION,
         "scope": SCOPE,
     }
+    if proposal_id:
+        binding["proposal_id"] = proposal_id
+    return binding
 
 
 def _load(store: ShadowStore) -> dict[str, Any] | None:
@@ -318,6 +322,9 @@ def _require_match(record: dict[str, Any], binding: dict[str, Any], now: datetim
     ):
         if record.get(key) != binding.get(key):
             raise ValueError(f"shadow approval {key} does not match current state")
+    if record.get("proposal_id") or binding.get("proposal_id"):
+        if record.get("proposal_id") != binding.get("proposal_id"):
+            raise ValueError("shadow approval proposal_id does not match current state")
 
 
 def _schedule_allows(

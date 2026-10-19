@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import ROUND_DOWN, Decimal
 from typing import Any, Literal
+from zoneinfo import ZoneInfo
 
 from nomadquant.finance.execution import execution_price
 from nomadquant.research.models import CostModel
@@ -19,6 +20,25 @@ from nomadquant.risk.policy import RiskPolicy
 EXECUTION_OBSERVED_QUOTE = "OBSERVED_QUOTE_SHADOW"
 _BPS = Decimal("10000")
 _CLOCK_SKEW = timedelta(seconds=2)
+_NY = ZoneInfo("America/New_York")
+# A snapshot can be a few seconds old. Ten minutes is not an executable quote.
+OBSERVED_QUOTE_MAX_AGE = timedelta(seconds=60)
+
+
+@dataclass(frozen=True)
+class ObservedQuotePolicy:
+    """Freshness for an executable bid/ask.
+
+    This is not the 48-hour daily-bar rule in RiskPolicy.max_price_age.
+    The default accepts a quote captured during the same regular session
+    and retrieved within 60 seconds of the decision.
+    """
+
+    max_age: timedelta = OBSERVED_QUOTE_MAX_AGE
+
+    def validate(self) -> None:
+        if self.max_age.total_seconds() <= 0 or self.max_age > timedelta(minutes=5):
+            raise ValueError("Observed-quote max age must be between 0 and 5 minutes.")
 
 
 @dataclass(frozen=True)
@@ -42,11 +62,14 @@ def simulate_observed_fill(
     held_quantity: Decimal,
     costs: CostModel,
     policy: RiskPolicy | None = None,
+    quote_policy: ObservedQuotePolicy | None = None,
     estimated_mid: Decimal | None = None,
 ) -> dict[str, Any]:
     """Return a simulated fill or an explicit skip. Never invents a price."""
     active = policy or RiskPolicy()
     active.validate()
+    freshness = quote_policy or ObservedQuotePolicy()
+    freshness.validate()
     base: dict[str, Any] = {
         "execution_model": EXECUTION_OBSERVED_QUOTE,
         "side": side,
@@ -72,9 +95,13 @@ def simulate_observed_fill(
         return {**base, "reason": "quote_retrieved_after_decision"}
     if quote.market_timestamp > decision_time:
         return {**base, "reason": "quote_known_only_after_decision"}
+    if quote.market_timestamp.astimezone(_NY).date() != decision_time.astimezone(_NY).date():
+        return {**base, "reason": "previous_session"}
     age = decision_time - quote.market_timestamp
-    if age > active.max_price_age:
-        return {**base, "status": "WAIT", "reason": "quote_older_than_policy"}
+    if age > freshness.max_age:
+        return {**base, "status": "WAIT", "reason": "quote_older_than_observed_policy"}
+    if not _regular_hours(quote.market_timestamp):
+        return {**base, "reason": "after_hours_quote"}
     if not market_open:
         return {**base, "reason": "market_closed_stale_quote_refused"}
     if (
@@ -139,11 +166,20 @@ def simulate_observed_fill(
         "market_timestamp": quote.market_timestamp.isoformat(),
         "retrieved_at": quote.retrieved_at.isoformat(),
         "source": quote.source,
+        "execution_evidence": "iex_not_sip" if quote.feed == "iex" else "sip_quote",
         "price_age_seconds": int(age.total_seconds()),
+        "observed_quote_max_age_seconds": int(freshness.max_age.total_seconds()),
         "max_single_transaction_usd": str(active.max_single_transaction_usd),
         "min_cash_reserve_usd": str(active.min_cash_reserve_usd),
         "difference_vs_estimate": None if estimated_mid is None else str(price - estimated_mid),
     }
+
+
+def _regular_hours(moment: datetime) -> bool:
+    local = moment.astimezone(_NY)
+    opened = local.replace(hour=9, minute=30, second=0, microsecond=0)
+    closed = local.replace(hour=16, minute=0, second=0, microsecond=0)
+    return opened <= local < closed
 
 
 def quote_from_snapshot(
