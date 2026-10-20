@@ -70,6 +70,7 @@ class Settings(BaseSettings):
     risk_path: str = "data/risk.sqlite"
     shadow_path: str = "data/shadow.sqlite"
     paper_path: str = "data/paper_orders.sqlite"
+    daily_path: str = "data/daily_pilot.sqlite"
     approval_path: str = "data/approvals.sqlite"
     approval_outbox_dir: str = "data/approval-outbox"
     approval_ttl_minutes: int = 60

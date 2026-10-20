@@ -381,11 +381,9 @@ def test_repeated_strategy_signal_uses_one_persistent_client_id(tmp_path: Path) 
     second = submit_strategy_paper_order(
         settings, decision_id=decision, client=client, quote_client=_Quotes(when), now=when
     )
-    assert first["status"] == "accepted", first
-    assert first["client_order_id"] == second["client_order_id"]
-    assert first["client_order_id"] == "nq-strategy-spy_tsmom_12_1-2020-02-03-SPY-buy"
-    assert len(client.submitted) == 1
-    assert first["counts_as_strategy_pnl"] is True
+    assert first["reason"] == "retired_monthly_strategy"
+    assert second["reason"] == "retired_monthly_strategy"
+    assert client.submitted == []
 
 
 def test_missing_or_stale_quote_blocks_before_submission(tmp_path: Path) -> None:
@@ -563,10 +561,10 @@ def test_fabricated_strategy_approval_cannot_submit(tmp_path: Path) -> None:
         quote_client=_Quotes(same_day),
         now=same_day,
     )
-    assert qqq["reason"] == "fabricated_signal"
-    assert missing["reason"] == "untrusted_strategy_approval"
-    assert same["reason"] == "ineligible_session"
-    assert future["reason"] == "future_signal"
+    assert qqq["reason"] == "retired_monthly_strategy"
+    assert missing["reason"] == "retired_monthly_strategy"
+    assert same["reason"] == "retired_monthly_strategy"
+    assert future["reason"] == "retired_monthly_strategy"
     assert client.submitted == []
 
 

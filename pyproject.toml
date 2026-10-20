@@ -8,6 +8,7 @@ requires-python = ">=3.12"
 authors = [{ name = "NomadQuant contributors" }]
 dependencies = [
     "alpaca-py>=0.39",
+    "mcp>=1.13",
     "exchange-calendars>=4.13.2",
     "fastapi>=0.115",
     "pydantic-settings>=2.6",
@@ -60,7 +61,7 @@ packages = ["nomadquant"]
 warn_unused_ignores = true
 
 [[tool.mypy.overrides]]
-module = ["alpaca.*", "exchange_calendars", "exchange_calendars.*", "pandas"]
+module = ["alpaca.*", "exchange_calendars", "exchange_calendars.*", "pandas", "mcp", "mcp.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

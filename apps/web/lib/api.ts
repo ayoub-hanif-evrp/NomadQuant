@@ -2381,6 +2381,36 @@ export async function loadPaperStatus(): Promise<PaperStatus> {
   return value as PaperStatus;
 }
 
+export type DailyPilotStatus = {
+  label: string;
+  broker_orders_submitted_by_this_request: false;
+  authorization?: { enabled?: boolean; reason?: string | null; expires_at?: string };
+  latest_decision?: {
+    action?: string;
+    baseline_action?: string;
+    strategy_id?: string | null;
+    reason?: string;
+    objections?: string[];
+  } | null;
+  email?: { status?: string; sent?: boolean };
+  schedule_installed?: boolean;
+  emergency_stop?: boolean;
+  strategies?: Array<{ strategy_id: string; name: string }>;
+  tool_calls?: Array<{ tool: string; status: string }>;
+};
+
+export async function loadDailyPilotStatus(): Promise<DailyPilotStatus> {
+  const value = await readJson("/api/daily/status");
+  if (
+    !isRecord(value) ||
+    value.label !== "DAILY AI PAPER PILOT" ||
+    value.broker_orders_submitted_by_this_request !== false
+  ) {
+    throw new Error("Unexpected daily pilot status");
+  }
+  return value as DailyPilotStatus;
+}
+
 export async function loadApprovals(): Promise<{
   initialized: boolean;
   items: ApprovalRequest[];

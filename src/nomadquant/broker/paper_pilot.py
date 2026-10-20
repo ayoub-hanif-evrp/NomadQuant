@@ -205,6 +205,9 @@ def kill_paper_orders(
     _write_automatic(
         settings.paper_path, status="killed", expires_at=None, killed_at=clock.isoformat()
     )
+    from nomadquant.daily.authorization import revoke_daily_pilot
+
+    revoke_daily_pilot(settings, now=clock)
     return {"enabled": False, "killed": True, "automatic_pilot": False}
 
 
@@ -339,6 +342,8 @@ def submit_strategy_paper_order(
 ) -> dict[str, Any]:
     """Submit one registered-strategy paper order after an independent recompute."""
     clock = now or datetime.now(UTC)
+    if decision_id.split(":", 1)[0] == "spy_tsmom_12_1":
+        return _refused("retired_monthly_strategy")
     auth = _authorization(settings.paper_path, clock)
     if not auth["enabled"]:
         return _refused(str(auth["reason"]))

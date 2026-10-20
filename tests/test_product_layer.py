@@ -43,7 +43,7 @@ def test_copilot_explains_why_there_is_no_trade(tmp_path: Path) -> None:
         quotes=_NO_QUOTES,
     )
     assert "trading.reasons" in result["evidence_ids"]
-    assert "first trading day of a month" in result["answer"]
+    assert "does not wait for the first trading day of a month" in result["answer"]
 
 
 def test_copilot_keeps_the_lab_record_instead_of_a_model_rewrite(tmp_path: Path) -> None:

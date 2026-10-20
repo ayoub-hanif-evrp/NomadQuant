@@ -1,0 +1,150 @@
+"""Local audit records for daily decisions, tool calls, and notices."""
+
+from __future__ import annotations
+
+import json
+import sqlite3
+from typing import Any
+
+
+def _connect(path: str) -> sqlite3.Connection:
+    connection = sqlite3.connect(path)
+    connection.row_factory = sqlite3.Row
+    connection.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS daily_decisions (
+            id INTEGER PRIMARY KEY,
+            created_at TEXT NOT NULL,
+            signal_session TEXT NOT NULL,
+            execution_session TEXT,
+            payload_json TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS daily_tool_calls (
+            id INTEGER PRIMARY KEY,
+            created_at TEXT NOT NULL,
+            tool_name TEXT NOT NULL,
+            status TEXT NOT NULL,
+            payload_json TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS daily_notices (
+            id INTEGER PRIMARY KEY,
+            created_at TEXT NOT NULL,
+            subject TEXT NOT NULL,
+            body TEXT NOT NULL,
+            status TEXT NOT NULL,
+            attempts INTEGER NOT NULL
+        );
+        """
+    )
+    return connection
+
+
+def save_decision(
+    path: str, *, created_at: str, signal_session: str, payload: dict[str, Any]
+) -> int:
+    with _connect(path) as connection:
+        cursor = connection.execute(
+            """
+            INSERT INTO daily_decisions (
+                created_at, signal_session, execution_session, payload_json
+            ) VALUES (?, ?, ?, ?)
+            """,
+            (
+                created_at,
+                signal_session,
+                payload.get("execution_session"),
+                json.dumps(payload),
+            ),
+        )
+        return int(cursor.lastrowid or 0)
+
+
+def latest_decision(path: str) -> dict[str, Any] | None:
+    try:
+        with _connect(path) as connection:
+            row = connection.execute(
+                "SELECT payload_json FROM daily_decisions ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+    except sqlite3.DatabaseError:
+        return None
+    if row is None:
+        return None
+    loaded = json.loads(str(row["payload_json"]))
+    return loaded if isinstance(loaded, dict) else None
+
+
+def save_tool_call(
+    path: str, *, created_at: str, tool_name: str, status: str, payload: dict[str, Any]
+) -> None:
+    with _connect(path) as connection:
+        connection.execute(
+            """
+            INSERT INTO daily_tool_calls (created_at, tool_name, status, payload_json)
+            VALUES (?, ?, ?, ?)
+            """,
+            (created_at, tool_name, status, json.dumps(payload)[:20000]),
+        )
+
+
+def list_tool_calls(path: str, limit: int = 20) -> list[dict[str, Any]]:
+    try:
+        with _connect(path) as connection:
+            rows = connection.execute(
+                """
+                SELECT tool_name, status, payload_json FROM daily_tool_calls
+                ORDER BY id DESC LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+    except sqlite3.DatabaseError:
+        return []
+    return [
+        {
+            "tool": row["tool_name"],
+            "status": row["status"],
+            "payload": json.loads(row["payload_json"]),
+        }
+        for row in rows
+    ]
+
+
+def enqueue_notice(path: str, *, created_at: str, subject: str, body: str) -> dict[str, Any]:
+    with _connect(path) as connection:
+        cursor = connection.execute(
+            """
+            INSERT INTO daily_notices (created_at, subject, body, status, attempts)
+            VALUES (?, ?, ?, 'queued', 0)
+            """,
+            (created_at, subject, body),
+        )
+        return {"id": int(cursor.lastrowid or 0), "status": "queued", "sent": False}
+
+
+def notice_status(path: str) -> dict[str, Any]:
+    try:
+        with _connect(path) as connection:
+            row = connection.execute(
+                "SELECT status, attempts, subject FROM daily_notices ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+    except sqlite3.DatabaseError:
+        return {"status": "unavailable", "sent": False}
+    if row is None:
+        return {"status": "none", "sent": False}
+    return {
+        "status": row["status"],
+        "attempts": row["attempts"],
+        "subject": row["subject"],
+        "sent": row["status"] == "delivered",
+    }
+
+
+def mark_notice(path: str, notice_id: int, *, status: str) -> None:
+    with _connect(path) as connection:
+        connection.execute(
+            """
+            UPDATE daily_notices
+            SET status = ?, attempts = attempts + 1
+            WHERE id = ?
+            """,
+            (status, notice_id),
+        )

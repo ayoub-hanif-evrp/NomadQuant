@@ -1,11 +1,13 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { loadPaperStatus } from "@/lib/api";
+import { loadDailyPilotStatus, loadPaperStatus } from "@/lib/api";
 
 export function PaperDesk() {
   const paper = useQuery({ queryKey: ["paper-status"], queryFn: loadPaperStatus });
+  const daily = useQuery({ queryKey: ["daily-pilot"], queryFn: loadDailyPilotStatus });
   const data = paper.data;
+  const pilot = daily.data;
   return (
     <div className="space-y-4">
       <header>
@@ -31,6 +33,22 @@ export function PaperDesk() {
         <p>Strategy P&L since a prospective paper test: not started. No paper order has been sent by this page.</p>
         <p>A fresh bid/ask is required before any order. Accepted or submitted is not filled.</p>
         <p>Automatic paper pilot: {data?.automatic_pilot?.enabled ? "enabled" : "off"}.</p>
+        <p>
+          Daily AI pilot: {pilot?.authorization?.enabled ? "authorized" : "off"}
+          {pilot?.authorization?.reason ? ` (${pilot.authorization.reason})` : ""}. Emergency stop:{" "}
+          {flag(pilot?.emergency_stop)}. Schedule installed: {flag(pilot?.schedule_installed)}.
+        </p>
+        <p>
+          Latest daily decision: {pilot?.latest_decision?.action ?? "none yet"}. Baseline{" "}
+          {pilot?.latest_decision?.baseline_action ?? "none"} is hypothetical and is not a second
+          broker fill. Strategy {pilot?.latest_decision?.strategy_id ?? "none"}.
+        </p>
+        <p>Email: {pilot?.email?.status ?? "none"}. Delivered: {flag(pilot?.email?.sent)}.</p>
+        <p>
+          Registered daily strategies:{" "}
+          {pilot?.strategies?.map((item) => item.strategy_id).join(", ") || "not loaded"}.
+        </p>
+        <p>This computer must be on for a future local schedule. No trading task is installed.</p>
         <p className="mt-2 text-[var(--warn)]">{data?.first_order_authorization}</p>
       </article>
       <article className="panel p-4 text-sm">

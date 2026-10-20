@@ -119,7 +119,7 @@ def collect_evidence(
         },
         {
             "id": "strategy",
-            "source": "registered strategy spy_tsmom_12_1",
+            "source": "daily paper pilot, monthly research retired from submission",
             "text": view["strategy"]["plain"],
         },
         {

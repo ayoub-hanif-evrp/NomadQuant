@@ -18,9 +18,10 @@ from nomadquant.marketdata.calendar import (
 NEW_YORK = ZoneInfo("America/New_York")
 
 STRATEGY_PLAIN = (
-    "The strategy looks at SPY once a month, on the first trading day. If SPY rose over the "
-    "past 12 months, skipping the most recent month, it holds SPY. Otherwise it holds cash. "
-    "A trade is simulated at the next day's open in the internal $100 book."
+    "The active paper system is a daily ETF pilot for SPY and QQQ. It is not authorized to "
+    "submit orders. The older monthly SPY momentum rule remains historical research only and "
+    "cannot send a new Alpaca paper order. The connectivity-test SPY fill is not a "
+    "strategy holding."
 )
 
 
@@ -146,11 +147,14 @@ def overview(settings: Settings, *, now: datetime | None = None) -> dict[str, An
         {
             "key": "rebalance",
             "ok": rebalance_due,
-            "title": "A monthly rebalance is due" if rebalance_due else "No rebalance is due yet",
+            "title": "Daily paper pilot is off",
             "detail": (
-                f"The strategy trades only on the first trading day of a month. The next one is "
-                f"{rebalance['signal_session']}, with a simulated fill at the open on "
-                f"{rebalance['fill_session']}."
+                "Daily strategy evaluation does not wait for the first trading day of a month. "
+                "The paper pilot cannot submit until you authorize it once. "
+                f"The retired monthly research calendar still notes {rebalance['signal_session']}, "
+                f"with an old simulated research fill date of {rebalance['fill_session']}. "
+                "That research date cannot place an Alpaca order. "
+                f"Monthly research flag rebalance_scheduled={str(rebalance_due).lower()}."
             ),
             "action": None,
         },

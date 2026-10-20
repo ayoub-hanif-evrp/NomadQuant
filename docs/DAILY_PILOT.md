@@ -1,0 +1,33 @@
+# Daily AI paper pilot
+
+The active paper design is a daily ETF pilot. It is not authorized to submit orders.
+
+The monthly `spy_tsmom_12_1` rule remains available for historical research. New Alpaca paper orders for that strategy are refused with `retired_monthly_strategy`. Its old results are not rewritten.
+
+The filled connectivity order `nq-connect-spy-buy-5` / `e9bab439-11e8-4814-aeca-9c170544cfa3` is not a strategy holding and is not sold by this pilot. Its cost still reduces the shared $100 sleeve.
+
+## Strategies
+
+`etf_trend_sma_v1` follows Faber (2007) and the moving-average evidence in Brock, Lakonishok, and LeBaron (1992). A buy requires the latest available close to be above the 200-session average and 20-session daily volatility at or below 2 percent. Otherwise the strategy is in cash. The parameters were declared in advance and were not fit to maximize a backtest.
+
+`etf_reversal_5d_v1` is a restricted reading of Jegadeesh (1990) and Lehmann (1990). Index ETFs diversify the stock-level effect, so a buy also requires the close to remain above the 200-session average and a five-session decline of at least 1.5 trailing dispersions. It does not buy when the trend strategy is already buying, when price is below the average, or when daily volatility exceeds 2.5 percent.
+
+Both rules use only sessions available after 16:30 America/New_York and, when authorized, would trade on the next regular session. A missed session is recorded and is not submitted late. HOLD is a normal outcome.
+
+Walk-forward output is labeled `historical_research` and `hypothetical_not_broker`. It is not prospective paper performance.
+
+## Agents and MCP
+
+The technical analyst, news analyst, strategy researcher, skeptic, and portfolio agent read a read-only MCP server named `nomadquant-daily-readonly`. The server is called through the official MCP client session. Tool results are untrusted data. There is no submit, cancel, or withdraw tool.
+
+Influence policy `daily_agent_influence_1.0.0` lets the skeptic force HOLD and lets material news uncertainty cut a buy in half. Agents cannot create a buy the deterministic rule did not emit, change the symbol, or override the risk engine. If the model is missing or invalid, the AI path fail-closes to HOLD. The deterministic baseline is stored beside it and is not sent to Alpaca.
+
+## Authorization
+
+Submission stays off until this exact phrase is used with a duration of 1 to 30 calendar days:
+
+`AUTHORIZE_DAILY_PAPER_PILOT`
+
+`DISABLE_ALPACA_PAPER_ORDERS` remains the emergency stop. No Windows task is installed. The computer would have to be on for any later local schedule.
+
+Post-trade email is queued after a decision. Without SMTP, the notice stays `not_configured` and is not described as delivered.
