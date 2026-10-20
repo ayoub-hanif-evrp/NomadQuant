@@ -623,6 +623,71 @@ def test_untracked_broker_order_fails_closed(tmp_path: Path) -> None:
     assert client.submitted == []
 
 
+def test_reconciliation_keeps_a_growing_fill_and_the_sleeve(tmp_path: Path) -> None:
+    settings, client = _arm(tmp_path)
+    submit_connectivity_order(
+        settings, confirm=CONNECTIVITY_PHRASE, client=client, quote_client=_Quotes(NOW), now=NOW
+    )
+    accepted = paper_status(settings, client=client, now=NOW)
+    assert accepted["reason"] is None
+    assert accepted["orders"][0]["broker_status"] == "accepted"
+    assert Decimal(accepted["sleeve_remaining_usd"]) == Decimal("95")
+
+    client.record.status = "partially_filled"
+    client.record.filled_qty = "0.002"
+    client.record.filled_avg_price = "500"
+    client.record.qty = "0.01"
+    first = paper_status(settings, client=client, now=NOW)
+    assert first["reason"] is None
+    assert first["orders"][0]["broker_status"] == "partial"
+    assert first["orders"][0]["filled_qty"] == "0.002"
+    assert first["orders"][0]["filled_avg_price"] == "500"
+    assert Decimal(first["sleeve_remaining_usd"]) == Decimal("95")
+
+    client.record.filled_qty = "0.004"
+    client.record.filled_avg_price = "501"
+    larger = paper_status(settings, client=client, now=NOW)
+    assert larger["reason"] is None
+    assert larger["orders"][0]["broker_status"] == "partial"
+    assert larger["orders"][0]["filled_qty"] == "0.004"
+    assert larger["orders"][0]["filled_avg_price"] == "501"
+    assert Decimal(larger["sleeve_remaining_usd"]) == Decimal("95")
+
+    client.record.status = "filled"
+    client.record.filled_qty = "0.01"
+    client.record.filled_avg_price = "500.10"
+    filled = paper_status(settings, client=client, now=NOW)
+    assert filled["reason"] is None
+    assert filled["orders"][0]["broker_status"] == "filled"
+    assert filled["orders"][0]["filled_qty"] == "0.01"
+    assert filled["orders"][0]["filled_avg_price"] == "500.10"
+    assert Decimal(filled["sleeve_remaining_usd"]) == Decimal("94.999")
+    assert len(client.submitted) == 1
+
+
+class _StaleOnRecheck:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def latest_quote(self, symbol: str) -> dict[str, object]:
+        self.calls += 1
+        quote = _Quotes(NOW).latest_quote(symbol)
+        if self.calls > 1:
+            quote["market_timestamp"] = (NOW - timedelta(minutes=2)).isoformat()
+        return quote
+
+
+def test_stale_quote_on_the_final_check_does_not_submit(tmp_path: Path) -> None:
+    settings, client = _arm(tmp_path)
+    quotes = _StaleOnRecheck()
+    refused = submit_connectivity_order(
+        settings, confirm=CONNECTIVITY_PHRASE, client=client, quote_client=quotes, now=NOW
+    )
+    assert refused["reason"] == "stale_quote"
+    assert quotes.calls >= 2
+    assert client.submitted == []
+
+
 def test_fill_quantity_may_increase_and_may_not_regress(tmp_path: Path) -> None:
     settings, client = _arm(tmp_path)
     client.record.client_order_id = CONNECTIVITY_CLIENT_ID  # type: ignore[attr-defined]

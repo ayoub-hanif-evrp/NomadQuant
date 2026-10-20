@@ -221,7 +221,12 @@ def preview_connectivity_order(
     if trading is None:
         return _refused("credentials_absent")
     quote = _trusted_quote(settings, "SPY", quote_client, clock)
-    gate = _quote_problem(quote, "SPY", clock)
+    try:
+        market = trading.get_clock()
+    except Exception:  # noqa: BLE001 — clock text can contain secrets
+        market = None
+    observed = clock if now is not None else datetime.now(UTC)
+    gate = _quote_problem(quote, "SPY", observed)
     account = trading.get_account()
     cash = _money(getattr(account, "cash", None))
     equity = _money(getattr(account, "equity", None))
@@ -254,6 +259,10 @@ def preview_connectivity_order(
         "account_buying_power_usd": None if buying_power is None else str(buying_power),
         "buying_power_ignored": True,
         "sleeve_remaining_usd": None if remaining is None else str(remaining),
+        "market_open": market is not None and _clock_problem(market, observed) is None,
+        "market_timestamp": None if market is None else _stamp(getattr(market, "timestamp", None)),
+        "quote_age_seconds": _age_seconds(observed, quote, "market_timestamp"),
+        "quote_receipt_age_seconds": _age_seconds(observed, quote, "retrieved_at"),
         "quote": quote,
         "quote_problem": gate,
         "authorization": _authorization(settings.paper_path, clock),
@@ -303,6 +312,9 @@ def submit_connectivity_order(
     remaining = _sleeve(cash, buying_power, exposure["capital"])["remaining"]
     if CONNECTIVITY_CAP > remaining:
         return _refused("sleeve_exceeded")
+    fresh = _recheck_before_send(settings, client, "SPY", quote_client, now)
+    if fresh is not None:
+        return _refused(fresh)
     _insert_order(
         settings.paper_path,
         client_order_id=CONNECTIVITY_CLIENT_ID,
@@ -377,6 +389,9 @@ def submit_strategy_paper_order(
         remaining = _sleeve(account_cash, buying_power, exposure["capital"])["remaining"]
         if notional > remaining:
             return _refused("sleeve_exceeded")
+    fresh = _recheck_before_send(settings, client, symbol, quote_client, now)
+    if fresh is not None:
+        return _refused(fresh)
     _insert_order(
         settings.paper_path,
         client_order_id=client_order_id,
@@ -435,6 +450,28 @@ def run_automatic_paper_pilot(
         "schedule_installed": False,
         "client_used": client is not None,
     }
+
+
+def _recheck_before_send(
+    settings: Settings,
+    client: Any,
+    symbol: str,
+    quote_client: Any | None,
+    now: datetime | None,
+) -> str | None:
+    """Read the clock and quote again at the last moment before an insert."""
+    moment = datetime.now(UTC) if now is None else now
+    quote = _trusted_quote(settings, symbol, quote_client, moment)
+    return _pretrade(client, symbol, quote, moment)
+
+
+def _age_seconds(now: datetime, quote: dict[str, Any] | None, field: str) -> str | None:
+    if not quote:
+        return None
+    stamped = _as_datetime(quote.get(field))
+    if stamped is None:
+        return None
+    return str((now - stamped).total_seconds())
 
 
 def _pretrade(client: Any, symbol: str, quote: dict[str, Any] | None, now: datetime) -> str | None:
@@ -976,12 +1013,10 @@ def _reconcile(settings: Settings, client: Any, orders: list[dict[str, Any]]) ->
         result = _confirm_broker_record(settings, client, str(row["client_order_id"]))
         if result.get("reason") == "ledger_disagreement":
             disagreed = True
-        elif (
-            before
-            and result.get("filled_qty")
-            and Decimal(str(before)) != Decimal(str(result["filled_qty"]))
-        ):
-            disagreed = True
+        elif before and result.get("filled_qty"):
+            later = Decimal(str(result["filled_qty"]))
+            if later < Decimal(str(before)):
+                disagreed = True
     return disagreed
 
 
@@ -1257,7 +1292,6 @@ class _AlpacaQuoteClient:
     def latest_quote(self, symbol: str) -> dict[str, Any]:
         import urllib.request
 
-        retrieved = datetime.now(UTC)
         key = self._settings.alpaca_api_key
         secret = self._settings.alpaca_api_secret
         if key is None or secret is None:
@@ -1272,7 +1306,9 @@ class _AlpacaQuoteClient:
         )
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
         with opener.open(request, timeout=8) as response:
-            payload = json.loads(response.read(100_000))
+            body = response.read(100_000)
+        retrieved = datetime.now(UTC)
+        payload = json.loads(body)
         quote = payload.get("quote") if isinstance(payload, dict) else None
         if not isinstance(quote, dict):
             return {}
