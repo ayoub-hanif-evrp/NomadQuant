@@ -717,6 +717,43 @@ def test_fill_quantity_may_increase_and_may_not_regress(tmp_path: Path) -> None:
     assert regressed["reason"] == "ledger_disagreement"
 
 
+def test_alpaca_enum_fill_status_updates_the_sleeve(tmp_path: Path) -> None:
+    settings, client = _arm(tmp_path)
+    submit_connectivity_order(
+        settings, confirm=CONNECTIVITY_PHRASE, client=client, quote_client=_Quotes(NOW), now=NOW
+    )
+    client.record.status = "OrderStatus.FILLED"
+    client.record.filled_qty = "0.006487478"
+    client.record.filled_avg_price = "769.174"
+    report = paper_status(settings, client=client, now=NOW)
+    assert report["reason"] is None
+    assert report["orders"][0]["broker_status"] == "filled"
+    assert report["orders"][0]["filled_qty"] == "0.006487478"
+    assert report["orders"][0]["filled_avg_price"] == "769.174"
+    assert Decimal(report["sleeve_remaining_usd"]) == Decimal("100") - (
+        Decimal("0.006487478") * Decimal("769.174")
+    )
+
+
+def test_quote_freshness_uses_the_receipt_clock(tmp_path: Path) -> None:
+    from nomadquant.broker.paper_pilot import _quote_problem
+
+    arrived = NOW + timedelta(seconds=3)
+    quote = _Quotes(arrived).latest_quote("SPY")
+    assert _quote_problem(quote, "SPY", NOW) == "future_quote"
+    assert _quote_problem(quote, "SPY", arrived) is None
+    settings, client = _arm(tmp_path)
+    refused = submit_connectivity_order(
+        settings,
+        confirm=CONNECTIVITY_PHRASE,
+        client=client,
+        quote_client=_Quotes(arrived),
+        now=NOW,
+    )
+    assert refused["reason"] == "future_quote"
+    assert client.submitted == []
+
+
 def test_future_and_inconsistent_quotes_are_rejected(tmp_path: Path) -> None:
     settings, client = _arm(tmp_path)
     future = _Quotes(NOW, market_timestamp=(NOW + timedelta(minutes=5)).isoformat())

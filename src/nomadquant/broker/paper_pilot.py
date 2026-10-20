@@ -295,7 +295,7 @@ def submit_connectivity_order(
     if recovered is not None:
         return recovered
     quote = _trusted_quote(settings, "SPY", quote_client, clock)
-    gate = _pretrade(client, "SPY", quote, clock)
+    gate = _pretrade(client, "SPY", quote, _at_receipt(now))
     if gate is not None:
         return _refused(gate)
     listed = _listed_orders(client)
@@ -345,6 +345,7 @@ def submit_strategy_paper_order(
     if settings.alpaca_base_url != PAPER_API_URL:
         return _refused("non_paper_url")
     quote = _trusted_quote(settings, STRATEGY_SYMBOL, quote_client, clock)
+    received = _at_receipt(now)
     decision, problem = _registered_decision(settings, decision_id, quote, clock)
     if problem is not None or decision is None:
         return _refused(problem or "untrusted_strategy_approval")
@@ -359,7 +360,7 @@ def submit_strategy_paper_order(
     recovered = _recover_existing(settings, client, client_order_id, existing)
     if recovered is not None:
         return recovered
-    gate = _pretrade(client, symbol, quote, clock)
+    gate = _pretrade(client, symbol, quote, received)
     if gate is not None:
         return _refused(gate)
     listed = _listed_orders(client)
@@ -460,9 +461,15 @@ def _recheck_before_send(
     now: datetime | None,
 ) -> str | None:
     """Read the clock and quote again at the last moment before an insert."""
-    moment = datetime.now(UTC) if now is None else now
-    quote = _trusted_quote(settings, symbol, quote_client, moment)
-    return _pretrade(client, symbol, quote, moment)
+    quote = _trusted_quote(
+        settings, symbol, quote_client, now if now is not None else datetime.now(UTC)
+    )
+    return _pretrade(client, symbol, quote, _at_receipt(now))
+
+
+def _at_receipt(now: datetime | None) -> datetime:
+    """Judge a live quote after it has arrived. Tests keep the clock they passed in."""
+    return now if now is not None else datetime.now(UTC)
 
 
 def _age_seconds(now: datetime, quote: dict[str, Any] | None, field: str) -> str | None:
@@ -838,7 +845,7 @@ def _lookup(client: Any, client_order_id: str) -> tuple[str, Any]:
 
 
 def _map_status(status: str) -> str:
-    normalized = status.lower()
+    normalized = status.lower().rsplit(".", 1)[-1]
     if normalized == "partially_filled":
         return "partial"
     if normalized == "filled":
