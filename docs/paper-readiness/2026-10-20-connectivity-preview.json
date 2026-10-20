@@ -1,0 +1,32 @@
+{
+  "submitted": false,
+  "label": "CONNECTIVITY TEST",
+  "counts_as_strategy_pnl": false,
+  "client_order_id": "nq-connect-spy-buy-5",
+  "symbol": "SPY",
+  "side": "buy",
+  "order_type": "market",
+  "time_in_force": "day",
+  "notional_usd": "5",
+  "estimated_qty": "0.006496",
+  "account_cash_usd": "100000",
+  "account_equity_usd": "100000",
+  "account_buying_power_usd": "400000",
+  "buying_power_ignored": true,
+  "sleeve_remaining_usd": "100",
+  "quote": {
+    "symbol": "SPY",
+    "feed": "iex",
+    "bid": "769.53",
+    "ask": "769.64",
+    "market_timestamp": "2026-10-20T18:08:33.646581629+00:00",
+    "retrieved_at": "2026-10-20T18:08:32.131531+00:00",
+    "source": "alpaca_snapshot_latest_quote"
+  },
+  "quote_problem": null,
+  "authorization": {
+    "enabled": false,
+    "reason": "paper_orders_disabled"
+  },
+  "ready_to_submit": false
+}

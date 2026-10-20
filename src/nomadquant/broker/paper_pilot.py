@@ -9,16 +9,23 @@ from __future__ import annotations
 import json
 import sqlite3
 from datetime import UTC, date, datetime, timedelta
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_DOWN, Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
 from nomadquant.config import PAPER_API_URL, Settings
+from nomadquant.marketdata.availability import modeled_available_at
 from nomadquant.marketdata.calendar import is_early_close, next_session, sessions_between
-from nomadquant.risk.policy import ALLOWED_SYMBOLS, POLICY_VERSION, RiskPolicy
-from nomadquant.shadow.cycle import STRATEGY_ID
+from nomadquant.marketdata.store import MarketStore
+from nomadquant.research.signals import momentum_return, target_from_momentum
+from nomadquant.risk.engine import RiskEngine
+from nomadquant.risk.ledger import InternalLedger
+from nomadquant.risk.policy import POLICY_VERSION, RiskPolicy
+from nomadquant.risk.schemas import AccountMetrics, Proposal
+from nomadquant.shadow.cycle import LOOKBACK, SKIP, STRATEGY_ID
 from nomadquant.shadow.observed_quote import OBSERVED_QUOTE_MAX_AGE
+from nomadquant.shadow.store import ShadowStore
 
 LABEL = "ALPACA PAPER TRADING — FAKE MONEY"
 CONNECTIVITY_LABEL = "CONNECTIVITY TEST"
@@ -30,6 +37,9 @@ KILL_PHRASE = "DISABLE_ALPACA_PAPER_ORDERS"
 CONNECTIVITY_PHRASE = "SUBMIT_ONE_FIVE_DOLLAR_PAPER_CONNECTIVITY_ORDER"
 AUTOMATIC_PHRASE = "ENABLE_AUTOMATIC_PAPER_PILOT"
 CONNECTIVITY_CLIENT_ID = "nq-connect-spy-buy-5"
+TRUSTED_QUOTE_SOURCE = "alpaca_snapshot_latest_quote"
+STRATEGY_SYMBOL = "SPY"
+_PAGE_LIMIT = 500
 _NY = ZoneInfo("America/New_York")
 _OPEN = frozenset(
     {
@@ -198,12 +208,65 @@ def kill_paper_orders(
     return {"enabled": False, "killed": True, "automatic_pilot": False}
 
 
+def preview_connectivity_order(
+    settings: Settings,
+    *,
+    client: Any | None = None,
+    quote_client: Any | None = None,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Read the account and quote for the $5 test. Does not submit."""
+    clock = now or datetime.now(UTC)
+    trading = client if client is not None else _client(settings)
+    if trading is None:
+        return _refused("credentials_absent")
+    quote = _trusted_quote(settings, "SPY", quote_client, clock)
+    gate = _quote_problem(quote, "SPY", clock)
+    account = trading.get_account()
+    cash = _money(getattr(account, "cash", None))
+    equity = _money(getattr(account, "equity", None))
+    buying_power = _money(getattr(account, "buying_power", None))
+    ask = None if quote is None else _money(quote.get("ask"))
+    estimate = None
+    if ask is not None and ask > 0:
+        estimate = (CONNECTIVITY_CAP / ask).quantize(Decimal("0.000001"), rounding=ROUND_DOWN)
+    try:
+        orders = _orders(settings.paper_path)
+    except sqlite3.DatabaseError:
+        orders = []
+    used = _exposure(orders)["capital"]
+    remaining = None
+    if cash is not None and buying_power is not None:
+        remaining = _sleeve(cash, buying_power, used)["remaining"]
+    return {
+        "submitted": False,
+        "label": CONNECTIVITY_LABEL,
+        "counts_as_strategy_pnl": False,
+        "client_order_id": CONNECTIVITY_CLIENT_ID,
+        "symbol": "SPY",
+        "side": "buy",
+        "order_type": "market",
+        "time_in_force": "day",
+        "notional_usd": "5",
+        "estimated_qty": None if estimate is None else format(estimate, "f"),
+        "account_cash_usd": None if cash is None else str(cash),
+        "account_equity_usd": None if equity is None else str(equity),
+        "account_buying_power_usd": None if buying_power is None else str(buying_power),
+        "buying_power_ignored": True,
+        "sleeve_remaining_usd": None if remaining is None else str(remaining),
+        "quote": quote,
+        "quote_problem": gate,
+        "authorization": _authorization(settings.paper_path, clock),
+        "ready_to_submit": False,
+    }
+
+
 def submit_connectivity_order(
     settings: Settings,
     *,
     confirm: str,
     client: Any,
-    quote: dict[str, Any] | None = None,
+    quote_client: Any | None = None,
     now: datetime | None = None,
 ) -> dict[str, Any]:
     """One SPY paper buy of $5, labeled as a connectivity test."""
@@ -219,8 +282,10 @@ def submit_connectivity_order(
         existing = _find(settings.paper_path, CONNECTIVITY_CLIENT_ID)
     except sqlite3.DatabaseError:
         return _refused("ledger_unreadable")
-    if existing is not None:
-        return _confirm_broker_record(settings, client, CONNECTIVITY_CLIENT_ID)
+    recovered = _recover_existing(settings, client, CONNECTIVITY_CLIENT_ID, existing)
+    if recovered is not None:
+        return recovered
+    quote = _trusted_quote(settings, "SPY", quote_client, clock)
     gate = _pretrade(client, "SPY", quote, clock)
     if gate is not None:
         return _refused(gate)
@@ -255,31 +320,33 @@ def submit_connectivity_order(
 def submit_strategy_paper_order(
     settings: Settings,
     *,
-    evidence: dict[str, Any] | None,
+    decision_id: str,
     client: Any,
-    quote: dict[str, Any] | None = None,
+    quote_client: Any | None = None,
     now: datetime | None = None,
 ) -> dict[str, Any]:
-    """Submit one registered-strategy paper order. A bare APPROVE is not evidence."""
+    """Submit one registered-strategy paper order after an independent recompute."""
     clock = now or datetime.now(UTC)
     auth = _authorization(settings.paper_path, clock)
     if not auth["enabled"]:
         return _refused(str(auth["reason"]))
-    problem = _validate_strategy_evidence(evidence or {}, clock)
-    if problem is not None:
-        return _refused(problem)
-    assert evidence is not None
-    symbol = str(evidence["symbol"])
-    side = str(evidence["side"])
-    notional = Decimal(str(evidence["notional_usd"]))
-    decision_id = str(evidence["decision_id"])
+    if settings.alpaca_base_url != PAPER_API_URL:
+        return _refused("non_paper_url")
+    quote = _trusted_quote(settings, STRATEGY_SYMBOL, quote_client, clock)
+    decision, problem = _registered_decision(settings, decision_id, quote, clock)
+    if problem is not None or decision is None:
+        return _refused(problem or "untrusted_strategy_approval")
+    symbol = str(decision["symbol"])
+    side = str(decision["side"])
+    notional = Decimal(str(decision["notional"]))
     client_order_id = "nq-strategy-" + decision_id.replace(":", "-")
     try:
         existing = _find(settings.paper_path, client_order_id)
     except sqlite3.DatabaseError:
         return _refused("ledger_unreadable")
-    if existing is not None:
-        return _confirm_broker_record(settings, client, client_order_id)
+    recovered = _recover_existing(settings, client, client_order_id, existing)
+    if recovered is not None:
+        return recovered
     gate = _pretrade(client, symbol, quote, clock)
     if gate is not None:
         return _refused(gate)
@@ -288,15 +355,15 @@ def submit_strategy_paper_order(
         return _refused("broker_orders_unreadable")
     if _untracked(_orders(settings.paper_path), listed):
         return _refused("untracked_broker_order")
-    if settings.alpaca_base_url != PAPER_API_URL:
-        return _refused("non_paper_url")
     account_cash = _money(getattr(client.get_account(), "cash", None))
     buying_power = _money(getattr(client.get_account(), "buying_power", None))
     if account_cash is None or buying_power is None:
         return _refused("account_amounts_unreadable")
     exposure = _exposure(_orders(settings.paper_path))
+    if quote is None:
+        return _refused("missing_quote")
     if side == "sell":
-        bid = _money((quote or {}).get("bid"))
+        bid = _money(quote.get("bid"))
         if bid is None or bid <= 0:
             return _refused("missing_quote")
         owned = exposure["qty"].get(symbol, Decimal("0"))
@@ -405,6 +472,13 @@ def _clock_problem(market: Any, now: datetime) -> str | None:
 def _quote_problem(quote: dict[str, Any] | None, symbol: str, now: datetime) -> str | None:
     if not quote:
         return "missing_quote"
+    source = str(quote.get("source") or "")
+    if not source:
+        return "missing_quote"
+    if source != TRUSTED_QUOTE_SOURCE:
+        return "untrusted_quote"
+    if str(quote.get("feed") or "") not in {"iex", "sip"}:
+        return "untrusted_quote"
     if str(quote.get("symbol") or "") != symbol:
         return "missing_quote"
     bid = _money(quote.get("bid"))
@@ -414,68 +488,183 @@ def _quote_problem(quote: dict[str, Any] | None, symbol: str, now: datetime) -> 
     market_time = _as_datetime(quote.get("market_timestamp"))
     retrieved = _as_datetime(quote.get("retrieved_at"))
     if market_time is None or retrieved is None:
-        return "stale_quote"
-    if retrieved > now + timedelta(seconds=2) or now - retrieved > OBSERVED_QUOTE_MAX_AGE:
-        return "stale_quote"
-    if now - market_time > OBSERVED_QUOTE_MAX_AGE:
+        return "inconsistent_quote"
+    if market_time > now + timedelta(seconds=2) or retrieved > now + timedelta(seconds=2):
+        return "future_quote"
+    if retrieved + timedelta(seconds=2) < market_time:
+        return "inconsistent_quote"
+    if now - retrieved > OBSERVED_QUOTE_MAX_AGE or now - market_time > OBSERVED_QUOTE_MAX_AGE:
         return "stale_quote"
     if market_time.astimezone(_NY).date() != now.astimezone(_NY).date():
         return "stale_quote"
     return None
 
 
-def _validate_strategy_evidence(evidence: dict[str, Any], now: datetime) -> str | None:
-    required = (
-        "strategy_id",
-        "signal_session",
-        "execution_session",
-        "decision_id",
-        "symbol",
-        "side",
-        "notional_usd",
-        "risk_verdict",
-        "policy_hash",
-        "policy_version",
-    )
-    if any(evidence.get(key) in (None, "") for key in required):
-        return "untrusted_strategy_approval"
-    if evidence.get("strategy_id") != STRATEGY_ID or evidence.get("risk_verdict") != "APPROVE":
-        return "untrusted_strategy_approval"
-    policy = RiskPolicy()
-    if (
-        evidence.get("policy_hash") != policy.policy_hash()
-        or evidence.get("policy_version") != POLICY_VERSION
-    ):
-        return "untrusted_strategy_approval"
-    symbol = str(evidence.get("symbol"))
-    side = str(evidence.get("side"))
-    if symbol not in ALLOWED_SYMBOLS or side not in {"buy", "sell"}:
-        return "symbol_or_side_refused"
-    expected = f"{STRATEGY_ID}:{evidence.get('signal_session')}:{symbol}:{side}"
-    if evidence.get("decision_id") != expected:
-        return "untrusted_strategy_approval"
+def _trusted_quote(
+    settings: Settings, symbol: str, quote_client: Any | None, now: datetime
+) -> dict[str, Any] | None:
+    source = quote_client if quote_client is not None else _AlpacaQuoteClient(settings)
     try:
-        signal = date.fromisoformat(str(evidence["signal_session"]))
-        execution = date.fromisoformat(str(evidence["execution_session"]))
-        notional = Decimal(str(evidence["notional_usd"]))
-    except (ValueError, InvalidOperation):
-        return "untrusted_strategy_approval"
-    if notional <= 0 or notional > MAX_STRATEGY_NOTIONAL:
-        return "risk_or_size_refused"
-    if not _eligible_sessions(signal, execution, now.astimezone(_NY).date()):
-        return "ineligible_session"
-    return None
+        raw = source.latest_quote(symbol)
+    except Exception:  # noqa: BLE001 — quote text can contain secrets
+        return None
+    if not isinstance(raw, dict):
+        return None
+    raw.setdefault("retrieved_at", now.isoformat())
+    return raw
 
 
-def _eligible_sessions(signal: date, execution: date, today: date) -> bool:
-    if execution != today:
-        return False
+def _registered_decision(
+    settings: Settings,
+    decision_id: str,
+    quote: dict[str, Any] | None,
+    now: datetime,
+) -> tuple[dict[str, Any] | None, str | None]:
+    parsed = decision_id.split(":")
+    if len(parsed) != 4:
+        return None, "untrusted_strategy_approval"
+    strategy_id, signal_text, symbol, side = parsed
+    if strategy_id != STRATEGY_ID or symbol != STRATEGY_SYMBOL:
+        return None, "fabricated_signal"
+    if side not in {"buy", "sell"}:
+        return None, "symbol_or_side_refused"
+    try:
+        signal = date.fromisoformat(signal_text)
+    except ValueError:
+        return None, "untrusted_strategy_approval"
+    if signal > now.astimezone(_NY).date() or modeled_available_at(signal) > now:
+        return None, "future_signal"
+    execution = next_session(signal)
+    if execution != now.astimezone(_NY).date():
+        return None, "ineligible_session"
     month = sessions_between(
         date(signal.year, signal.month, 1), date(signal.year, signal.month, 10)
     )
     if not month or signal != month[0]:
-        return False
-    return execution == signal or execution == next_session(signal)
+        return None, "ineligible_session"
+    stored = _stored_intent(settings, signal)
+    if stored is None:
+        return None, "untrusted_strategy_approval"
+    if (
+        str(stored.get("strategy_id")) != STRATEGY_ID
+        or str(stored.get("symbol")).upper() != STRATEGY_SYMBOL
+    ):
+        return None, "fabricated_signal"
+    if str(stored.get("fill_session") or "") != execution.isoformat():
+        return None, "ineligible_session"
+    if str(stored.get("side") or "") != side:
+        return None, "fabricated_signal"
+    recomputed = _recompute_side(settings, signal)
+    if recomputed is None:
+        return None, "signal_not_recomputed"
+    if recomputed != side:
+        return None, "fabricated_signal"
+    notional, risk_problem = _recompute_risk(decision_id, side, quote, now)
+    if risk_problem is not None or notional is None:
+        return None, risk_problem or "risk_not_approved"
+    return {
+        "symbol": STRATEGY_SYMBOL,
+        "side": side,
+        "notional": notional,
+        "decision_id": decision_id,
+    }, None
+
+
+def _stored_intent(settings: Settings, signal: date) -> dict[str, Any] | None:
+    try:
+        store = ShadowStore.open_readonly(settings.shadow_path)
+    except Exception:  # noqa: BLE001 — a bad shadow file is not a paper decision
+        return None
+    if store is None:
+        return None
+    try:
+        rows = store.intents_for_signal(signal.isoformat())
+    except Exception:  # noqa: BLE001
+        return None
+    chosen = [
+        row
+        for row in rows
+        if str(row.get("strategy_id")) == STRATEGY_ID
+        and str(row.get("symbol")).upper() == STRATEGY_SYMBOL
+    ]
+    if not chosen:
+        return None
+    row = chosen[-1]
+    try:
+        evidence = json.loads(str(row.get("evidence_json") or "{}"))
+    except json.JSONDecodeError:
+        evidence = {}
+    if not isinstance(evidence, dict):
+        evidence = {}
+    return {**row, "side": str(evidence.get("side") or "")}
+
+
+def _recompute_side(settings: Settings, signal: date) -> str | None:
+    market = MarketStore.open_readonly(settings.market_data_path)
+    if market is None:
+        return None
+    try:
+        sessions = sorted(market.sessions(STRATEGY_SYMBOL, "sip"))
+        if not sessions:
+            return None
+        rows = market.session_ohlc(STRATEGY_SYMBOL, "sip", sessions[0], sessions[-1])
+    except Exception:  # noqa: BLE001
+        return None
+    closes = {row[0]: row[4] for row in rows}
+    momentum = momentum_return(closes, sessions, signal, LOOKBACK, SKIP)
+    if momentum is None:
+        return None
+    target = target_from_momentum(momentum)
+    return "buy" if target > 0 else "sell"
+
+
+def _recompute_risk(
+    decision_id: str, side: str, quote: dict[str, Any] | None, now: datetime
+) -> tuple[Decimal | None, str | None]:
+    if _quote_problem(quote, STRATEGY_SYMBOL, now) is not None or quote is None:
+        return None, "missing_quote"
+    ask = _money(quote.get("ask"))
+    bid = _money(quote.get("bid"))
+    touch = ask if side == "buy" else bid
+    if touch is None or touch <= 0:
+        return None, "missing_quote"
+    notional = min(MAX_STRATEGY_NOTIONAL, Decimal("40"))
+    quantity = (notional / touch).quantize(Decimal("0.000001"), rounding=ROUND_DOWN)
+    if quantity <= 0:
+        return None, "risk_not_approved"
+    proposal = Proposal(
+        id=decision_id,
+        source=STRATEGY_ID,
+        symbol=STRATEGY_SYMBOL,
+        side=side,  # type: ignore[arg-type]
+        quantity=quantity,
+        as_of=now,
+    )
+    market_time = _as_datetime(quote.get("market_timestamp"))
+    retrieved = _as_datetime(quote.get("retrieved_at"))
+    prices = {
+        STRATEGY_SYMBOL: {
+            "price": touch,
+            "as_of": market_time,
+            "feed": quote.get("feed"),
+            "first_retrieved_at": retrieved,
+            "bar_kind": "quote",
+        }
+    }
+    ledger = InternalLedger(
+        cash_usd=Decimal("100"), holdings={} if side == "buy" else {STRATEGY_SYMBOL: quantity}
+    )
+    account = AccountMetrics(
+        realized_pnl_today_usd=Decimal("0"),
+        equity_usd=Decimal("100"),
+        peak_equity_usd=Decimal("100"),
+    )
+    result = RiskEngine(RiskPolicy()).evaluate(
+        proposal, ledger, prices, account=account, now=now, clock="prospective"
+    )
+    if result.verdict != "APPROVE" or result.policy_version != POLICY_VERSION:
+        return None, "risk_not_approved"
+    return quantity * touch, None
 
 
 def _send(
@@ -517,10 +706,9 @@ def _confirm_broker_record(settings: Settings, client: Any, client_order_id: str
     filled_qty = _money(getattr(found, "filled_qty", None))
     order_qty = _money(getattr(found, "qty", None))
     price = _money(getattr(found, "filled_avg_price", None))
-    if local and local.get("filled_qty") and filled_qty is not None:
-        if Decimal(str(local["filled_qty"])) != filled_qty:
-            _update(settings.paper_path, client_order_id, broker_status="unknown")
-            return _refused("ledger_disagreement")
+    if _fill_conflict(local, mapped, filled_qty, price):
+        _update(settings.paper_path, client_order_id, broker_status="unknown")
+        return _refused("ledger_disagreement")
     remaining = None if order_qty is None or filled_qty is None else order_qty - filled_qty
     _update(
         settings.paper_path,
@@ -542,6 +730,74 @@ def _confirm_broker_record(settings: Settings, client: Any, client_order_id: str
         "counts_as_strategy_pnl": bool(local and local.get("counts_as_strategy_pnl")),
         "described_as_filled": mapped == "filled",
     }
+
+
+def _fill_conflict(
+    local: dict[str, Any] | None,
+    new_status: str,
+    new_qty: Decimal | None,
+    new_price: Decimal | None,
+) -> bool:
+    if local is None:
+        return False
+    old_qty = _money(local.get("filled_qty")) or Decimal("0")
+    old_price = _money(local.get("filled_avg_price"))
+    qty = new_qty or Decimal("0")
+    if qty < old_qty:
+        return True
+    old_status = str(local.get("broker_status") or "")
+    if old_status == "filled" and new_status != "filled":
+        return True
+    if qty == old_qty and qty > 0 and old_price is not None and new_price not in {None, old_price}:
+        return True
+    return False
+
+
+def _recover_existing(
+    settings: Settings,
+    client: Any,
+    client_order_id: str,
+    local: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if local is not None:
+        return _confirm_broker_record(settings, client, client_order_id)
+    state, found = _lookup(client, client_order_id)
+    if state == "unknown":
+        return _refused("broker_record_not_confirmed")
+    if state != "found" or found is None:
+        return None
+    side = str(getattr(found, "side", "buy")).lower()
+    side = "sell" if "sell" in side else "buy"
+    notional = _money(getattr(found, "notional", None)) or Decimal("0")
+    symbol = str(getattr(found, "symbol", STRATEGY_SYMBOL) or STRATEGY_SYMBOL)
+    _insert_order(
+        settings.paper_path,
+        client_order_id=client_order_id,
+        purpose="connectivity" if client_order_id == CONNECTIVITY_CLIENT_ID else "strategy",
+        symbol=symbol,
+        side=side,
+        notional=notional,
+        created_at=datetime.now(UTC).isoformat(),
+        decision_id=client_order_id,
+        counts_as_strategy_pnl=False,
+    )
+    return _confirm_broker_record(settings, client, client_order_id)
+
+
+def _lookup(client: Any, client_order_id: str) -> tuple[str, Any]:
+    try:
+        found = client.get_order_by_client_id(client_order_id)
+    except Exception as exc:  # noqa: BLE001
+        text = str(exc).lower()
+        if "absent" in text or "not found" in text or "404" in text:
+            return "absent", None
+        return "unknown", None
+    if found is None:
+        return "absent", None
+    found_id = str(getattr(found, "client_order_id", "") or "")
+    if found_id != client_order_id:
+        return "absent", None
+    return "found", found
 
 
 def _map_status(status: str) -> str:
@@ -571,9 +827,9 @@ def _exposure(orders: list[dict[str, Any]]) -> dict[str, Any]:
                 qty[symbol] = qty.get(symbol, Decimal("0")) + filled_qty
         elif (
             side == "sell"
-            and status in {"filled", "partial"}
             and filled_qty > 0
             and price is not None
+            and (status in {"filled", "partial"} or status in _RELEASED)
         ):
             capital -= filled_qty * price
             qty[symbol] = qty.get(symbol, Decimal("0")) - filled_qty
@@ -621,18 +877,56 @@ def _sleeve(cash: Decimal, buying_power: Decimal, used: Decimal) -> dict[str, An
     return {"blocked": False, "remaining": remaining, "reason": None}
 
 
-def _order_filter() -> Any:
+def _order_page(until: datetime | None) -> Any:
+    from alpaca.common.enums import Sort
     from alpaca.trading.enums import QueryOrderStatus
     from alpaca.trading.requests import GetOrdersRequest
 
-    return GetOrdersRequest(status=QueryOrderStatus.ALL, limit=50)
+    return GetOrdersRequest(
+        status=QueryOrderStatus.ALL,
+        limit=_PAGE_LIMIT,
+        direction=Sort.DESC,
+        until=until,
+    )
 
 
 def _listed_orders(client: Any) -> list[Any] | None:
-    try:
-        return list(client.get_orders(_order_filter()))
-    except Exception:  # noqa: BLE001 — broker text can contain secrets
+    found: list[Any] = []
+    seen: set[str] = set()
+    until: datetime | None = None
+    for _ in range(100):
+        try:
+            page = list(client.get_orders(_order_page(until)))
+        except Exception:  # noqa: BLE001 — broker text can contain secrets
+            return None
+        if not page:
+            break
+        oldest: datetime | None = None
+        added = 0
+        for order in page:
+            key = str(getattr(order, "id", "") or getattr(order, "client_order_id", ""))
+            stamp = _as_datetime(getattr(order, "submitted_at", None))
+            if stamp is not None and (oldest is None or stamp < oldest):
+                oldest = stamp
+            if key and key not in seen:
+                seen.add(key)
+                found.append(order)
+                added += 1
+        if len(page) < _PAGE_LIMIT:
+            break
+        if oldest is None or oldest == until or added == 0:
+            return None
+        until = oldest
+    else:
         return None
+    state, probed = _lookup(client, CONNECTIVITY_CLIENT_ID)
+    if state == "unknown":
+        return None
+    if state == "found" and probed is not None:
+        key = str(getattr(probed, "id", "") or CONNECTIVITY_CLIENT_ID)
+        if key not in seen:
+            found.append(probed)
+    return found
 
 
 def _untracked(local: list[dict[str, Any]], broker: list[Any]) -> bool:
@@ -952,6 +1246,46 @@ def _refused(reason: str) -> dict[str, Any]:
         "broker_orders": False,
         "described_as_filled": False,
     }
+
+
+class _AlpacaQuoteClient:
+    """Read one latest quote from Alpaca's market-data host. Never submits."""
+
+    def __init__(self, settings: Settings) -> None:
+        self._settings = settings
+
+    def latest_quote(self, symbol: str) -> dict[str, Any]:
+        import urllib.request
+
+        retrieved = datetime.now(UTC)
+        key = self._settings.alpaca_api_key
+        secret = self._settings.alpaca_api_secret
+        if key is None or secret is None:
+            return {}
+        request = urllib.request.Request(  # noqa: S310 - fixed https market-data host
+            f"https://data.alpaca.markets/v2/stocks/{symbol.upper()}/quotes/latest?feed=iex",
+            headers={
+                "APCA-API-KEY-ID": key.get_secret_value(),
+                "APCA-API-SECRET-KEY": secret.get_secret_value(),
+                "Accept": "application/json",
+            },
+        )
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with opener.open(request, timeout=8) as response:
+            payload = json.loads(response.read(100_000))
+        quote = payload.get("quote") if isinstance(payload, dict) else None
+        if not isinstance(quote, dict):
+            return {}
+        stamp = str(quote.get("t") or "").replace("Z", "+00:00")
+        return {
+            "symbol": symbol.upper(),
+            "feed": "iex",
+            "bid": str(quote.get("bp")),
+            "ask": str(quote.get("ap")),
+            "market_timestamp": stamp,
+            "retrieved_at": retrieved.isoformat(),
+            "source": TRUSTED_QUOTE_SOURCE,
+        }
 
 
 def redact(report: dict[str, Any]) -> str:
