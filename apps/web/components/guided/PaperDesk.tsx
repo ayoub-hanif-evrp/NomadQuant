@@ -51,6 +51,53 @@ export function PaperDesk() {
         <p>This computer must be on for a future local schedule. No trading task is installed.</p>
         <p className="mt-2 text-[var(--warn)]">{data?.first_order_authorization}</p>
       </article>
+      <section className="grid gap-3 lg:grid-cols-2">
+        <article className="panel p-4 text-sm">
+          <p className="kicker">Portfolio truth</p>
+          <p className="mt-2">
+            Internal sleeve {money(data?.sleeve_usd)}. Remaining {money(data?.sleeve_remaining_usd)}. Broker equity{" "}
+            {money(data?.account_equity_usd)} is a different number and is not the strategy budget.
+          </p>
+          <p>Broker cash {money(data?.account_cash_usd)}. Buying power is ignored above the sleeve.</p>
+          <p>
+            Valuation time: {data?.market_timestamp ?? "not reported"}. A missing quote is not a price of zero.
+          </p>
+          <p>Readiness: {data?.blocked ? `blocked (${data.reason ?? "unspecified"})` : "status readable"}.</p>
+        </article>
+        <article className="panel p-4 text-sm">
+          <p className="kicker">System readiness</p>
+          <p className="mt-2">
+            Paper API {data?.connected === undefined ? "…" : data.connected ? "connected" : "disconnected"}. Daily
+            authorization {pilot?.authorization?.enabled ? "on" : "off"}. Kill switch{" "}
+            {pilot?.emergency_stop ? "engaged" : "not the current block"}.
+          </p>
+          <p>Schedule installed: {flag(pilot?.schedule_installed)}. This computer must be on for any later local run.</p>
+          <p>
+            Orders are unavailable because:{" "}
+            {pilot?.orders_blocked_reasons?.join(", ") || (daily.isLoading ? "…" : "not reported")}
+          </p>
+          {daily.isError ? <p className="text-[var(--err)]">Daily status could not be read.</p> : null}
+        </article>
+        <article className="panel p-4 text-sm">
+          <p className="kicker">Execution audit</p>
+          <p className="mt-2">
+            This list is the local paper ledger. Accepted is not filled. This page does not reconcile or submit.
+          </p>
+          <p>Latest decision {pilot?.latest_decision?.action ?? "none"} is not itself a broker acknowledgement.</p>
+        </article>
+        <article className="panel p-4 text-sm">
+          <p className="kicker">Strategy validation and data quality</p>
+          <p className="mt-2">
+            Registered research rules:{" "}
+            {pilot?.strategies?.map((item) => item.strategy_id).join(", ") || "not loaded"}. Their historical results
+            are not Alpaca profit and are not shown here as an equity curve.
+          </p>
+          <p>
+            SPY and QQQ share the equity market. A second ticker is not treated as diversification unless their
+            measured correlation is below the desk limit. Feed gaps and corporate actions are not invented on this page.
+          </p>
+        </article>
+      </section>
       <article className="panel p-4 text-sm">
         <p className="kicker">NomadQuant paper orders</p>
         {data?.orders?.length ? (

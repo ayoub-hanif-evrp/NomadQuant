@@ -14,17 +14,6 @@ from nomadquant.daily.engine import candidates
 from nomadquant.daily.indicators import reversal_snapshot, trend_snapshot
 from nomadquant.daily.registry import UNIVERSE, public_registry
 
-FORBIDDEN_TOOLS = frozenset(
-    {
-        "submit_order",
-        "cancel_order",
-        "replace_order",
-        "withdraw",
-        "close_position",
-        "get_account",
-    }
-)
-
 
 class MarketContext:
     """In-memory observations already filtered to one decision time."""

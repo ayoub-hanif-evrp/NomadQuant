@@ -2395,6 +2395,7 @@ export type DailyPilotStatus = {
   email?: { status?: string; sent?: boolean };
   schedule_installed?: boolean;
   emergency_stop?: boolean;
+  orders_blocked_reasons?: string[];
   strategies?: Array<{ strategy_id: string; name: string }>;
   tool_calls?: Array<{ tool: string; status: string }>;
 };

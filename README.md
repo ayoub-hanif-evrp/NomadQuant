@@ -2,7 +2,7 @@
 
 NomadQuant 1.0.1 is a locally hosted, paper-only research and daily paper-trading workstation. It provides configuration locks, an Alpaca paper adapter, a local daily-bar store, an offline Quant Research Lab, and a monitoring dashboard.
 
-There is no live-money trading and no HTTP order route. One Alpaca paper connectivity buy, client order `nq-connect-spy-buy-5`, has filled and is excluded from strategy performance. The daily pilot can submit further paper orders only after a separate authorization, and that authorization is off. The emergency stop is `DISABLE_ALPACA_PAPER_ORDERS`. Offline backtests are research, not broker results, and nothing here is evidence of profit.
+The current inventory is in [docs/CAPABILITIES.md](docs/CAPABILITIES.md). There is no live-money trading and no HTTP order route. One Alpaca paper connectivity buy, client order `nq-connect-spy-buy-5`, has filled and is excluded from strategy performance. The daily pilot can submit further paper orders only after a separate authorization, and that authorization is off. The emergency stop is `DISABLE_ALPACA_PAPER_ORDERS`. Offline backtests are research, not broker results, and nothing here is evidence of profit.
 
 ## Operating limits
 

@@ -7,6 +7,7 @@ from decimal import Decimal
 
 from nomadquant.daily.indicators import realized_vol, reversal_snapshot, sma, trailing_return
 from nomadquant.daily.registry import REVERSAL, TREND, StrategySpec
+from nomadquant.daily.selection import assign_primary
 
 Prices = dict[str, dict[date, Decimal]]
 
@@ -84,12 +85,7 @@ def candidates(
         ):
             action = action_of(closes, as_of, held)
             found.append(_row(spec, symbol, action, False))
-    for preferred in ("SELL", "BUY"):
-        for row in found:
-            if row["action"] == preferred:
-                row["primary"] = "true"
-                return found
-    return found
+    return assign_primary(found, prices, as_of, book)
 
 
 def _row(spec: StrategySpec, symbol: str, action: str, chosen: bool) -> dict[str, str]:
@@ -100,6 +96,8 @@ def _row(spec: StrategySpec, symbol: str, action: str, chosen: bool) -> dict[str
         "action": action,
         "notional_usd": format(spec.notional_cap, "f") if action == "BUY" else "0",
         "primary": "true" if chosen else "false",
+        "rank_reason": "",
+        "equity_correlation": "",
         "evidence_class": "historical_indicator",
     }
 

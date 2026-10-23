@@ -10,7 +10,7 @@ from nomadquant.broker.paper_pilot import _insert_order, _update, kill_paper_ord
 from nomadquant.daily.agents import run_agents
 from nomadquant.daily.authorization import AUTHORIZE_PHRASE, authorize_daily_pilot
 from nomadquant.daily.cycle import daily_status, evaluate_daily, install_schedule
-from nomadquant.daily.engine import primary_candidate, reversal_action, trend_action
+from nomadquant.daily.engine import candidates, primary_candidate, reversal_action, trend_action
 from nomadquant.daily.execute import submit_daily_paper_order
 from nomadquant.daily.fingerprint import price_fingerprint
 from nomadquant.daily.influence import apply_influence
@@ -43,6 +43,32 @@ def test_trend_buys_an_uptrend_and_reversal_stays_quiet() -> None:
     assert choice is not None
     assert choice["strategy_id"] == "etf_trend_sma_v1"
     assert choice["action"] == "BUY"
+
+
+def test_a_held_etf_does_not_open_the_correlated_second_etf() -> None:
+    _sessions, prices = _rising()
+    choice = primary_candidate(prices, SIGNAL, {"SPY": Decimal("1")})
+    assert choice is None
+    qqq = next(
+        row
+        for row in candidates(prices, SIGNAL, {"SPY": Decimal("1")})
+        if row["symbol"] == "QQQ" and row["strategy_id"] == "etf_trend_sma_v1"
+    )
+    assert qqq["action"] == "HOLD"
+    assert qqq["rank_reason"] == "overlapping_equity_exposure"
+
+
+def test_an_exit_outranks_a_new_buy() -> None:
+    sessions = sessions_between(date(2023, 12, 1), SIGNAL)
+    prices = {
+        "SPY": {day: Decimal("70") if day in sessions[-5:] else Decimal("100") for day in sessions},
+        "QQQ": {day: Decimal("100") + Decimal(index) for index, day in enumerate(sessions)},
+    }
+    choice = primary_candidate(prices, SIGNAL, {"SPY": Decimal("1")})
+    assert choice is not None
+    assert choice["action"] == "SELL"
+    assert choice["symbol"] == "SPY"
+    assert choice["rank_reason"] == "risk_reducing_exit"
 
 
 def test_reversal_does_not_buy_a_broken_trend() -> None:

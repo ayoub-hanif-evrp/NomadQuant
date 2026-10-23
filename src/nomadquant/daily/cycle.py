@@ -147,9 +147,21 @@ def daily_status(settings: Settings, *, now: datetime | None = None) -> dict[str
         "connectivity_position_isolated": True,
         "per_trade_approval": False,
         "emergency_stop": auth.get("reason") == "killed",
+        "orders_blocked_reasons": _blocked_reasons(auth),
         "activation_phrase": "AUTHORIZE_DAILY_PAPER_PILOT",
         "as_of": clock.isoformat(),
     }
+
+
+def _blocked_reasons(auth: dict[str, Any]) -> list[str]:
+    reasons: list[str] = []
+    if auth.get("reason"):
+        reasons.append(str(auth["reason"]))
+    if auth.get("enabled") is not True:
+        reasons.append("daily_pilot_not_authorized")
+    reasons.append("http_order_route_absent")
+    reasons.append("schedule_not_installed")
+    return list(dict.fromkeys(reasons))
 
 
 def install_schedule(*, confirm: str) -> dict[str, bool | str]:

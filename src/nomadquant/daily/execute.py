@@ -16,6 +16,7 @@ from nomadquant.broker.paper_pilot import (
     _money,
     _orders,
     _pretrade,
+    _quote_problem,
     _recheck_before_send,
     _recover_existing,
     _refused,
@@ -260,7 +261,9 @@ def _marks(
     found: dict[str, Decimal] = {}
     for symbol in symbols:
         quote = _trusted(settings, symbol, quote_client, now)
-        bid = None if quote is None else _money(quote.get("bid"))
+        if quote is None or _quote_problem(quote, symbol, now) is not None:
+            return None
+        bid = _money(quote.get("bid"))
         ask = None if quote is None else _money(quote.get("ask"))
         if bid is None or ask is None or bid <= 0 or ask < bid:
             return None

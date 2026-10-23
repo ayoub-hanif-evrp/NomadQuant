@@ -4,19 +4,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from nomadquant.daily.mcp_server import FORBIDDEN_TOOLS, MarketContext, build_server
+from nomadquant.daily.mcp_server import MarketContext, build_server
+from nomadquant.daily.tool_registry import ALLOWED_TOOLS
+from nomadquant.daily.tool_registry import FORBIDDEN_CAPABILITIES as FORBIDDEN_TOOLS
 
 MAX_CALLS = 12
-ALLOWED_TOOLS = frozenset(
-    {
-        "strategy_registry",
-        "eligible_signals",
-        "indicator_snapshot",
-        "quote_snapshot",
-        "news_headlines",
-        "sleeve_snapshot",
-    }
-)
 DEFAULT_TOOLS = ("eligible_signals", "indicator_snapshot", "sleeve_snapshot")
 
 
