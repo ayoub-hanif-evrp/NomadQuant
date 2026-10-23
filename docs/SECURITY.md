@@ -1,6 +1,6 @@
 # Security
 
-NomadQuant Phase 1 is a local research tool with a read-only view of an Alpaca paper account. The controls below are startup checks, not conventions.
+NomadQuant Phase 1 is a local research tool. It can read an Alpaca paper account, and a separate Python path can submit a paper order only when that path is explicitly authorized. That authorization is off. The controls below are startup checks, not conventions. See [architecture/CAPABILITY_MATRIX.md](architecture/CAPABILITY_MATRIX.md).
 
 ## Secrets
 

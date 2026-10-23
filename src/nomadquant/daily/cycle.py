@@ -12,6 +12,7 @@ from nomadquant.config import Settings
 from nomadquant.daily.agents import LanguageModel, run_agents
 from nomadquant.daily.authorization import authorization_status
 from nomadquant.daily.engine import primary_candidate
+from nomadquant.daily.fingerprint import price_fingerprint
 from nomadquant.daily.mailer import deliver_notice
 from nomadquant.daily.mcp_client import invoke_readonly_tools
 from nomadquant.daily.mcp_server import MarketContext
@@ -92,6 +93,7 @@ def evaluate_daily(
         "missed_window": missed,
         "submitted": False,
         "strategy_version": None if baseline is None else baseline.get("version"),
+        "price_fingerprint": price_fingerprint(prices),
         "portfolio": {
             "available_cash_usd": book["available_cash_usd"],
             "strategy_pnl_usd": book["strategy_pnl_usd"],

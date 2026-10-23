@@ -1,6 +1,8 @@
 # Architecture
 
-NomadQuant Phase 1 is a modular monolith. One Python process owns configuration, operational state, the read-only broker adapter, and the HTTP API. A separate Next.js process renders a localhost dashboard. They communicate only over `127.0.0.1`.
+NomadQuant Phase 1 is a modular monolith. One Python process owns configuration, operational state, the broker adapter, and the HTTP API. A separate Next.js process renders a localhost dashboard. They communicate only over `127.0.0.1`.
+
+The current capability matrix is [architecture/CAPABILITY_MATRIX.md](architecture/CAPABILITY_MATRIX.md). Paper submission exists in Python and is disabled. There is still no HTTP order route and no live-money path. The diagram below describes the original read path; it is not a claim that a paper order is impossible.
 
 ```text
 apps/web  --GET-->  FastAPI  -->  Settings
@@ -28,7 +30,7 @@ The machine has 16 GB of RAM and a single developer. Separate services for data,
 | `nomadquant.logging` | JSON logs. Configured secrets and assignment-style credentials are redacted. |
 | `nomadquant.db` | SQLite file for operational events such as process startup. Not a research store. |
 | `nomadquant.audit` | Structured events, runs, decision traces, and content-addressed artifacts. |
-| `nomadquant.broker` | Read-only Alpaca paper account and positions. |
+| `nomadquant.broker` | Alpaca paper account, positions, and a disabled order path. |
 | `nomadquant.marketdata` | Daily-bar download, validation, SQLite store, and cutoff reads. |
 | `nomadquant.research` | Experiment registry, offline daily backtest, metrics, and decision replay. |
 | `nomadquant.api` | Typed GET routes. |

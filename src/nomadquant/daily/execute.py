@@ -26,9 +26,10 @@ from nomadquant.broker.paper_pilot import (
 from nomadquant.config import PAPER_API_URL, Settings
 from nomadquant.daily.authorization import authorization_status, shared_emergency_stop
 from nomadquant.daily.engine import primary_candidate
+from nomadquant.daily.fingerprint import authoritative_disagreement, price_fingerprint
 from nomadquant.daily.portfolio import build_portfolio
 from nomadquant.daily.registry import INFLUENCE_POLICY, RISK_POLICY, SPECS, UNIVERSE
-from nomadquant.daily.store import latest_decision
+from nomadquant.daily.store import latest_decision, note_equity
 from nomadquant.risk.engine import RiskEngine
 from nomadquant.risk.ledger import InternalLedger
 from nomadquant.risk.policy import POLICY_VERSION, RiskPolicy
@@ -84,14 +85,27 @@ def submit_daily_paper_order(
         return _refused("missing_signal")
     from datetime import date
 
+    if stored.get("price_fingerprint") != price_fingerprint(prices):
+        return _refused("price_fingerprint_mismatch")
+    disagreed = authoritative_disagreement(settings, prices)
+    if disagreed is not None:
+        return _refused(disagreed)
     orders = _orders(settings.paper_path)
-    book = build_portfolio(orders)
-    strategy_held = any(Decimal(value) > 0 for value in book["strategy_qty"].values())
-    if action == "SELL" and Decimal(book["connectivity_qty"]) > 0 and not strategy_held:
+    held_book = build_portfolio(orders)
+    strategy_held = any(Decimal(value) > 0 for value in held_book["strategy_qty"].values())
+    if action == "SELL" and Decimal(held_book["connectivity_qty"]) > 0 and not strategy_held:
         return _refused("connectivity_position_isolated")
+    marks = _marks(settings, _marked_symbols(held_book), quote_client, clock)
+    book = (
+        held_book
+        if marks is None and not _marked_symbols(held_book)
+        else build_portfolio(orders, marks)
+    )
+    if marks is None and _marked_symbols(held_book):
+        return _refused("portfolio_unreconciled")
     if book["disputed"] or not book["marks_complete"]:
         return _refused("portfolio_unreconciled")
-    if book["loss_stop"]:
+    if action == "BUY" and book["loss_stop"]:
         return _refused("strategy_loss_stop")
     holdings = {key: Decimal(value) for key, value in book["strategy_qty"].items()}
     confirmed = primary_candidate(prices, date.fromisoformat(signal), holdings)
@@ -134,26 +148,48 @@ def submit_daily_paper_order(
         return _refused("account_amounts_unreadable")
     full = _exposure(orders)
     owned = holdings.get(symbol, Decimal("0"))
+    reserved_sell = Decimal(str(book["reserved_sell_qty"].get(symbol, "0")))
+    sell_qty = owned - reserved_sell
     broker_qty = _broker_qty(client, symbol)
     if action == "SELL":
         if owned <= 0 and broker_qty is not None and broker_qty > 0:
             return _refused("connectivity_position_isolated")
-        if owned <= 0 or broker_qty is None or broker_qty < owned:
+        if sell_qty <= 0 or broker_qty is None or broker_qty < owned:
             return _refused("connectivity_position_isolated")
-        touch = _money(quote.get("bid")) if quote else None
-        if touch is None or touch <= 0:
-            return _refused("missing_quote")
-        notional = (owned * touch).quantize(Decimal("0.01"))
+        quantity = sell_qty
     else:
         remaining = _sleeve(cash, buying_power, full["capital"])["remaining"]
         if notional > remaining or Decimal(book["available_cash_usd"]) < notional:
             return _refused("sleeve_exceeded")
-    verdict = _risk(stored, symbol, action, notional, quote, clock, book)
+        touch = _money(quote.get("ask")) if quote else None
+        if touch is None or touch <= 0:
+            return _refused("missing_quote")
+        quantity = (notional / touch).quantize(Decimal("0.000001"), rounding=ROUND_DOWN)
+    if book["equity_usd"] is None:
+        return _refused("portfolio_unreconciled")
+    peak = Decimal(
+        note_equity(
+            settings.daily_path,
+            as_of=clock.isoformat(),
+            equity=str(book["equity_usd"]),
+            realized=str(book["realized_pnl_usd"]),
+        )
+    )
+    verdict = _risk(stored, symbol, action, quantity, quote, clock, book, peak)
     if verdict is not None:
         return _refused(verdict)
     fresh = _recheck_before_send(settings, client, symbol, quote_client, now)
     if fresh is not None:
         return _refused(fresh)
+    refreshed = _trusted(settings, symbol, quote_client, clock)
+    if action == "SELL":
+        bid = None if refreshed is None else _money(refreshed.get("bid"))
+        if bid is None or bid <= 0:
+            return _refused("missing_quote")
+        notional = (quantity * bid).quantize(Decimal("0.01"))
+    verdict = _risk(stored, symbol, action, quantity, refreshed, clock, book, peak)
+    if verdict is not None:
+        return _refused(verdict)
     _insert_order(
         settings.paper_path,
         client_order_id=client_order_id,
@@ -165,7 +201,15 @@ def submit_daily_paper_order(
         decision_id=f"{strategy_id}:{signal}:{symbol}:{action.lower()}",
         counts_as_strategy_pnl=True,
     )
-    result = _send(settings, client, client_order_id, symbol, action.lower(), notional)
+    result = _send(
+        settings,
+        client,
+        client_order_id,
+        symbol,
+        action.lower(),
+        None if action == "SELL" else notional,
+        sell_qty if action == "SELL" else None,
+    )
     result["counts_as_strategy_pnl"] = True
     result["connectivity_excluded"] = True
     return result
@@ -198,25 +242,49 @@ def _session_limit(orders: list[dict[str, Any]], now: datetime) -> bool:
     return count >= 1
 
 
+def _marked_symbols(book: dict[str, Any]) -> set[str]:
+    symbols = {key for key, value in book["strategy_qty"].items() if Decimal(value) > 0}
+    if Decimal(book["connectivity_qty"]) > 0:
+        symbols.add("SPY")
+    return symbols
+
+
+def _marks(
+    settings: Settings,
+    symbols: set[str],
+    quote_client: Any | None,
+    now: datetime,
+) -> dict[str, Decimal] | None:
+    if not symbols:
+        return {}
+    found: dict[str, Decimal] = {}
+    for symbol in symbols:
+        quote = _trusted(settings, symbol, quote_client, now)
+        bid = None if quote is None else _money(quote.get("bid"))
+        ask = None if quote is None else _money(quote.get("ask"))
+        if bid is None or ask is None or bid <= 0 or ask < bid:
+            return None
+        found[symbol] = bid
+    return found
+
+
 def _risk(
     decision: dict[str, Any],
     symbol: str,
     action: str,
-    notional: Decimal,
+    quantity: Decimal,
     quote: dict[str, Any] | None,
     now: datetime,
     book: dict[str, Any],
+    peak: Decimal,
 ) -> str | None:
-    if quote is None:
+    if quote is None or quantity <= 0:
         return "missing_quote"
     from nomadquant.broker.paper_pilot import _as_datetime
 
     touch = _money(quote.get("bid") if action == "SELL" else quote.get("ask"))
     if touch is None or touch <= 0:
         return "missing_quote"
-    quantity = (notional / touch).quantize(Decimal("0.000001"), rounding=ROUND_DOWN)
-    if quantity <= 0:
-        return "risk_not_approved"
     proposal = Proposal(
         id=str(decision.get("strategy_id")),
         source=str(decision.get("strategy_id")),
@@ -238,10 +306,9 @@ def _risk(
     holdings = {
         key: Decimal(value) for key, value in book["strategy_qty"].items() if Decimal(value) > 0
     }
-    if action == "SELL":
-        quantity = holdings.get(symbol, Decimal("0"))
+    if action == "SELL" and quantity > holdings.get(symbol, Decimal("0")):
+        return "risk_not_approved"
     equity = Decimal(str(book["equity_usd"]))
-    peak = max(Decimal("100"), equity)
     ledger = InternalLedger(cash_usd=cash, holdings=holdings)
     account = AccountMetrics(
         realized_pnl_today_usd=Decimal(str(book["realized_pnl_usd"])),

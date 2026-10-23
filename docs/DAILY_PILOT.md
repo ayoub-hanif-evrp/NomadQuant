@@ -30,6 +30,8 @@ Submission stays off until this exact phrase is used with a duration of 1 to 30 
 
 `DISABLE_ALPACA_PAPER_ORDERS` is the emergency stop for the connectivity route, the retired monthly route, and the daily route. A daily kill also stops the older routes. No Windows task is installed. `scripts/daily-ai.ps1` prints the local desk status and does not submit. The computer would have to be on for any later local schedule.
 
-Strategy loss uses realized plus marked-to-market P&L on strategy holdings. A difference between requested notional and fill value is not a loss. A missing mark blocks a new order.
+Strategy loss uses realized plus marked-to-market P&L on strategy holdings. A difference between requested notional and fill value is not a loss. A missing mark leaves valuation unavailable and blocks a new buy; it is not stored as a zero price. The loss stop blocks new buys. It does not cancel an open broker order, liquidate a position, or override the kill switch. A strategy sell still needs authorization, a mark, and the risk engine.
+
+`GET /api/paper/status` does not rewrite local fills. `reconcile_paper_orders` is the explicit refresh. A sell is sent as a share quantity, using the strategy-owned amount, and that same quantity is the one the risk engine sees. The equity peak is stored and is not replaced by a later lower equity.
 
 Post-trade email is queued after a decision. Without SMTP, the notice stays `not_configured` and is not described as delivered.

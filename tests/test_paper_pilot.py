@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from nomadquant.broker.paper_pilot import (
+from nomadquant.broker.paper_pilot import (  # noqa: E402
     AUTOMATIC_PHRASE,
     CONNECTIVITY_CLIENT_ID,
     CONNECTIVITY_PHRASE,
@@ -16,6 +16,7 @@ from nomadquant.broker.paper_pilot import (
     enable_paper_orders,
     kill_paper_orders,
     paper_status,
+    reconcile_paper_orders,
     run_automatic_paper_pilot,
     submit_connectivity_order,
     submit_strategy_paper_order,
@@ -575,7 +576,7 @@ def test_corrupt_ledger_and_broker_disagreement_fail_closed(tmp_path: Path) -> N
         settings, confirm=CONNECTIVITY_PHRASE, client=client, quote_client=_Quotes(NOW), now=NOW
     )
     client.record.filled_qty = "0.001"
-    disagreed = paper_status(settings, client=client, now=NOW)
+    disagreed = reconcile_paper_orders(settings, client=client, now=NOW)
     assert disagreed["blocked"] is True
     assert disagreed["reason"] == "ledger_disagreement"
     assert disagreed["sleeve_remaining_usd"] == "0"
@@ -635,7 +636,9 @@ def test_reconciliation_keeps_a_growing_fill_and_the_sleeve(tmp_path: Path) -> N
     client.record.filled_qty = "0.002"
     client.record.filled_avg_price = "500"
     client.record.qty = "0.01"
-    first = paper_status(settings, client=client, now=NOW)
+    unchanged = paper_status(settings, client=client, now=NOW)
+    assert unchanged["orders"][0]["broker_status"] == "accepted"
+    first = reconcile_paper_orders(settings, client=client, now=NOW)
     assert first["reason"] is None
     assert first["orders"][0]["broker_status"] == "partial"
     assert first["orders"][0]["filled_qty"] == "0.002"
@@ -644,7 +647,7 @@ def test_reconciliation_keeps_a_growing_fill_and_the_sleeve(tmp_path: Path) -> N
 
     client.record.filled_qty = "0.004"
     client.record.filled_avg_price = "501"
-    larger = paper_status(settings, client=client, now=NOW)
+    larger = reconcile_paper_orders(settings, client=client, now=NOW)
     assert larger["reason"] is None
     assert larger["orders"][0]["broker_status"] == "partial"
     assert larger["orders"][0]["filled_qty"] == "0.004"
@@ -654,7 +657,7 @@ def test_reconciliation_keeps_a_growing_fill_and_the_sleeve(tmp_path: Path) -> N
     client.record.status = "filled"
     client.record.filled_qty = "0.01"
     client.record.filled_avg_price = "500.10"
-    filled = paper_status(settings, client=client, now=NOW)
+    filled = reconcile_paper_orders(settings, client=client, now=NOW)
     assert filled["reason"] is None
     assert filled["orders"][0]["broker_status"] == "filled"
     assert filled["orders"][0]["filled_qty"] == "0.01"
@@ -711,7 +714,7 @@ def test_fill_quantity_may_increase_and_may_not_regress(tmp_path: Path) -> None:
     assert filled["status"] == "filled"
     assert filled["filled_avg_price"] == "500.10"
     client.record.filled_qty = "0.004"
-    regressed = paper_status(settings, client=client, now=NOW)
+    regressed = reconcile_paper_orders(settings, client=client, now=NOW)
     assert regressed["reason"] == "ledger_disagreement"
 
 
@@ -723,7 +726,7 @@ def test_alpaca_enum_fill_status_updates_the_sleeve(tmp_path: Path) -> None:
     client.record.status = "OrderStatus.FILLED"
     client.record.filled_qty = "0.006487478"
     client.record.filled_avg_price = "769.174"
-    report = paper_status(settings, client=client, now=NOW)
+    report = reconcile_paper_orders(settings, client=client, now=NOW)
     assert report["reason"] is None
     assert report["orders"][0]["broker_status"] == "filled"
     assert report["orders"][0]["filled_qty"] == "0.006487478"

@@ -26,6 +26,13 @@ def _connect(path: str) -> sqlite3.Connection:
             status TEXT NOT NULL,
             payload_json TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS portfolio_checkpoints (
+            id INTEGER PRIMARY KEY,
+            as_of TEXT NOT NULL,
+            equity_usd TEXT NOT NULL,
+            realized_pnl_usd TEXT NOT NULL,
+            peak_equity_usd TEXT NOT NULL
+        );
         CREATE TABLE IF NOT EXISTS daily_notices (
             id INTEGER PRIMARY KEY,
             created_at TEXT NOT NULL,
@@ -118,6 +125,28 @@ def enqueue_notice(path: str, *, created_at: str, subject: str, body: str) -> di
             (created_at, subject, body),
         )
         return {"id": int(cursor.lastrowid or 0), "status": "queued", "sent": False}
+
+
+def note_equity(path: str, *, as_of: str, equity: str, realized: str) -> str:
+    """Persist the high-water mark. A later lower equity does not replace it."""
+    from decimal import Decimal
+
+    current = Decimal(equity)
+    with _connect(path) as connection:
+        row = connection.execute(
+            "SELECT peak_equity_usd FROM portfolio_checkpoints ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        prior = Decimal("100") if row is None else Decimal(str(row["peak_equity_usd"]))
+        peak = max(prior, current)
+        connection.execute(
+            """
+            INSERT INTO portfolio_checkpoints
+                (as_of, equity_usd, realized_pnl_usd, peak_equity_usd)
+            VALUES (?, ?, ?, ?)
+            """,
+            (as_of, equity, realized, format(peak, "f")),
+        )
+    return format(peak, "f")
 
 
 def notice_body(path: str, notice_id: int) -> tuple[str, str] | None:

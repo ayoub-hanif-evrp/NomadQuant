@@ -12,6 +12,7 @@ from nomadquant.daily.authorization import AUTHORIZE_PHRASE, authorize_daily_pil
 from nomadquant.daily.cycle import daily_status, evaluate_daily, install_schedule
 from nomadquant.daily.engine import primary_candidate, reversal_action, trend_action
 from nomadquant.daily.execute import submit_daily_paper_order
+from nomadquant.daily.fingerprint import price_fingerprint
 from nomadquant.daily.influence import apply_influence
 from nomadquant.daily.mcp_client import invoke_readonly_tools
 from nomadquant.daily.mcp_server import MarketContext
@@ -240,6 +241,11 @@ def test_connectivity_shares_cannot_be_sold_as_strategy_shares(tmp_path: Path) -
     authorize_daily_pilot(settings, confirm=AUTHORIZE_PHRASE, days=1, now=WHEN)
     from nomadquant.daily.store import save_decision
 
+    sessions = sessions_between(date(2023, 12, 1), SIGNAL)
+    prices = {
+        symbol: {day: Decimal("100") if day < sessions[-5] else Decimal("70") for day in sessions}
+        for symbol in ("SPY", "QQQ")
+    }
     save_decision(
         settings.daily_path,
         created_at=WHEN.isoformat(),
@@ -255,6 +261,7 @@ def test_connectivity_shares_cannot_be_sold_as_strategy_shares(tmp_path: Path) -
             "influence_policy": "daily_agent_influence_1.0.0",
             "risk_policy": "daily_risk_1.0.0",
             "missed_window": False,
+            "price_fingerprint": price_fingerprint(prices),
         },
     )
     _insert_order(
@@ -279,11 +286,6 @@ def test_connectivity_shares_cannot_be_sold_as_strategy_shares(tmp_path: Path) -
     client.positions = [
         type("Position", (), {"symbol": "SPY", "qty": "0.006487478", "side": "long"})()
     ]
-    sessions = sessions_between(date(2023, 12, 1), SIGNAL)
-    prices = {
-        symbol: {day: Decimal("100") if day < sessions[-5] else Decimal("70") for day in sessions}
-        for symbol in ("SPY", "QQQ")
-    }
     refused = submit_daily_paper_order(
         settings,
         decision={
@@ -378,6 +380,126 @@ def test_daily_kill_blocks_the_connectivity_route_too(tmp_path: Path) -> None:
         now=WHEN,
     )
     assert refused["reason"] == "killed"
+
+
+def test_cancelled_partial_sell_keeps_the_executed_shares_once() -> None:
+    from nomadquant.daily.portfolio import build_portfolio
+
+    orders = [
+        {
+            "client_order_id": "buy-1",
+            "purpose": "strategy",
+            "broker_status": "filled",
+            "side": "buy",
+            "symbol": "SPY",
+            "filled_qty": "1",
+            "filled_avg_price": "10",
+            "notional_usd": "10",
+            "created_at": "2024-11-01T00:00:00+00:00",
+        },
+        {
+            "client_order_id": "sell-1",
+            "purpose": "strategy",
+            "broker_status": "canceled",
+            "side": "sell",
+            "symbol": "SPY",
+            "filled_qty": "0.4",
+            "filled_avg_price": "12",
+            "notional_usd": "12",
+            "created_at": "2024-11-04T00:00:00+00:00",
+        },
+        {
+            "client_order_id": "sell-1",
+            "purpose": "strategy",
+            "broker_status": "canceled",
+            "side": "sell",
+            "symbol": "SPY",
+            "filled_qty": "0.4",
+            "filled_avg_price": "12",
+            "notional_usd": "12",
+            "created_at": "2024-11-04T00:00:00+00:00",
+        },
+    ]
+    book = build_portfolio(orders, {"SPY": Decimal("12")})
+    assert book["strategy_qty"]["SPY"] == "0.6"
+    assert book["realized_pnl_usd"] == "0.8"
+    assert book["marks_complete"] is True
+
+
+def test_equity_peak_survives_a_later_decline(tmp_path: Path) -> None:
+    from nomadquant.daily.store import note_equity
+
+    settings = make_settings(tmp_path)
+    assert (
+        note_equity(settings.daily_path, as_of=WHEN.isoformat(), equity="110", realized="10")
+        == "110"
+    )
+    assert (
+        note_equity(settings.daily_path, as_of=WHEN.isoformat(), equity="90", realized="-10")
+        == "110"
+    )
+
+
+def test_held_strategy_shares_can_be_sold_after_a_mark(tmp_path: Path) -> None:
+    settings = make_settings(tmp_path)
+    authorize_daily_pilot(settings, confirm=AUTHORIZE_PHRASE, days=1, now=WHEN)
+    sessions = sessions_between(date(2023, 12, 1), SIGNAL)
+    prices = {
+        symbol: {day: Decimal("100") if day < sessions[-5] else Decimal("70") for day in sessions}
+        for symbol in ("SPY", "QQQ")
+    }
+    from nomadquant.daily.store import save_decision
+
+    save_decision(
+        settings.daily_path,
+        created_at=WHEN.isoformat(),
+        signal_session=SIGNAL.isoformat(),
+        payload={
+            "action": "SELL",
+            "symbol": "SPY",
+            "strategy_id": "etf_trend_sma_v1",
+            "strategy_version": "1.0.0",
+            "notional_usd": "25",
+            "signal_session": SIGNAL.isoformat(),
+            "execution_session": "2024-11-04",
+            "influence_policy": "daily_agent_influence_1.0.0",
+            "risk_policy": "daily_risk_1.0.0",
+            "missed_window": False,
+            "price_fingerprint": price_fingerprint(prices),
+        },
+    )
+    _insert_order(
+        settings.paper_path,
+        client_order_id="nq-daily-open",
+        purpose="strategy",
+        symbol="SPY",
+        side="buy",
+        notional=Decimal("25"),
+        created_at="2024-11-01T15:00:00+00:00",
+        decision_id="open",
+        counts_as_strategy_pnl=True,
+    )
+    _update(
+        settings.paper_path,
+        "nq-daily-open",
+        broker_status="filled",
+        filled_qty="0.05",
+        filled_avg_price="500",
+    )
+    client = FakeClient(when=WHEN)
+    client.positions = [type("Position", (), {"symbol": "SPY", "qty": "0.05", "side": "long"})()]
+    result = submit_daily_paper_order(
+        settings,
+        decision={"action": "SELL", "strategy_id": "etf_trend_sma_v1"},
+        prices=prices,
+        client=client,
+        quote_client=_Quotes(WHEN),
+        now=WHEN,
+    )
+    assert result["submitted"] is True
+    request = client.submitted[0]
+    assert Decimal(str(request.qty)) == Decimal("0.05")  # type: ignore[attr-defined]
+    assert request.notional is None  # type: ignore[attr-defined]
 
 
 def test_bad_phrase_and_live_flag_cannot_authorize(tmp_path: Path) -> None:

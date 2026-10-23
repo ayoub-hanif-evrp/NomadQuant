@@ -90,8 +90,19 @@ CREATE TABLE IF NOT EXISTS paper_orders (
 """
 
 
-def paper_status(
+def reconcile_paper_orders(
     settings: Settings, *, client: Any | None = None, now: datetime | None = None
+) -> dict[str, Any]:
+    """Refresh local fills from the broker. This is not a status read."""
+    return paper_status(settings, client=client, now=now, reconcile=True)
+
+
+def paper_status(
+    settings: Settings,
+    *,
+    client: Any | None = None,
+    now: datetime | None = None,
+    reconcile: bool = False,
 ) -> dict[str, Any]:
     """Read the paper account. Does not submit an order."""
     clock = now or datetime.now(UTC)
@@ -121,7 +132,7 @@ def paper_status(
     if cash is None or equity is None or buying_power is None:
         return {**base, "connected": False, "blocked": True, "reason": "account_amounts_unreadable"}
     untracked = _untracked(orders, broker_orders)
-    disagreement = untracked or _reconcile(settings, trading, orders)
+    disagreement = untracked or (reconcile and _reconcile(settings, trading, orders))
     fresh = [] if disagreement else _orders_safe(settings.paper_path)
     exposure = _exposure(fresh)
     block_reason = "untracked_broker_order" if untracked else "ledger_disagreement"
@@ -731,14 +742,16 @@ def _send(
     client_order_id: str,
     symbol: str,
     side: str,
-    notional: Decimal,
+    notional: Decimal | None = None,
+    qty: Decimal | None = None,
 ) -> dict[str, Any]:
     from alpaca.trading.enums import OrderSide, TimeInForce
     from alpaca.trading.requests import MarketOrderRequest
 
     request = MarketOrderRequest(
         symbol=symbol,
-        notional=notional,
+        notional=None if qty is not None else notional,
+        qty=qty,
         side=OrderSide.BUY if side == "buy" else OrderSide.SELL,
         time_in_force=TimeInForce.DAY,
         client_order_id=client_order_id,

@@ -74,7 +74,6 @@ def candidates(
 ) -> list[dict[str, str]]:
     """One candidate per symbol and strategy. Holding a target long emits HOLD."""
     found: list[dict[str, str]] = []
-    primary = False
     book = holdings or {}
     for symbol in ("SPY", "QQQ"):
         closes = prices.get(symbol) or {}
@@ -84,14 +83,12 @@ def candidates(
             (REVERSAL, reversal_action),
         ):
             action = action_of(closes, as_of, held)
-            chosen = False
-            if action == "BUY" and not primary:
-                chosen = True
-                primary = True
-            elif action == "SELL" and not primary:
-                chosen = True
-                primary = True
-            found.append(_row(spec, symbol, action, chosen))
+            found.append(_row(spec, symbol, action, False))
+    for preferred in ("SELL", "BUY"):
+        for row in found:
+            if row["action"] == preferred:
+                row["primary"] = "true"
+                return found
     return found
 
 

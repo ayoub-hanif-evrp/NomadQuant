@@ -1,6 +1,6 @@
 # NomadQuant v1.0 limitations
 
-These are boundaries of the product, not hidden failures.
+These are the boundaries recorded for v1 research. They are not a current inventory of the paper path. For that inventory, see [architecture/CAPABILITY_MATRIX.md](architecture/CAPABILITY_MATRIX.md).
 
 ## What v1 is
 
@@ -15,7 +15,7 @@ A local program for stored market research, deterministic risk checks, and a sup
 - The forward book has two prospective dry-run `no_trade` cycles and zero fills. That sample is inconclusive.
 - A delayed hypothetical daily open is not a real-time executable quote.
 - Alpaca paper equity is not the internal $100 allocation.
-- No Alpaca order path exists. A future paper order would need a separate authorization.
+- v1 had no Alpaca order path. A paper path now exists and is disabled. The filled connectivity buy is not a strategy result. Further paper orders still need a separate authorization.
 
 ## Operations
 
