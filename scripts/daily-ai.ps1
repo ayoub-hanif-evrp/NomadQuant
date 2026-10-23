@@ -3,8 +3,10 @@ param(
     [string]$Action = "status"
 )
 
-Write-Host "NomadQuant daily AI paper pilot: $Action"
+$Root = Split-Path -Parent $PSScriptRoot
+Set-Location $Root
+$env:PYTHONPATH = "src"
+Write-Host "NomadQuant daily desk: $Action"
 Write-Host "This script does not install a Windows task and does not submit an order."
-Write-Host "A future local schedule would run only while this computer is on."
-Write-Host "Missed sessions are not backfilled and are not permission to trade late."
-exit 0
+uv run --no-sync python -m nomadquant.daily
+exit $LASTEXITCODE

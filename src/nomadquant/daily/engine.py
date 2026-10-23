@@ -18,21 +18,32 @@ def _close(closes: dict[date, Decimal], as_of: date) -> Decimal | None:
     return max(rows)[1]
 
 
-def trend_action(closes: dict[date, Decimal], as_of: date) -> str:
+def trend_target(closes: dict[date, Decimal], as_of: date) -> str:
+    """Desired exposure, independent of what is already held."""
     average = sma(closes, as_of, 200)
     close = _close(closes, as_of)
     vol = realized_vol(closes, as_of, 20)
     if average is None or close is None or vol is None:
-        return "HOLD"
+        return "unavailable"
     if close > average and vol <= Decimal("0.02"):
-        return "BUY"
+        return "long"
     if close <= average:
-        return "SELL"
-    return "HOLD"
+        return "cash"
+    return "cash"
 
 
-def reversal_action(closes: dict[date, Decimal], as_of: date) -> str:
-    if trend_action(closes, as_of) == "BUY":
+def trend_action(closes: dict[date, Decimal], as_of: date, held: Decimal = Decimal("0")) -> str:
+    """Translate the target into an order. An existing long is not bought again."""
+    target = trend_target(closes, as_of)
+    if target == "unavailable":
+        return "HOLD"
+    if target == "long":
+        return "HOLD" if held > 0 else "BUY"
+    return "SELL" if held > 0 else "HOLD"
+
+
+def reversal_action(closes: dict[date, Decimal], as_of: date, held: Decimal = Decimal("0")) -> str:
+    if held > 0 or trend_target(closes, as_of) == "long":
         return "HOLD"
     average = sma(closes, as_of, 200)
     close = _close(closes, as_of)
@@ -56,17 +67,23 @@ def reversal_action(closes: dict[date, Decimal], as_of: date) -> str:
     return "HOLD"
 
 
-def candidates(prices: Prices, as_of: date) -> list[dict[str, str]]:
-    """One candidate per symbol and strategy. At most one buy is marked primary."""
+def candidates(
+    prices: Prices,
+    as_of: date,
+    holdings: dict[str, Decimal] | None = None,
+) -> list[dict[str, str]]:
+    """One candidate per symbol and strategy. Holding a target long emits HOLD."""
     found: list[dict[str, str]] = []
     primary = False
+    book = holdings or {}
     for symbol in ("SPY", "QQQ"):
         closes = prices.get(symbol) or {}
+        held = book.get(symbol, Decimal("0"))
         for spec, action_of in (
             (TREND, trend_action),
             (REVERSAL, reversal_action),
         ):
-            action = action_of(closes, as_of)
+            action = action_of(closes, as_of, held)
             chosen = False
             if action == "BUY" and not primary:
                 chosen = True
@@ -90,8 +107,12 @@ def _row(spec: StrategySpec, symbol: str, action: str, chosen: bool) -> dict[str
     }
 
 
-def primary_candidate(prices: Prices, as_of: date) -> dict[str, str] | None:
-    for row in candidates(prices, as_of):
+def primary_candidate(
+    prices: Prices,
+    as_of: date,
+    holdings: dict[str, Decimal] | None = None,
+) -> dict[str, str] | None:
+    for row in candidates(prices, as_of, holdings):
         if row["primary"] == "true" and row["action"] in {"BUY", "SELL"}:
             return row
     return None

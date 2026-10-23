@@ -109,6 +109,20 @@ def authorize_daily_pilot(
     return {"enabled": True, "expires_at": expires.isoformat(), "orders_sent": 0}
 
 
+def shared_emergency_stop(settings: Settings, *, now: datetime | None = None) -> str | None:
+    """One stop for every broker submission path. Disabled is not the same as killed."""
+    clock = now or datetime.now(UTC)
+    from nomadquant.broker.paper_pilot import _authorization
+
+    paper = _authorization(settings.paper_path, clock)
+    if paper.get("reason") == "killed":
+        return "killed"
+    daily = authorization_status(settings, now=clock)
+    if daily.get("reason") == "killed":
+        return "killed"
+    return None
+
+
 def revoke_daily_pilot(settings: Settings, *, now: datetime | None = None) -> dict[str, Any]:
     clock = now or datetime.now(UTC)
     with _connect(settings.daily_path) as connection:

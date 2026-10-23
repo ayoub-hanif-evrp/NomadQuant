@@ -24,9 +24,11 @@ from nomadquant.broker.paper_pilot import (
     _untracked,
 )
 from nomadquant.config import PAPER_API_URL, Settings
-from nomadquant.daily.authorization import authorization_status
+from nomadquant.daily.authorization import authorization_status, shared_emergency_stop
 from nomadquant.daily.engine import primary_candidate
-from nomadquant.daily.registry import SPECS, UNIVERSE
+from nomadquant.daily.portfolio import build_portfolio
+from nomadquant.daily.registry import INFLUENCE_POLICY, RISK_POLICY, SPECS, UNIVERSE
+from nomadquant.daily.store import latest_decision
 from nomadquant.risk.engine import RiskEngine
 from nomadquant.risk.ledger import InternalLedger
 from nomadquant.risk.policy import POLICY_VERSION, RiskPolicy
@@ -43,22 +45,56 @@ def submit_daily_paper_order(
     now: datetime | None = None,
 ) -> dict[str, Any]:
     clock = now or datetime.now(UTC)
+    stopped = shared_emergency_stop(settings, now=clock)
+    if stopped is not None:
+        return _refused(stopped)
     auth = authorization_status(settings, now=clock)
     if not auth["enabled"]:
         return _refused(str(auth["reason"]))
+    stored = latest_decision(settings.daily_path)
+    if stored is None:
+        return _refused("untrusted_decision")
+    action = str(stored.get("action") or "HOLD")
+    symbol = str(stored.get("symbol") or "")
+    strategy_id = str(stored.get("strategy_id") or "")
+    signal = stored.get("signal_session")
+    if decision.get("action") not in {None, action} or decision.get("strategy_id") not in {
+        None,
+        strategy_id,
+    }:
+        return _refused("untrusted_decision")
+    if (
+        stored.get("influence_policy") != INFLUENCE_POLICY
+        or stored.get("risk_policy") != RISK_POLICY
+    ):
+        return _refused("policy_version_mismatch")
+    expected_version = None if strategy_id not in SPECS else SPECS[strategy_id].version
+    if stored.get("strategy_version") != expected_version:
+        return _refused("policy_version_mismatch")
+    if stored.get("missed_window") is True:
+        return _refused("missed_window")
+    execution = stored.get("execution_session")
+    if execution != clock.astimezone(ZoneInfo("America/New_York")).date().isoformat():
+        return _refused("ineligible_session")
     if settings.alpaca_base_url != PAPER_API_URL or settings.allow_order_submission:
         return _refused("non_paper_url")
-    action = str(decision.get("action") or "HOLD")
-    symbol = str(decision.get("symbol") or "")
-    strategy_id = str(decision.get("strategy_id") or "")
-    signal = decision.get("signal_session")
     if action not in {"BUY", "SELL"} or symbol not in UNIVERSE or strategy_id not in SPECS:
         return _refused("hold")
     if not isinstance(signal, str):
         return _refused("missing_signal")
     from datetime import date
 
-    confirmed = primary_candidate(prices, date.fromisoformat(signal))
+    orders = _orders(settings.paper_path)
+    book = build_portfolio(orders)
+    strategy_held = any(Decimal(value) > 0 for value in book["strategy_qty"].values())
+    if action == "SELL" and Decimal(book["connectivity_qty"]) > 0 and not strategy_held:
+        return _refused("connectivity_position_isolated")
+    if book["disputed"] or not book["marks_complete"]:
+        return _refused("portfolio_unreconciled")
+    if book["loss_stop"]:
+        return _refused("strategy_loss_stop")
+    holdings = {key: Decimal(value) for key, value in book["strategy_qty"].items()}
+    confirmed = primary_candidate(prices, date.fromisoformat(signal), holdings)
     if (
         confirmed is None
         or confirmed["strategy_id"] != strategy_id
@@ -66,7 +102,7 @@ def submit_daily_paper_order(
         or confirmed["action"] != action
     ):
         return _refused("fabricated_signal")
-    notional = Decimal(str(decision.get("notional_usd") or "0"))
+    notional = Decimal(str(stored.get("notional_usd") or "0"))
     cap = SPECS[strategy_id].notional_cap
     if action == "BUY" and (notional <= 0 or notional > cap):
         return _refused("sleeve_exceeded")
@@ -84,7 +120,6 @@ def submit_daily_paper_order(
     gate = _pretrade(client, symbol, quote, clock if now is not None else datetime.now(UTC))
     if gate is not None:
         return _refused(gate)
-    orders = _orders(settings.paper_path)
     if _session_limit(orders, clock):
         return _refused("session_order_limit")
     listed = _listed_orders(client)
@@ -98,20 +133,22 @@ def submit_daily_paper_order(
     if cash is None or buying_power is None:
         return _refused("account_amounts_unreadable")
     full = _exposure(orders)
-    strategy_orders = [row for row in orders if row.get("purpose") != "connectivity"]
-    strategy = _exposure(strategy_orders)
+    owned = holdings.get(symbol, Decimal("0"))
+    broker_qty = _broker_qty(client, symbol)
     if action == "SELL":
-        owned = strategy["qty"].get(symbol, Decimal("0"))
-        broker_qty = _broker_qty(client, symbol)
+        if owned <= 0 and broker_qty is not None and broker_qty > 0:
+            return _refused("connectivity_position_isolated")
         if owned <= 0 or broker_qty is None or broker_qty < owned:
             return _refused("connectivity_position_isolated")
+        touch = _money(quote.get("bid")) if quote else None
+        if touch is None or touch <= 0:
+            return _refused("missing_quote")
+        notional = (owned * touch).quantize(Decimal("0.01"))
     else:
         remaining = _sleeve(cash, buying_power, full["capital"])["remaining"]
-        if notional > remaining:
+        if notional > remaining or Decimal(book["available_cash_usd"]) < notional:
             return _refused("sleeve_exceeded")
-    if _strategy_loss(strategy_orders) >= Decimal("20"):
-        return _refused("strategy_loss_stop")
-    verdict = _risk(decision, symbol, action, notional, quote, clock)
+    verdict = _risk(stored, symbol, action, notional, quote, clock, book)
     if verdict is not None:
         return _refused(verdict)
     fresh = _recheck_before_send(settings, client, symbol, quote_client, now)
@@ -161,18 +198,6 @@ def _session_limit(orders: list[dict[str, Any]], now: datetime) -> bool:
     return count >= 1
 
 
-def _strategy_loss(orders: list[dict[str, Any]]) -> Decimal:
-    loss = Decimal("0")
-    for row in orders:
-        if row.get("broker_status") != "filled" or row.get("side") != "buy":
-            continue
-        notional = _money(row.get("notional_usd")) or Decimal("0")
-        qty = _money(row.get("filled_qty")) or Decimal("0")
-        price = _money(row.get("filled_avg_price")) or Decimal("0")
-        loss += max(Decimal("0"), notional - qty * price)
-    return loss
-
-
 def _risk(
     decision: dict[str, Any],
     symbol: str,
@@ -180,12 +205,13 @@ def _risk(
     notional: Decimal,
     quote: dict[str, Any] | None,
     now: datetime,
+    book: dict[str, Any],
 ) -> str | None:
     if quote is None:
         return "missing_quote"
     from nomadquant.broker.paper_pilot import _as_datetime
 
-    touch = _money(quote.get("ask"))
+    touch = _money(quote.get("bid") if action == "SELL" else quote.get("ask"))
     if touch is None or touch <= 0:
         return "missing_quote"
     quantity = (notional / touch).quantize(Decimal("0.000001"), rounding=ROUND_DOWN)
@@ -208,11 +234,19 @@ def _risk(
             "bar_kind": "quote",
         }
     }
-    ledger = InternalLedger(cash_usd=Decimal("100"), holdings={})
+    cash = Decimal(str(book["available_cash_usd"]))
+    holdings = {
+        key: Decimal(value) for key, value in book["strategy_qty"].items() if Decimal(value) > 0
+    }
+    if action == "SELL":
+        quantity = holdings.get(symbol, Decimal("0"))
+    equity = Decimal(str(book["equity_usd"]))
+    peak = max(Decimal("100"), equity)
+    ledger = InternalLedger(cash_usd=cash, holdings=holdings)
     account = AccountMetrics(
-        realized_pnl_today_usd=Decimal("0"),
-        equity_usd=Decimal("100"),
-        peak_equity_usd=Decimal("100"),
+        realized_pnl_today_usd=Decimal(str(book["realized_pnl_usd"])),
+        equity_usd=equity,
+        peak_equity_usd=peak,
     )
     result = RiskEngine(RiskPolicy()).evaluate(
         proposal, ledger, prices, account=account, now=now, clock="prospective", store=None

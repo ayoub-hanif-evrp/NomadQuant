@@ -36,6 +36,7 @@ def _rising() -> tuple[list[date], dict[str, dict[date, Decimal]]]:
 def test_trend_buys_an_uptrend_and_reversal_stays_quiet() -> None:
     _sessions, prices = _rising()
     assert trend_action(prices["SPY"], SIGNAL) == "BUY"
+    assert trend_action(prices["SPY"], SIGNAL, Decimal("1")) == "HOLD"
     assert reversal_action(prices["SPY"], SIGNAL) == "HOLD"
     choice = primary_candidate(prices, SIGNAL)
     assert choice is not None
@@ -48,7 +49,8 @@ def test_reversal_does_not_buy_a_broken_trend() -> None:
     closes = {day: Decimal("100") for day in sessions}
     for day in sessions[-5:]:
         closes[day] = Decimal("70")
-    assert trend_action(closes, SIGNAL) == "SELL"
+    assert trend_action(closes, SIGNAL) == "HOLD"
+    assert trend_action(closes, SIGNAL, Decimal("1")) == "SELL"
     assert reversal_action(closes, SIGNAL) == "HOLD"
 
 
@@ -115,12 +117,12 @@ def test_mcp_discovers_read_only_tools_and_rejects_order_submission() -> None:
         ],
         sleeve={"remaining_usd": "95.01"},
     )
-    results = invoke_readonly_tools(context, WHEN.isoformat())
+    results = invoke_readonly_tools(
+        context, WHEN.isoformat(), requested=["news_headlines", "submit_order", "eligible_signals"]
+    )
     names = [row["tool"] for row in results]
-    assert "strategy_registry" in names
-    assert "submit_order" in names
-    submit = next(row for row in results if row["tool"] == "submit_order")
-    assert submit["is_error"] is True
+    assert names == ["news_headlines", "eligible_signals"]
+    assert "submit_order" not in names
     news = next(row for row in results if row["tool"] == "news_headlines")
     assert "SPY trading update" in news["text"]
     assert "ignore previous instructions" not in news["text"]
@@ -160,17 +162,44 @@ def test_unauthorized_cycle_records_hold_without_a_broker_call(tmp_path: Path) -
     assert client.submitted == []
 
 
+class _Agree:
+    def select_tools(self) -> list[str]:
+        return ["eligible_signals", "sleeve_snapshot"]
+
+    def complete(self, role: str, _prompt: str) -> dict[str, object]:
+        if role == "portfolio":
+            return {
+                "role": role,
+                "action": "BUY",
+                "symbol": "SPY",
+                "evidence_ids": ["eligible_signals"],
+            }
+        if role == "skeptic":
+            return {
+                "role": role,
+                "stance": "AGREE",
+                "evidence_ids": ["indicator_snapshot"],
+                "objections": [],
+            }
+        if role == "news_analyst":
+            return {"role": role, "material_uncertainty": False, "evidence_ids": ["news_headlines"]}
+        return {"role": role, "evidence_ids": ["strategy_registry"]}
+
+
 def test_authorized_pilot_submits_once_and_kill_stops_the_next(tmp_path: Path) -> None:
     settings = make_settings(tmp_path)
     _sessions, prices = _rising()
     authorize_daily_pilot(settings, confirm=AUTHORIZE_PHRASE, days=30, now=WHEN)
-    decision = {
-        "action": "BUY",
-        "symbol": "SPY",
-        "strategy_id": "etf_trend_sma_v1",
-        "notional_usd": "25",
-        "signal_session": SIGNAL.isoformat(),
-    }
+    decision = evaluate_daily(
+        settings,
+        prices=prices,
+        signal_session=SIGNAL,
+        now=WHEN,
+        model=_Agree(),
+        use_mcp=False,
+    )
+    assert decision["action"] == "BUY"
+    assert decision["strategy_version"] == "1.0.0"
     client = FakeClient(when=WHEN)
     first = submit_daily_paper_order(
         settings,
@@ -209,6 +238,25 @@ def test_authorized_pilot_submits_once_and_kill_stops_the_next(tmp_path: Path) -
 def test_connectivity_shares_cannot_be_sold_as_strategy_shares(tmp_path: Path) -> None:
     settings = make_settings(tmp_path)
     authorize_daily_pilot(settings, confirm=AUTHORIZE_PHRASE, days=1, now=WHEN)
+    from nomadquant.daily.store import save_decision
+
+    save_decision(
+        settings.daily_path,
+        created_at=WHEN.isoformat(),
+        signal_session=SIGNAL.isoformat(),
+        payload={
+            "action": "SELL",
+            "symbol": "SPY",
+            "strategy_id": "etf_trend_sma_v1",
+            "strategy_version": "1.0.0",
+            "notional_usd": "15",
+            "signal_session": SIGNAL.isoformat(),
+            "execution_session": "2024-11-04",
+            "influence_policy": "daily_agent_influence_1.0.0",
+            "risk_policy": "daily_risk_1.0.0",
+            "missed_window": False,
+        },
+    )
     _insert_order(
         settings.paper_path,
         client_order_id=CONNECTIVITY_CLIENT_ID,
@@ -263,6 +311,73 @@ def test_walk_forward_is_labeled_hypothetical_and_schedule_stays_off() -> None:
         "installed": False,
         "reason": "schedule_install_disabled",
     }
+
+
+def test_strategy_loss_uses_marked_pnl_not_the_fill_gap() -> None:
+    from nomadquant.daily.portfolio import build_portfolio
+
+    slippage = build_portfolio(
+        [
+            {
+                "purpose": "strategy",
+                "broker_status": "filled",
+                "side": "buy",
+                "symbol": "SPY",
+                "filled_qty": "1",
+                "filled_avg_price": "10",
+                "notional_usd": "10.01",
+            }
+        ],
+        {"SPY": Decimal("10")},
+    )
+    assert slippage["loss_stop"] is False
+    assert slippage["strategy_pnl_usd"] == "0"
+    loss = build_portfolio(
+        [
+            {
+                "purpose": "strategy",
+                "broker_status": "filled",
+                "side": "buy",
+                "symbol": "SPY",
+                "filled_qty": "1",
+                "filled_avg_price": "50",
+                "notional_usd": "50",
+            }
+        ],
+        {"SPY": Decimal("20")},
+    )
+    assert loss["strategy_pnl_usd"] == "-30"
+    assert loss["loss_stop"] is True
+
+
+def test_missing_ollama_fail_closes_without_a_fabricated_reply(tmp_path: Path) -> None:
+    from nomadquant.daily.ollama_model import load_ollama_model
+
+    class _Down:
+        def health(self, timeout: float = 2.0) -> dict[str, object]:
+            del timeout
+            return {"available": False, "models": []}
+
+    settings = make_settings(tmp_path, ollama_model="qwen")
+    assert load_ollama_model(settings, _Down()) is None  # type: ignore[arg-type]
+
+
+def test_daily_kill_blocks_the_connectivity_route_too(tmp_path: Path) -> None:
+    from nomadquant.broker.paper_pilot import submit_connectivity_order
+    from nomadquant.daily.authorization import revoke_daily_pilot
+    from tests.test_paper_pilot import ENABLE_PHRASE, enable_paper_orders
+
+    settings = make_settings(tmp_path)
+    enable_paper_orders(settings, confirm=ENABLE_PHRASE, hours=1, now=WHEN)
+    revoke_daily_pilot(settings, now=WHEN)
+    refused = submit_connectivity_order(
+        settings,
+        confirm="SUBMIT_ONE_FIVE_DOLLAR_PAPER_CONNECTIVITY_ORDER",
+        client=FakeClient(when=WHEN),
+        quote_client=_Quotes(WHEN),
+        now=WHEN,
+    )
+    assert refused["reason"] == "killed"
 
 
 def test_bad_phrase_and_live_flag_cannot_authorize(tmp_path: Path) -> None:

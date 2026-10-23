@@ -120,6 +120,20 @@ def enqueue_notice(path: str, *, created_at: str, subject: str, body: str) -> di
         return {"id": int(cursor.lastrowid or 0), "status": "queued", "sent": False}
 
 
+def notice_body(path: str, notice_id: int) -> tuple[str, str] | None:
+    try:
+        with _connect(path) as connection:
+            row = connection.execute(
+                "SELECT subject, body FROM daily_notices WHERE id = ?",
+                (notice_id,),
+            ).fetchone()
+    except sqlite3.DatabaseError:
+        return None
+    if row is None:
+        return None
+    return str(row["subject"]), str(row["body"])
+
+
 def notice_status(path: str) -> dict[str, Any]:
     try:
         with _connect(path) as connection:

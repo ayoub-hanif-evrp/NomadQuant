@@ -158,10 +158,9 @@ def paper_status(
         "ready_for_first_order": False,
         "schedule_installed": False,
         "first_order_authorization": (
-            "During a regular session, enable paper orders for at most 24 hours with "
-            f"{ENABLE_PHRASE}, then authorize one connectivity order with "
-            f"{CONNECTIVITY_PHRASE}. A fresh bid/ask is required at that moment. "
-            "No order is sent until then."
+            "The connectivity test already has a filled paper order and must not be sold. "
+            "Further paper orders stay off until AUTHORIZE_DAILY_PAPER_PILOT, for at most "
+            "30 days. DISABLE_ALPACA_PAPER_ORDERS stops every submission path."
         ),
     }
 
@@ -285,6 +284,11 @@ def submit_connectivity_order(
     clock = now or datetime.now(UTC)
     if confirm != CONNECTIVITY_PHRASE:
         return _refused("authorization_missing")
+    from nomadquant.daily.authorization import shared_emergency_stop
+
+    stopped = shared_emergency_stop(settings, now=clock)
+    if stopped is not None:
+        return _refused(stopped)
     auth = _authorization(settings.paper_path, clock)
     if not auth["enabled"]:
         return _refused(str(auth["reason"]))
@@ -344,6 +348,11 @@ def submit_strategy_paper_order(
     clock = now or datetime.now(UTC)
     if decision_id.split(":", 1)[0] == "spy_tsmom_12_1":
         return _refused("retired_monthly_strategy")
+    from nomadquant.daily.authorization import shared_emergency_stop
+
+    stopped = shared_emergency_stop(settings, now=clock)
+    if stopped is not None:
+        return _refused(stopped)
     auth = _authorization(settings.paper_path, clock)
     if not auth["enabled"]:
         return _refused(str(auth["reason"]))

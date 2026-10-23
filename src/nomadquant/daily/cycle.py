@@ -7,6 +7,7 @@ from decimal import Decimal
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from nomadquant.broker.paper_pilot import _orders
 from nomadquant.config import Settings
 from nomadquant.daily.agents import LanguageModel, run_agents
 from nomadquant.daily.authorization import authorization_status
@@ -14,6 +15,7 @@ from nomadquant.daily.engine import primary_candidate
 from nomadquant.daily.mailer import deliver_notice
 from nomadquant.daily.mcp_client import invoke_readonly_tools
 from nomadquant.daily.mcp_server import MarketContext
+from nomadquant.daily.portfolio import build_portfolio
 from nomadquant.daily.registry import INFLUENCE_POLICY, RISK_POLICY, public_registry
 from nomadquant.daily.store import (
     enqueue_notice,
@@ -50,7 +52,12 @@ def evaluate_daily(
         reason = None
         if now < modeled_available_at(signal_session):
             reason = "signal_not_available"
-    baseline = None if reason else primary_candidate(prices, signal_session)
+    try:
+        book = build_portfolio(_orders(settings.paper_path))
+    except Exception:  # noqa: BLE001
+        book = build_portfolio([])
+    holdings = {key: Decimal(value) for key, value in book["strategy_qty"].items()}
+    baseline = None if reason else primary_candidate(prices, signal_session, holdings)
     tool_rows: list[dict[str, Any]] = []
     if use_mcp and reason is None:
         context = MarketContext(
@@ -84,6 +91,12 @@ def evaluate_daily(
         "execution_session": None if execution is None else execution.isoformat(),
         "missed_window": missed,
         "submitted": False,
+        "strategy_version": None if baseline is None else baseline.get("version"),
+        "portfolio": {
+            "available_cash_usd": book["available_cash_usd"],
+            "strategy_pnl_usd": book["strategy_pnl_usd"],
+            "connectivity_qty": book["connectivity_qty"],
+        },
         "influence_policy": INFLUENCE_POLICY,
         "risk_policy": RISK_POLICY,
         "historical_replay_counts_as_performance": False,
@@ -100,9 +113,14 @@ def evaluate_daily(
         created_at=now.isoformat(),
         subject=f"Daily decision {payload['action']}",
         body=(
-            f"Action {payload['action']}. Strategy {payload.get('strategy_id')}. "
+            f"Action {payload['action']}. Strategy {payload.get('strategy_id')} "
+            f"version {payload.get('strategy_version')}. "
+            f"Signal {payload['signal_session']}. Execution {payload['execution_session']}. "
             f"Baseline {payload.get('baseline_action')} is hypothetical and was not sent "
-            "to Alpaca. Connectivity-test P&L is excluded."
+            f"to Alpaca. Allocated cash {book['available_cash_usd']}. "
+            f"Strategy P&L {book['strategy_pnl_usd']}. "
+            f"Connectivity quantity {book['connectivity_qty']} is excluded from strategy P&L. "
+            "This notice is not a per-trade approval."
         ),
     )
     delivery = deliver_notice(settings, int(notice["id"]))
@@ -126,7 +144,7 @@ def daily_status(settings: Settings, *, now: datetime | None = None) -> dict[str
         "computer_must_be_on": True,
         "connectivity_position_isolated": True,
         "per_trade_approval": False,
-        "emergency_stop": auth.get("reason") == "killed" or auth.get("enabled") is False,
+        "emergency_stop": auth.get("reason") == "killed",
         "activation_phrase": "AUTHORIZE_DAILY_PAPER_PILOT",
         "as_of": clock.isoformat(),
     }

@@ -12,7 +12,7 @@ The filled connectivity order `nq-connect-spy-buy-5` / `e9bab439-11e8-4814-aeca-
 
 `etf_reversal_5d_v1` is a restricted reading of Jegadeesh (1990) and Lehmann (1990). Index ETFs diversify the stock-level effect, so a buy also requires the close to remain above the 200-session average and a five-session decline of at least 1.5 trailing dispersions. It does not buy when the trend strategy is already buying, when price is below the average, or when daily volatility exceeds 2.5 percent.
 
-Both rules use only sessions available after 16:30 America/New_York and, when authorized, would trade on the next regular session. A missed session is recorded and is not submitted late. HOLD is a normal outcome.
+Both rules use only sessions available after 16:30 America/New_York and, when authorized, would trade on the next regular session. A missed session is recorded and is not submitted late. HOLD is a normal outcome. An existing long position is not bought again while the target stays long. A cash target sells only shares the strategy itself holds.
 
 Walk-forward output is labeled `historical_research` and `hypothetical_not_broker`. It is not prospective paper performance.
 
@@ -28,6 +28,8 @@ Submission stays off until this exact phrase is used with a duration of 1 to 30 
 
 `AUTHORIZE_DAILY_PAPER_PILOT`
 
-`DISABLE_ALPACA_PAPER_ORDERS` remains the emergency stop. No Windows task is installed. The computer would have to be on for any later local schedule.
+`DISABLE_ALPACA_PAPER_ORDERS` is the emergency stop for the connectivity route, the retired monthly route, and the daily route. A daily kill also stops the older routes. No Windows task is installed. `scripts/daily-ai.ps1` prints the local desk status and does not submit. The computer would have to be on for any later local schedule.
+
+Strategy loss uses realized plus marked-to-market P&L on strategy holdings. A difference between requested notional and fill value is not a loss. A missing mark blocks a new order.
 
 Post-trade email is queued after a decision. Without SMTP, the notice stays `not_configured` and is not described as delivered.
