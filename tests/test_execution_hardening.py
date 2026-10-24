@@ -7,7 +7,7 @@ from pathlib import Path
 from nomadquant.broker.paper_pilot import _insert_order, _update
 from nomadquant.daily.authorization import AUTHORIZE_PHRASE, authorize_daily_pilot
 from nomadquant.daily.execute import _floor_shares, _session_limit, submit_daily_paper_order
-from nomadquant.daily.fingerprint import price_fingerprint
+from nomadquant.daily.fingerprint import DATASET_ID, price_fingerprint
 from nomadquant.daily.influence import apply_influence
 from nomadquant.daily.portfolio import build_portfolio
 from nomadquant.daily.store import save_decision
@@ -32,7 +32,9 @@ def _decision(prices: dict[str, dict[date, Decimal]], action: str) -> dict[str, 
         "influence_policy": "daily_agent_influence_1.0.0",
         "risk_policy": "daily_risk_1.0.0",
         "missed_window": False,
-        "price_fingerprint": price_fingerprint(prices),
+        "market_feed": "iex",
+        "market_dataset": DATASET_ID,
+        "price_fingerprint": price_fingerprint(prices, feed="iex"),
     }
 
 
@@ -51,13 +53,23 @@ def test_daily_realized_pnl_follows_the_new_york_session() -> None:
         _fill("buy-t", "buy", "1", "10", "2024-11-04T15:00:00+00:00"),
         _fill("sell-t", "sell", "0.5", "8", "2024-11-04T16:00:00+00:00"),
     ]
-    book = build_portfolio(orders, {"SPY": Decimal("8")}, session=TODAY)
+    executions = [
+        _execution(
+            row["client_order_id"],
+            row["side"],
+            row["filled_qty"],
+            row["filled_avg_price"],
+            row["created_at"],
+        )
+        for row in orders
+    ]
+    book = build_portfolio(orders, {"SPY": Decimal("8")}, session=TODAY, executions=executions)
     assert book["realized_pnl_usd"] == "1.0"
     assert book["realized_today_usd"] == "-1.0"
 
 
 def test_fractional_sell_floors_and_keeps_the_residual(tmp_path: Path) -> None:
-    assert _floor_shares(Decimal("0.123456789")) == Decimal("0.123456")
+    assert _floor_shares(Decimal("0.1234567899")) == Decimal("0.123456789")
     settings = make_settings(tmp_path)
     authorize_daily_pilot(settings, confirm=AUTHORIZE_PHRASE, days=1, now=WHEN)
     prices = _down()
@@ -68,10 +80,10 @@ def test_fractional_sell_floors_and_keeps_the_residual(tmp_path: Path) -> None:
         payload=_decision(prices, "SELL"),
     )
     seed_closes(settings, prices, now=WHEN)
-    _open(settings, "0.123456789", "500")
+    _open(settings, "0.1234567899", "100")
     client = FakeClient(when=WHEN)
     client.positions = [
-        type("Position", (), {"symbol": "SPY", "qty": "0.123456789", "side": "long"})()
+        type("Position", (), {"symbol": "SPY", "qty": "0.1234567899", "side": "long"})()
     ]
     result = submit_daily_paper_order(
         settings,
@@ -82,8 +94,8 @@ def test_fractional_sell_floors_and_keeps_the_residual(tmp_path: Path) -> None:
         now=WHEN,
     )
     assert result["submitted"] is True
-    assert Decimal(str(client.submitted[0].qty)) == Decimal("0.123456")  # type: ignore[attr-defined]
-    assert Decimal(result["residual_qty"]) == Decimal("0.000000789")
+    assert Decimal(str(client.submitted[0].qty)) == Decimal("0.123456789")  # type: ignore[attr-defined]
+    assert Decimal(result["residual_qty"]) == Decimal("0.0000000009")
 
 
 def test_drawdown_blocks_a_buy_and_still_allows_the_exit(tmp_path: Path) -> None:
@@ -259,6 +271,22 @@ def test_an_agent_cannot_invent_a_buy() -> None:
         },
     )
     assert result["action"] == "HOLD"
+
+
+def _execution(
+    order_id: str, side: str, qty: str, price: str, executed_at: str
+) -> dict[str, object]:
+    return {
+        "execution_id": order_id,
+        "client_order_id": order_id,
+        "purpose": "strategy",
+        "side": side,
+        "symbol": "SPY",
+        "qty": qty,
+        "price": price,
+        "executed_at": executed_at,
+        "aggregate": False,
+    }
 
 
 def _fill(order_id: str, side: str, qty: str, price: str, created: str) -> dict[str, str]:

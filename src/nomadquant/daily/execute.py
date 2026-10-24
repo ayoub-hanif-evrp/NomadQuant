@@ -27,14 +27,18 @@ from nomadquant.broker.paper_pilot import (
 from nomadquant.config import PAPER_API_URL, Settings
 from nomadquant.daily.authorization import authorization_status, shared_emergency_stop
 from nomadquant.daily.engine import primary_candidate
+from nomadquant.daily.fills import load_executions
 from nomadquant.daily.fingerprint import authoritative_disagreement, price_fingerprint
 from nomadquant.daily.portfolio import build_portfolio
 from nomadquant.daily.registry import INFLUENCE_POLICY, RISK_POLICY, SPECS, UNIVERSE
 from nomadquant.daily.store import latest_decision, note_equity
 from nomadquant.risk.engine import RiskEngine
 from nomadquant.risk.ledger import InternalLedger
-from nomadquant.risk.policy import POLICY_VERSION, RiskPolicy
+from nomadquant.risk.policy import RiskPolicy
 from nomadquant.risk.schemas import AccountMetrics, Proposal
+
+_PAPER_POLICY = RiskPolicy(version="1.3.0", max_qty_decimals=9)
+_QTY_STEP = Decimal("0.000000001")
 
 
 def submit_daily_paper_order(
@@ -86,21 +90,37 @@ def submit_daily_paper_order(
         return _refused("missing_signal")
     from datetime import date
 
-    if stored.get("price_fingerprint") != price_fingerprint(prices):
+    feed = str(stored.get("market_feed") or "")
+    if stored.get("price_fingerprint") != price_fingerprint(prices, feed=feed):
         return _refused("price_fingerprint_mismatch")
-    disagreed = authoritative_disagreement(settings, prices, now=clock)
+    decided_at = _decision_clock(stored.get("recorded_at"))
+    if decided_at is None:
+        return _refused("unverified_market_data")
+    disagreed = authoritative_disagreement(
+        settings, prices, feed=feed, decided_at=decided_at, now=clock
+    )
     if disagreed is not None:
         return _refused(disagreed)
     orders = _orders(settings.paper_path)
-    held_book = build_portfolio(orders)
+    try:
+        executions = load_executions(settings.paper_path)
+    except Exception:  # noqa: BLE001
+        return _refused("ledger_unreadable")
+    held_book = build_portfolio(orders, executions=executions)
     strategy_held = any(Decimal(value) > 0 for value in held_book["strategy_qty"].values())
     if action == "SELL" and Decimal(held_book["connectivity_qty"]) > 0 and not strategy_held:
         return _refused("connectivity_position_isolated")
     symbols = _marked_symbols(held_book)
-    marks = _marks(settings, symbols, quote_client, clock)
+    quotes = _mark_quotes(settings, symbols, quote_client, clock)
     session_day = clock.astimezone(ZoneInfo("America/New_York")).date()
-    book = build_portfolio(orders, {} if marks is None else marks, session=session_day)
-    if marks is None and symbols:
+    marks = None if quotes is None else {symbol: quote["bid"] for symbol, quote in quotes.items()}
+    book = build_portfolio(
+        orders,
+        {} if marks is None else marks,
+        session=session_day,
+        executions=executions,
+    )
+    if quotes is None and symbols:
         return _refused("portfolio_unreconciled")
     if book["disputed"] or not book["marks_complete"]:
         return _refused("portfolio_unreconciled")
@@ -166,7 +186,7 @@ def submit_daily_paper_order(
         touch = _money(quote.get("ask")) if quote else None
         if touch is None or touch <= 0:
             return _refused("missing_quote")
-        quantity = (notional / touch).quantize(Decimal("0.000001"), rounding=ROUND_DOWN)
+        quantity = (notional / touch).quantize(_QTY_STEP, rounding=ROUND_DOWN)
     if book["equity_usd"] is None or book["realized_today_usd"] is None:
         return _refused("portfolio_unreconciled")
     peak = Decimal(
@@ -177,7 +197,7 @@ def submit_daily_paper_order(
             realized=str(book["realized_pnl_usd"]),
         )
     )
-    verdict = _risk(stored, symbol, action, quantity, quote, clock, book, peak)
+    verdict = _risk(stored, symbol, action, quantity, quotes, quote, clock, book, peak)
     if verdict is not None:
         return _refused(verdict)
     fresh = _recheck_before_send(settings, client, symbol, quote_client, now)
@@ -189,10 +209,10 @@ def submit_daily_paper_order(
         if bid is None or bid <= 0:
             return _refused("missing_quote")
         notional = (quantity * bid).quantize(Decimal("0.01"))
-    verdict = _risk(stored, symbol, action, quantity, refreshed, clock, book, peak)
+    verdict = _risk(stored, symbol, action, quantity, quotes, refreshed, clock, book, peak)
     if verdict is not None:
         return _refused(verdict)
-    _insert_order(
+    claimed = _insert_order(
         settings.paper_path,
         client_order_id=client_order_id,
         purpose="strategy",
@@ -203,6 +223,12 @@ def submit_daily_paper_order(
         decision_id=f"{strategy_id}:{signal}:{symbol}:{action.lower()}",
         counts_as_strategy_pnl=True,
     )
+    if not claimed:
+        existing = _find(settings.paper_path, client_order_id)
+        recovered = _recover_existing(settings, client, client_order_id, existing)
+        if recovered is None:
+            return _refused("broker_record_not_confirmed")
+        return recovered
     result = _send(
         settings,
         client,
@@ -220,8 +246,20 @@ def submit_daily_paper_order(
 
 
 def _floor_shares(quantity: Decimal) -> Decimal:
-    """Match the risk policy's 6 decimal places without rounding a sell upward."""
-    return quantity.quantize(Decimal("0.000001"), rounding=ROUND_DOWN)
+    """Alpaca fractional qty allows 9 decimal places. Never round a sell upward."""
+    return quantity.quantize(_QTY_STEP, rounding=ROUND_DOWN)
+
+
+def _decision_clock(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        stamp = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    if stamp.tzinfo is None:
+        return None
+    return stamp
 
 
 def _trusted(
@@ -262,24 +300,24 @@ def _marked_symbols(book: dict[str, Any]) -> set[str]:
     return symbols
 
 
-def _marks(
+def _mark_quotes(
     settings: Settings,
     symbols: set[str],
     quote_client: Any | None,
     now: datetime,
-) -> dict[str, Decimal] | None:
+) -> dict[str, dict[str, Any]] | None:
     if not symbols:
         return {}
-    found: dict[str, Decimal] = {}
+    found: dict[str, dict[str, Any]] = {}
     for symbol in symbols:
         quote = _trusted(settings, symbol, quote_client, now)
         if quote is None or _quote_problem(quote, symbol, now) is not None:
             return None
         bid = _money(quote.get("bid"))
-        ask = None if quote is None else _money(quote.get("ask"))
+        ask = _money(quote.get("ask"))
         if bid is None or ask is None or bid <= 0 or ask < bid:
             return None
-        found[symbol] = bid
+        found[symbol] = {**quote, "bid": bid, "ask": ask}
     return found
 
 
@@ -288,12 +326,13 @@ def _risk(
     symbol: str,
     action: str,
     quantity: Decimal,
+    quotes: dict[str, dict[str, Any]] | None,
     quote: dict[str, Any] | None,
     now: datetime,
     book: dict[str, Any],
     peak: Decimal,
 ) -> str | None:
-    if quote is None or quantity <= 0:
+    if quote is None or quotes is None or quantity <= 0:
         return "missing_quote"
     from nomadquant.broker.paper_pilot import _as_datetime
 
@@ -308,14 +347,21 @@ def _risk(
         quantity=quantity,
         as_of=now,
     )
-    prices = {
-        symbol: {
-            "price": touch,
-            "as_of": _as_datetime(quote.get("market_timestamp")),
-            "feed": quote.get("feed"),
-            "first_retrieved_at": _as_datetime(quote.get("retrieved_at")),
+    prices: dict[str, Any] = {}
+    for held, held_quote in quotes.items():
+        prices[held] = {
+            "price": held_quote["bid"],
+            "as_of": _as_datetime(held_quote.get("market_timestamp")),
+            "feed": held_quote.get("feed"),
+            "first_retrieved_at": _as_datetime(held_quote.get("retrieved_at")),
             "bar_kind": "quote",
         }
+    prices[symbol] = {
+        "price": touch,
+        "as_of": _as_datetime(quote.get("market_timestamp")),
+        "feed": quote.get("feed"),
+        "first_retrieved_at": _as_datetime(quote.get("retrieved_at")),
+        "bar_kind": "quote",
     }
     cash = Decimal(str(book["available_cash_usd"]))
     holdings = {
@@ -330,9 +376,9 @@ def _risk(
         equity_usd=equity,
         peak_equity_usd=peak,
     )
-    result = RiskEngine(RiskPolicy()).evaluate(
+    result = RiskEngine(_PAPER_POLICY).evaluate(
         proposal, ledger, prices, account=account, now=now, clock="prospective", store=None
     )
-    if result.verdict != "APPROVE" or result.policy_version != POLICY_VERSION:
+    if result.verdict != "APPROVE" or result.policy_version != _PAPER_POLICY.version:
         return "risk_not_approved"
     return None

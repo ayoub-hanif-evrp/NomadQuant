@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 from zoneinfo import ZoneInfo
+
+from nomadquant.daily.fills import fill_lots
 
 ALLOCATION = Decimal("100")
 STRATEGY_LOSS_STOP = Decimal("20")
@@ -63,12 +65,17 @@ def build_portfolio(
     marks: dict[str, Decimal] | None = None,
     *,
     session: date | None = None,
+    executions: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Return allocated cash, cost basis, and strategy P&L.
 
-    A missing mark leaves valuation unavailable. Cost basis is not shown as a
-    market price. A cancelled order keeps any shares that actually filled.
+    Fills come from execution events. An order's ``created_at`` is not a fill
+    time. A sell without an execution timestamp leaves today's P&L unverified.
+    A missing mark leaves valuation unavailable. A cancelled order keeps any
+    shares that actually filled.
     """
+    rows = _deduped(orders)
+    lots, disputed = fill_lots(rows, [] if executions is None else executions)
     cash = ALLOCATION
     reserved = Decimal("0")
     realized = Decimal("0")
@@ -79,10 +86,46 @@ def build_portfolio(
     quantity: dict[str, Decimal] = {}
     cost: dict[str, Decimal] = {}
     sell_reserved: dict[str, Decimal] = {}
-    disputed = False
     uncertain = False
-    for row in _deduped(orders):
-        purpose = str(row.get("purpose") or "")
+    for lot in lots:
+        purpose = str(lot.get("purpose") or "")
+        side = str(lot.get("side") or "")
+        symbol = str(lot.get("symbol") or "")
+        filled = _money(lot.get("qty")) or Decimal("0")
+        price = _money(lot.get("price"))
+        if purpose == "connectivity":
+            if side == "buy" and filled > 0 and price is not None and price > 0:
+                connectivity_qty += filled
+                connectivity_cost += filled * price
+                cash -= filled * price
+            else:
+                uncertain = True
+            continue
+        if side == "sell":
+            owned = quantity.get(symbol, Decimal("0"))
+            basis = cost.get(symbol, Decimal("0"))
+            if filled > owned or owned <= 0 or price is None or price <= 0:
+                disputed = True
+                continue
+            removed = basis * filled / owned
+            quantity[symbol] = owned - filled
+            cost[symbol] = basis - removed
+            gain = filled * price - removed
+            cash += filled * price
+            realized += gain
+            traded = _session_day(lot.get("executed_at"))
+            if traded is None:
+                today_known = False
+            elif session is not None and traded == session:
+                realized_today += gain
+            continue
+        if side != "buy" or price is None or price <= 0 or filled <= 0:
+            uncertain = True
+            continue
+        quantity[symbol] = quantity.get(symbol, Decimal("0")) + filled
+        cost[symbol] = cost.get(symbol, Decimal("0")) + filled * price
+        cash -= filled * price
+    for row in rows:
         status = str(row.get("broker_status") or "")
         side = str(row.get("side") or "")
         symbol = str(row.get("symbol") or "")
@@ -93,63 +136,21 @@ def build_portfolio(
             uncertain = True
         if status == "unknown":
             uncertain = True
-        if purpose == "connectivity":
-            if side == "buy" and filled > 0 and price is not None and price > 0:
-                connectivity_qty += filled
-                spent = filled * price
-                connectivity_cost += spent
-                cash -= spent
-            elif side == "buy" and filled > 0:
-                uncertain = True
-            if side == "buy" and status in _OPEN:
-                spent = filled * price if filled > 0 and price is not None else Decimal("0")
-                remainder = max(Decimal("0"), notional - spent)
-                reserved += remainder
-                cash -= remainder
+        if status not in _OPEN:
             continue
         if side == "sell":
-            owned = quantity.get(symbol, Decimal("0"))
-            basis = cost.get(symbol, Decimal("0"))
-            if filled > owned or (filled > 0 and owned <= 0):
-                disputed = True
-                continue
-            if filled > 0 and (price is None or price <= 0):
+            remaining = _money(row.get("remaining_qty"))
+            if remaining is None:
                 uncertain = True
-                continue
-            if filled > 0 and price is not None:
-                removed = basis * filled / owned
-                quantity[symbol] = owned - filled
-                cost[symbol] = basis - removed
-                gain = filled * price - removed
-                cash += filled * price
-                realized += gain
-                if session is not None:
-                    traded = _session_day(row)
-                    if traded is None:
-                        today_known = False
-                    elif traded == session:
-                        realized_today += gain
-            if status in _OPEN:
-                remaining = _money(row.get("remaining_qty"))
-                if remaining is None:
-                    uncertain = True
-                elif remaining > 0:
-                    sell_reserved[symbol] = sell_reserved.get(symbol, Decimal("0")) + remaining
+            elif remaining > 0:
+                sell_reserved[symbol] = sell_reserved.get(symbol, Decimal("0")) + remaining
             continue
         if side != "buy":
             uncertain = True
             continue
         spent = filled * price if filled > 0 and price is not None and price > 0 else Decimal("0")
-        if filled > 0 and spent <= 0:
-            uncertain = True
-        elif spent > 0:
-            quantity[symbol] = quantity.get(symbol, Decimal("0")) + filled
-            cost[symbol] = cost.get(symbol, Decimal("0")) + spent
-            cash -= spent
-        if status in _OPEN:
-            remainder = max(Decimal("0"), notional - spent)
-            reserved += remainder
-            cash -= remainder
+        reserved += max(Decimal("0"), notional - spent)
+        cash -= max(Decimal("0"), notional - spent)
     unrealized = Decimal("0")
     market_value = Decimal("0")
     missing_mark = False
@@ -205,12 +206,14 @@ def build_portfolio(
     }
 
 
-def _session_day(row: dict[str, Any]) -> date | None:
-    text = str(row.get("created_at") or "")
+def _session_day(value: object) -> date | None:
+    """Assign a New York session only from a timezone-aware execution timestamp."""
+    if not isinstance(value, str) or not value:
+        return None
     try:
-        created = datetime.fromisoformat(text)
+        executed = datetime.fromisoformat(value)
     except ValueError:
         return None
-    if created.tzinfo is None:
-        created = created.replace(tzinfo=UTC)
-    return created.astimezone(ZoneInfo("America/New_York")).date()
+    if executed.tzinfo is None:
+        return None
+    return executed.astimezone(ZoneInfo("America/New_York")).date()

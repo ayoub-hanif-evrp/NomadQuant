@@ -12,7 +12,7 @@ from nomadquant.daily.authorization import AUTHORIZE_PHRASE, authorize_daily_pil
 from nomadquant.daily.cycle import daily_status, evaluate_daily, install_schedule
 from nomadquant.daily.engine import candidates, primary_candidate, reversal_action, trend_action
 from nomadquant.daily.execute import submit_daily_paper_order
-from nomadquant.daily.fingerprint import price_fingerprint
+from nomadquant.daily.fingerprint import DATASET_ID, price_fingerprint
 from nomadquant.daily.influence import apply_influence
 from nomadquant.daily.mcp_client import invoke_readonly_tools
 from nomadquant.daily.mcp_server import MarketContext
@@ -289,7 +289,9 @@ def test_connectivity_shares_cannot_be_sold_as_strategy_shares(tmp_path: Path) -
             "influence_policy": "daily_agent_influence_1.0.0",
             "risk_policy": "daily_risk_1.0.0",
             "missed_window": False,
-            "price_fingerprint": price_fingerprint(prices),
+            "market_feed": "iex",
+            "market_dataset": DATASET_ID,
+            "price_fingerprint": price_fingerprint(prices, feed="iex"),
         },
     )
     seed_closes(settings, prices, now=WHEN)
@@ -494,7 +496,9 @@ def test_held_strategy_shares_can_be_sold_after_a_mark(tmp_path: Path) -> None:
             "influence_policy": "daily_agent_influence_1.0.0",
             "risk_policy": "daily_risk_1.0.0",
             "missed_window": False,
-            "price_fingerprint": price_fingerprint(prices),
+            "market_feed": "iex",
+            "market_dataset": DATASET_ID,
+            "price_fingerprint": price_fingerprint(prices, feed="iex"),
         },
     )
     seed_closes(settings, prices, now=WHEN)

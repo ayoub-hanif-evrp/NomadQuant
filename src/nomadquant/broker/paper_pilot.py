@@ -15,6 +15,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from nomadquant.config import PAPER_API_URL, Settings
+from nomadquant.daily.fills import journal_broker_order
 from nomadquant.marketdata.availability import modeled_available_at
 from nomadquant.marketdata.calendar import is_early_close, next_session, sessions_between
 from nomadquant.marketdata.store import MarketStore
@@ -86,6 +87,18 @@ CREATE TABLE IF NOT EXISTS paper_orders (
     remaining_qty TEXT,
     decision_id TEXT,
     counts_as_strategy_pnl INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS paper_executions (
+    execution_id TEXT PRIMARY KEY,
+    client_order_id TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    side TEXT NOT NULL,
+    qty TEXT NOT NULL,
+    price TEXT NOT NULL,
+    executed_at TEXT,
+    purpose TEXT NOT NULL,
+    aggregate INTEGER NOT NULL,
+    recorded_at TEXT NOT NULL
 );
 """
 
@@ -333,7 +346,7 @@ def submit_connectivity_order(
     fresh = _recheck_before_send(settings, client, "SPY", quote_client, now)
     if fresh is not None:
         return _refused(fresh)
-    _insert_order(
+    claimed = _insert_order(
         settings.paper_path,
         client_order_id=CONNECTIVITY_CLIENT_ID,
         purpose="connectivity",
@@ -344,6 +357,12 @@ def submit_connectivity_order(
         decision_id=CONNECTIVITY_CLIENT_ID,
         counts_as_strategy_pnl=False,
     )
+    if not claimed:
+        existing = _find(settings.paper_path, CONNECTIVITY_CLIENT_ID)
+        recovered = _recover_existing(settings, client, CONNECTIVITY_CLIENT_ID, existing)
+        if recovered is None:
+            return _refused("broker_record_not_confirmed")
+        return recovered
     return _send(settings, client, CONNECTIVITY_CLIENT_ID, "SPY", "buy", CONNECTIVITY_CAP)
 
 
@@ -418,7 +437,7 @@ def submit_strategy_paper_order(
     fresh = _recheck_before_send(settings, client, symbol, quote_client, now)
     if fresh is not None:
         return _refused(fresh)
-    _insert_order(
+    claimed = _insert_order(
         settings.paper_path,
         client_order_id=client_order_id,
         purpose="strategy",
@@ -429,6 +448,13 @@ def submit_strategy_paper_order(
         decision_id=decision_id,
         counts_as_strategy_pnl=True,
     )
+    if not claimed:
+        recovered = _recover_existing(
+            settings, client, client_order_id, _find(settings.paper_path, client_order_id)
+        )
+        if recovered is None:
+            return _refused("broker_record_not_confirmed")
+        return recovered
     return _send(settings, client, client_order_id, symbol, side, notional)
 
 
@@ -790,6 +816,15 @@ def _confirm_broker_record(settings: Settings, client: Any, client_order_id: str
         filled_qty=None if filled_qty is None else format(filled_qty, "f"),
         remaining_qty=None if remaining is None else format(remaining, "f"),
     )
+    journal = journal_broker_order(
+        settings.paper_path,
+        local,
+        found,
+        _fill_activities(client),
+        recorded_at=datetime.now(UTC).isoformat(),
+    )
+    if journal == "conflict":
+        return _refused("ledger_disagreement")
     return {
         "submitted": mapped not in _RELEASED,
         "status": mapped,
@@ -853,6 +888,28 @@ def _recover_existing(
         counts_as_strategy_pnl=False,
     )
     return _confirm_broker_record(settings, client, client_order_id)
+
+
+def _fill_activities(client: Any) -> list[Any] | None:
+    """Read Alpaca FILL activities when the client can. A fake client returns none.
+
+    The installed trading SDK has no activities method. A real TradingClient is
+    read with GET /account/activities/FILL. A failed or truncated page is not
+    treated as an empty fill list.
+    """
+    supplied = getattr(client, "fill_activities", None)
+    if callable(supplied):
+        rows = supplied()
+        return list(rows) if isinstance(rows, list) else None
+    if type(client).__name__ != "TradingClient":
+        return None
+    try:
+        data = client.get("/account/activities/FILL", {"page_size": 100})
+    except Exception:  # noqa: BLE001 — activity text can contain account details
+        return None
+    if not isinstance(data, list) or len(data) >= 100:
+        return None
+    return data
 
 
 def _lookup(client: Any, client_order_id: str) -> tuple[str, Any]:
@@ -1227,8 +1284,16 @@ def _write_automatic(path: str, **fields: object) -> None:
         )
 
 
-def _insert_order(path: str, **fields: object) -> None:
+def _insert_order(path: str, **fields: object) -> bool:
+    """Claim a client order id. A lost race returns False and does not send."""
     with _connect(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        found = conn.execute(
+            "SELECT client_order_id FROM paper_orders WHERE client_order_id = ?",
+            (fields["client_order_id"],),
+        ).fetchone()
+        if found is not None:
+            return False
         conn.execute(
             """
             INSERT INTO paper_orders (
@@ -1247,6 +1312,7 @@ def _insert_order(path: str, **fields: object) -> None:
                 1 if fields["counts_as_strategy_pnl"] else 0,
             ),
         )
+    return True
 
 
 def _update(path: str, client_order_id: str, **fields: object) -> None:

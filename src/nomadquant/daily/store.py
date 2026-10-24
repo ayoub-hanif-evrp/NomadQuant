@@ -70,14 +70,17 @@ def latest_decision(path: str) -> dict[str, Any] | None:
     try:
         with _connect(path) as connection:
             row = connection.execute(
-                "SELECT payload_json FROM daily_decisions ORDER BY id DESC LIMIT 1"
+                "SELECT created_at, payload_json FROM daily_decisions ORDER BY id DESC LIMIT 1"
             ).fetchone()
     except sqlite3.DatabaseError:
         return None
     if row is None:
         return None
     loaded = json.loads(str(row["payload_json"]))
-    return loaded if isinstance(loaded, dict) else None
+    if not isinstance(loaded, dict):
+        return None
+    loaded["recorded_at"] = str(row["created_at"])
+    return loaded
 
 
 def save_tool_call(

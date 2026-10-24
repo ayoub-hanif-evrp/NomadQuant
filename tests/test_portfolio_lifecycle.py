@@ -12,7 +12,7 @@ from nomadquant.broker.paper_pilot import (
 )
 from nomadquant.daily.authorization import AUTHORIZE_PHRASE, authorize_daily_pilot
 from nomadquant.daily.execute import submit_daily_paper_order
-from nomadquant.daily.fingerprint import price_fingerprint
+from nomadquant.daily.fingerprint import DATASET_ID, price_fingerprint
 from nomadquant.daily.portfolio import build_portfolio
 from nomadquant.daily.store import save_decision
 from nomadquant.marketdata.calendar import sessions_between
@@ -106,7 +106,9 @@ def test_a_price_change_does_not_increase_the_sell_quantity(tmp_path: Path) -> N
             "influence_policy": "daily_agent_influence_1.0.0",
             "risk_policy": "daily_risk_1.0.0",
             "missed_window": False,
-            "price_fingerprint": price_fingerprint(prices),
+            "market_feed": "iex",
+            "market_dataset": DATASET_ID,
+            "price_fingerprint": price_fingerprint(prices, feed="iex"),
         },
     )
     seed_closes(settings, prices, now=WHEN)
@@ -174,7 +176,9 @@ def test_a_stale_mark_blocks_a_held_position(tmp_path: Path) -> None:
             "influence_policy": "daily_agent_influence_1.0.0",
             "risk_policy": "daily_risk_1.0.0",
             "missed_window": False,
-            "price_fingerprint": price_fingerprint(prices),
+            "market_feed": "iex",
+            "market_dataset": DATASET_ID,
+            "price_fingerprint": price_fingerprint(prices, feed="iex"),
         },
     )
     seed_closes(settings, prices, now=WHEN)
