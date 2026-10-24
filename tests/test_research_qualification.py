@@ -288,6 +288,26 @@ def test_locked_gates_can_fail_or_qualify() -> None:
     )
 
 
+def test_a_later_price_cannot_be_smuggled_into_a_locked_study() -> None:
+    sessions, series = _series(Decimal("0.20"), 8, Decimal("0.03"))
+    evidence = describe_actions(
+        [],
+        series,
+        policy="total_return",
+        timing="announcement",
+        as_of=sessions[-1],
+        feed="iex",
+        checked=True,
+    )
+    leaked = {symbol: dict(rows) for symbol, rows in series.items()}
+    last = sessions[-1]
+    leaked["SPY"][last] = leaked["SPY"][last] * Decimal("5")
+    report = qualify_daily_strategies(leaked, sessions, evidence=evidence)
+    assert report["state"] == "NOT_EVALUABLE"
+    assert report["reason"] == "dataset_fingerprint_mismatch"
+    assert report["permission_to_trade"] is False
+
+
 def test_trials_keep_the_failed_result(tmp_path: Path) -> None:
     report = _qualify(_series(Decimal("0"), 0, Decimal("0")))
     path = tmp_path / "research.sqlite"

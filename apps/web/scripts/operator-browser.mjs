@@ -28,6 +28,10 @@ try {
   const mobile = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await mobile.goto(`${base}/paper`, { waitUntil: "domcontentloaded" });
   await assertPaper(mobile);
+  await assertRoute(desktop, "/agents", ["Your AI research crew", "None of them can place an order"]);
+  await assertRoute(desktop, "/health", ["System Health"]);
+  await assertRoute(desktop, "/research", ["Research Lab"]);
+  await assertRoute(desktop, "/market-data", ["Market Explorer"]);
   await browser.close();
   console.log("operator browser check passed");
 } finally {
@@ -55,6 +59,21 @@ async function assertPaper(page) {
   const body = await page.locator("body").innerText();
   if (!body.includes("The paper status could not be read.") && !body.includes("Accounting:")) {
     throw new Error(`No status or read failure.\n${body.slice(0, 400)}`);
+  }
+}
+
+async function assertRoute(page, path, phrases) {
+  await page.goto(`${base}/`, { waitUntil: "domcontentloaded" });
+  await page.goto(`${base}${path}`, { waitUntil: "domcontentloaded" });
+  try {
+    await page.waitForFunction(
+      (expected) => expected.every((phrase) => document.body.textContent.includes(phrase)),
+      phrases,
+      { timeout: 15000 },
+    );
+  } catch (error) {
+    const body = await page.locator("body").innerText();
+    throw new Error(`${page.url()}\n${body.slice(0, 400)}\n${error.message}`);
   }
 }
 

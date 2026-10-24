@@ -6,7 +6,7 @@ NomadQuant is a local, paper-only research workstation. Three claims stay separa
 
 | State | Result | What remains |
 | --- | --- | --- |
-| `ENGINEERING_READY` | Not granted | The tested path, the two-process claim, the local browser check, and this PC's doctor passed. A from-scratch install and the new GitHub browser job have not run. |
+| `ENGINEERING_READY` | Granted | `.\scripts\release-check.ps1` passed on this PC on 2026-10-24: Python 3.12, uv, Node, lockfiles, ruff, mypy, 458 pytest tests, eslint, TypeScript, and the browser check. Tests used temporary databases and did not open `.env`. GitHub Actions run 40106555100 on `8774de0` passed, including the Linux browser step and Windows smoke. A wiped second PC was not reinstalled. |
 | `RESEARCH_QUALIFIED` | Not granted | The 85 local SPY and QQQ dividends have process dates and no announcement times. The synthetic series that cleared the gates is not SPY or QQQ. Research fills are the next close, not an intraday paper market order. |
 | `PAPER_VALIDATED` | Not granted | The existing $5 connectivity fill now has one local execution row, and a read-only check is healthy. No supervised strategy session has been run. |
 
@@ -23,7 +23,9 @@ NomadQuant is a local, paper-only research workstation. Three claims stay separa
 
 `.\scripts\doctor.ps1` passed for Python 3.12, uv, Node, the web build, the local databases, the API, the dashboard, and Ollama's tag endpoint. No secret was printed.
 
-`npm run operator-browser` passed against the production build on `127.0.0.1:3010`. Desktop and a 390-pixel viewport both showed the paper page, including the statement that the page does not submit an order.
+`.\scripts\release-check.ps1` then passed: ruff, mypy on 149 source files, 458 pytest tests, eslint, TypeScript, and `npm run operator-browser`. The browser check covered the paper page, home navigation, agents, health, research, and market data, on desktop and a 390-pixel paper page. It did not submit an order. The same command did not read `.env` or the live SQLite files.
+
+GitHub Actions run [40106555100](https://github.com/ayoub-hanif-evrp/NomadQuant/actions/runs/40106555100) on `8774de0` completed successfully. The Linux job's browser step and the Windows smoke job both passed. That run does not include the tests added after `8774de0`.
 
 ## What the code has proved
 
@@ -31,7 +33,9 @@ NomadQuant is a local, paper-only research workstation. Three claims stay separa
 - Read-only MCP tools. A missing model fail-closes and is not a useful veto.
 - Paper submission controls, the $100 sleeve, the emergency stop, fractional sells, paged fills, and the execution journal.
 - One offline buy, partial fill, restart, loss stop, protective sell, and kill switch.
-- Two processes cannot both claim the same prepared row.
+- Two processes cannot both claim the same prepared row. A second process cannot claim a row left `unknown` after an uncertain submission.
+- A paper verification with no Alpaca credentials is `blocked` / `credentials_absent` and does not create a paper database. The report states that the $100 sleeve is not broker cash.
+- A price changed after the locked fingerprint is `NOT_EVALUABLE`. A missing model comparison is `NOT_MEASURED`.
 - Corporate actions stored apart from raw bars.
 - Qualification gates that can fail, with `permission_to_trade` false.
 
@@ -40,19 +44,17 @@ NomadQuant is a local, paper-only research workstation. Three claims stay separa
 - An edge for the ETF rules.
 - That a next-close backtest matches an intraday Alpaca market fill.
 - A supervised forward paper session. The daily pilot stays off.
-- A clean-machine install.
+- A wiped second computer. The automated check used this PC's existing install and temporary databases.
 - Historical Ollama decisions. None were invented.
 
 ## What the operator can run
 
 ```powershell
-$env:PYTHONPATH="src"
-uv run --no-sync pytest -q
+.\scripts\release-check.ps1
 uv run --no-sync nomadquant-shadow paper-verify
-.\scripts\doctor.ps1
 ```
 
-From `apps/web`, after `npm run build`: `npm run operator-browser`.
+`release-check.ps1` is the release gate. It does not grant `RESEARCH_QUALIFIED` or `PAPER_VALIDATED`. The supervised session procedure is in `docs/DAILY_PILOT.md`.
 
 ## Decisions this document does not make
 
@@ -67,4 +69,4 @@ Live-money trading, leverage, shorting, options, unattended orders, order-capabl
 
 ## Next action
 
-Leave the daily pilot off. The connectivity journal now matches Alpaca. The open research fact is the missing announcement time on the dividend file. Do not treat that file as point-in-time, and do not authorize a paper session from this document.
+Leave the daily pilot off. A supervised session starts only with a separate `AUTHORIZE_DAILY_PAPER_PILOT`, for 1 to 30 days, then a read-only `paper-verify` after any fill. This document does not authorize that phrase. The open research fact is still the missing announcement time on the dividend file.

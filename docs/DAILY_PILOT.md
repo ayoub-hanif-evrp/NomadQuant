@@ -35,3 +35,15 @@ Strategy loss uses realized plus marked-to-market P&L on strategy holdings. A di
 `GET /api/paper/status` does not rewrite local fills. `reconcile_paper_orders` is the explicit refresh. A sell is sent as a share quantity, floored to nine decimal places, and that same quantity is the one the paper risk check sees. Any remainder stays tracked and is not rounded up into the order. Daily realized P&L uses individual FILL activities for that broker order, paged with `order_id` and `page_token`. An order's creation time is not a fill time. A completion-time average is an aggregate estimate and is not assigned to one session. A sell with no verified execution timestamp leaves the session figure unverified. Incomplete or conflicting fill history is `execution_history_incomplete` or `journal_disagreement`. That state blocks a new BUY and still allows an authorized strategy SELL when the position itself is not disputed. `nomadquant-shadow paper-verify` compares the local ledger with Alpaca and does not submit, authorize, or rewrite history. Reconciliation also revisits prepared and cancelled orders and does not send a second order when the broker outcome is unknown. Lifetime realized P&L is kept separately. A loss or drawdown breaker blocks a new buy and still allows a verified strategy sell. Every holding is marked before that check. Submission requires the decision's own feed, `alpaca|raw|1Day`, to contain every close, available at the decision time. Another feed in the store is not a conflict. The equity peak is stored and is not replaced by a later lower equity. The paper quantity policy is `1.3.0`; the historical research policy remains `1.2.0`.
 
 Post-trade email is queued after a decision. Without SMTP, the notice stays `not_configured` and is not described as delivered.
+
+## Supervised forward session
+
+This section does not authorize a session. Do it only with a separate explicit decision.
+
+1. Run `nomadquant-shadow paper-verify`. Broker cash is the whole paper account. The sleeve is the internal $100 allocation.
+2. Leave the pilot off until `AUTHORIZE_DAILY_PAPER_PILOT`, for 1 to 30 days.
+3. A strategy order is a market order during the session. A next-close research fill is not that order.
+4. After any fill, `reconcile_paper_orders` is the write that journals it. `paper-verify` only reads. Repeated reads must stay `history_rewritten` false and `broker_orders_submitted_by_this_request` false.
+5. `DISABLE_ALPACA_PAPER_ORDERS` stops new submissions. It does not cancel or sell.
+6. One connectivity fill, even when the journal matches, is not `PAPER_VALIDATED`.
+

@@ -46,6 +46,7 @@ def compare_ai_filter(
             "deterministic_buy_signals": deterministic_buys,
             "sessions_compared": compared,
             "vetoes_counted": 0,
+            "measurement": "NOT_MEASURED",
             "permission_to_trade": False,
             "live_ollama_session": False,
         }
@@ -57,6 +58,7 @@ def compare_ai_filter(
         "deterministic_buy_signals": deterministic_buys,
         "sessions_compared": compared,
         "vetoes_counted": 0,
+        "measurement": "NOT_MEASURED",
         "permission_to_trade": False,
         "live_ollama_session": False,
     }

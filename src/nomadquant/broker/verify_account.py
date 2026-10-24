@@ -39,6 +39,8 @@ def verify_paper_account(
         "broker_orders_submitted_by_this_request": False,
         "authorization_changed": False,
         "history_rewritten": False,
+        "sleeve_is_not_broker_cash": True,
+        "internal_allocation_usd": "100",
         "checks": [],
         "discrepancies": [],
     }

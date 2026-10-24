@@ -54,9 +54,11 @@ def test_a_missing_model_is_not_an_ai_improvement() -> None:
     assert report["ai_incremental_benefit"] is None
     assert report["vetoes_counted"] == 0
     assert report["live_ollama_session"] is False
+    assert report["measurement"] == "NOT_MEASURED"
     assert report["deterministic_buy_signals"] > 0
     supplied = compare_ai_filter(prices, _sessions, model_available=True)
     assert supplied["recommendation"] == "NOT_COMPARED"
+    assert supplied["measurement"] == "NOT_MEASURED"
     assert supplied["ai_incremental_benefit"] is None
 
 
