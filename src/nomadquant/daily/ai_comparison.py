@@ -6,6 +6,7 @@ from datetime import date
 from decimal import Decimal
 from typing import Any
 
+from nomadquant.agents.constants import PROMPT_VERSION
 from nomadquant.daily.engine import primary_candidate
 from nomadquant.daily.influence import apply_influence
 
@@ -47,6 +48,10 @@ def compare_ai_filter(
             "sessions_compared": compared,
             "vetoes_counted": 0,
             "measurement": "NOT_MEASURED",
+            "prompt_version": PROMPT_VERSION,
+            "model_name": None,
+            "model_version": None,
+            "recorded_outputs": 0,
             "permission_to_trade": False,
             "live_ollama_session": False,
         }
@@ -59,6 +64,10 @@ def compare_ai_filter(
         "sessions_compared": compared,
         "vetoes_counted": 0,
         "measurement": "NOT_MEASURED",
+        "prompt_version": PROMPT_VERSION,
+        "model_name": None,
+        "model_version": None,
+        "recorded_outputs": 0,
         "permission_to_trade": False,
         "live_ollama_session": False,
     }

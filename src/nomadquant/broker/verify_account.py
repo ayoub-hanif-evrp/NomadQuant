@@ -252,4 +252,10 @@ def _finish(report: dict[str, Any], readiness: str, reason: str | None) -> dict[
         _fail(report, "verification", readiness, reason)
     report["readiness"] = readiness
     report["reason"] = reason
+    report["next_action"] = {
+        "healthy": "Leave the daily pilot off. This read did not submit.",
+        "unverified": "Do not submit. This read did not rewrite history.",
+        "blocked": "Do not submit. Resolve the blocked reason before another read.",
+        "disputed": "Do not submit. The ledger is disputed and this read did not rewrite it.",
+    }[readiness]
     return report

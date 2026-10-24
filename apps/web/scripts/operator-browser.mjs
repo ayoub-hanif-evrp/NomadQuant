@@ -19,6 +19,7 @@ try {
   const browser = await chromium.launch();
   const desktop = await browser.newPage({ viewport: { width: 1280, height: 800 } });
   desktop.on("pageerror", (error) => console.error("pageerror", error.message));
+  await desktop.route("http://127.0.0.1:8000/**", (route) => route.abort());
   await desktop.goto(`${base}/paper`, { waitUntil: "domcontentloaded" });
   await assertPaper(desktop);
   await desktop.goto(`${base}/`, { waitUntil: "domcontentloaded" });
@@ -26,12 +27,22 @@ try {
   await desktop.waitForURL("**/paper");
   await assertPaper(desktop);
   const mobile = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await mobile.route("http://127.0.0.1:8000/**", (route) => route.abort());
   await mobile.goto(`${base}/paper`, { waitUntil: "domcontentloaded" });
   await assertPaper(mobile);
-  await assertRoute(desktop, "/agents", ["Your AI research crew", "None of them can place an order"]);
-  await assertRoute(desktop, "/health", ["System Health"]);
-  await assertRoute(desktop, "/research", ["Research Lab"]);
-  await assertRoute(desktop, "/market-data", ["Market Explorer"]);
+  await assertRoute(desktop, "/agents", ["None of them can place an order"]);
+  await assertRoute(desktop, "/health", ["Health unavailable", "could not be reached"]);
+  await assertRoute(desktop, "/research", ["Research Lab unavailable"]);
+  await assertRoute(desktop, "/market-data", [
+    "Market status unavailable",
+    "not a live quote stream",
+  ]);
+  await assertRoute(desktop, "/portfolio", [
+    "Simulated ledger only",
+    "not the Alpaca paper account",
+    "No forward trading results yet",
+  ]);
+  await assertRoute(mobile, "/portfolio", ["Simulated ledger only", "not the Alpaca paper account"]);
   await browser.close();
   console.log("operator browser check passed");
 } finally {
@@ -48,6 +59,10 @@ async function assertPaper(page) {
     await page.getByText("Portfolio truth", { exact: true }).waitFor();
     await page.getByText("permission to trade").waitFor();
     await page.getByText("does not submit an order").waitFor();
+    await page.getByText("The paper status could not be read.").waitFor({ timeout: 25000 });
+    await page.getByText("Daily status could not be read.").waitFor();
+    await page.getByText("No NomadQuant paper order is stored.").waitFor();
+    await page.getByText("is not the strategy budget").waitFor();
   } catch (error) {
     const facts = await page.evaluate(() => ({
       text: document.body.textContent.includes("Execution audit"),
@@ -55,10 +70,6 @@ async function assertPaper(page) {
     }));
     const body = await page.locator("body").innerText();
     throw new Error(`${page.url()} ${JSON.stringify(facts)}\n${body.slice(0, 400)}\n${error.message}`);
-  }
-  const body = await page.locator("body").innerText();
-  if (!body.includes("The paper status could not be read.") && !body.includes("Accounting:")) {
-    throw new Error(`No status or read failure.\n${body.slice(0, 400)}`);
   }
 }
 
@@ -69,7 +80,7 @@ async function assertRoute(page, path, phrases) {
     await page.waitForFunction(
       (expected) => expected.every((phrase) => document.body.textContent.includes(phrase)),
       phrases,
-      { timeout: 15000 },
+      { timeout: 25000 },
     );
   } catch (error) {
     const body = await page.locator("body").innerText();

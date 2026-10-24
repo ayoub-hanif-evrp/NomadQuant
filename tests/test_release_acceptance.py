@@ -16,4 +16,5 @@ def test_missing_credentials_block_verification_without_a_broker_call(tmp_path: 
     assert report["history_rewritten"] is False
     assert report["sleeve_is_not_broker_cash"] is True
     assert report["internal_allocation_usd"] == "100"
+    assert report["next_action"].startswith("Do not submit.")
     assert not (tmp_path / "paper_orders.sqlite").exists()

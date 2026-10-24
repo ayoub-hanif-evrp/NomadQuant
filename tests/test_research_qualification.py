@@ -262,6 +262,8 @@ def test_the_fill_is_the_session_after_the_signal() -> None:
     assert report["execution"] == "signal_close_fill_next_close"
     assert report["paper_execution"] == "market_order_during_the_session"
     assert report["comparable_to_paper_fills"] is False
+    assert report["session_market_model"] == "NOT_EVALUABLE"
+    assert report["session_market_reason"] == "daily_closes_do_not_price_an_intraday_market_order"
     assert report["state"] in {"FAILED", "INCONCLUSIVE", "RESEARCH_QUALIFIED"}
     assert report["permission_to_trade"] is False
 

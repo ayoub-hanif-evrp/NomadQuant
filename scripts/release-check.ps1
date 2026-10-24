@@ -20,6 +20,8 @@ Write-Host "Toolchain python=$python node=$((node -v)). Isolated tests use tempo
 $env:PYTHONPATH = "src"
 & uv run --no-sync ruff check .
 if ($LASTEXITCODE -ne 0) { Fail "ruff reported a problem." }
+& uv run --no-sync ruff format --check .
+if ($LASTEXITCODE -ne 0) { Fail "ruff format reported a problem." }
 & uv run --no-sync mypy src
 if ($LASTEXITCODE -ne 0) { Fail "mypy reported a problem." }
 & uv run --no-sync pytest -q
@@ -30,11 +32,12 @@ Set-Location (Join-Path $Root "apps\web")
 if ($LASTEXITCODE -ne 0) { Fail "eslint reported a problem." }
 & npx tsc --noEmit
 if ($LASTEXITCODE -ne 0) { Fail "TypeScript reported a problem." }
-if (-not (Test-Path ".next\BUILD_ID")) {
-    Fail "The dashboard build is missing. Run npm run build in apps\web, then rerun this script."
-}
+& npm run build
+if ($LASTEXITCODE -ne 0) { Fail "The dashboard production build failed." }
 & npm run operator-browser
 if ($LASTEXITCODE -ne 0) { Fail "The browser check failed." }
 Set-Location $Root
+& powershell -NoProfile -File .\scripts\fresh-boot.ps1
+if ($LASTEXITCODE -ne 0) { Fail "The isolated boot failed." }
 Write-Host "RELEASE CHECK PASSED"
 Write-Host "RESEARCH_QUALIFIED and PAPER_VALIDATED are separate and are not granted by this script."

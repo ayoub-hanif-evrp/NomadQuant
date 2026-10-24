@@ -33,6 +33,8 @@ GATES = {
     "execution": "signal_close_fill_next_close",
     "paper_execution": "market_order_during_the_session",
     "comparable_to_paper_fills": False,
+    "session_market_model": "NOT_EVALUABLE",
+    "session_market_reason": "daily_closes_do_not_price_an_intraday_market_order",
     "primary_strategy_id": PRIMARY_STRATEGY_ID,
     "parameter_refit": False,
 }
@@ -281,6 +283,8 @@ def _execution_note() -> dict[str, object]:
         "execution": "signal_close_fill_next_close",
         "paper_execution": "market_order_during_the_session",
         "comparable_to_paper_fills": False,
+        "session_market_model": "NOT_EVALUABLE",
+        "session_market_reason": "daily_closes_do_not_price_an_intraday_market_order",
     }
 
 

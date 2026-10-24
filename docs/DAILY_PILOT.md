@@ -40,7 +40,7 @@ Post-trade email is queued after a decision. Without SMTP, the notice stays `not
 
 This section does not authorize a session. Do it only with a separate explicit decision.
 
-1. Run `nomadquant-shadow paper-verify`. Broker cash is the whole paper account. The sleeve is the internal $100 allocation.
+1. Run `nomadquant-shadow paper-verify`. Read `next_action`. Broker cash is the whole paper account. The sleeve is the internal $100 allocation. The command does not submit.
 2. Leave the pilot off until `AUTHORIZE_DAILY_PAPER_PILOT`, for 1 to 30 days.
 3. A strategy order is a market order during the session. A next-close research fill is not that order.
 4. After any fill, `reconcile_paper_orders` is the write that journals it. `paper-verify` only reads. Repeated reads must stay `history_rewritten` false and `broker_orders_submitted_by_this_request` false.

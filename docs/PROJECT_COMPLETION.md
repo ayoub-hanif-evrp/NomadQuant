@@ -6,7 +6,7 @@ NomadQuant is a local, paper-only research workstation. Three claims stay separa
 
 | State | Result | What remains |
 | --- | --- | --- |
-| `ENGINEERING_READY` | Granted | `.\scripts\release-check.ps1` passed on this PC on 2026-10-24: Python 3.12, uv, Node, lockfiles, ruff, mypy, 458 pytest tests, eslint, TypeScript, and the browser check. Tests used temporary databases and did not open `.env`. GitHub Actions run 40106555100 on `8774de0` passed, including the Linux browser step and Windows smoke. A wiped second PC was not reinstalled. |
+| `ENGINEERING_READY` | Granted | `.\scripts\release-check.ps1` passed again on this PC: ruff, format, mypy on 150 source files, 458 pytest tests, eslint, TypeScript, a production frontend build, the browser check, and an isolated boot. The boot used a temporary directory, saw no broker credentials, and did not change `.env`. GitHub Actions run 40107872703 on `63fd34b` passed. The new `windows-fresh-install` job is in the workflow and has not run on GitHub yet. |
 | `RESEARCH_QUALIFIED` | Not granted | The 85 local SPY and QQQ dividends have process dates and no announcement times. The synthetic series that cleared the gates is not SPY or QQQ. Research fills are the next close, not an intraday paper market order. |
 | `PAPER_VALIDATED` | Not granted | The existing $5 connectivity fill now has one local execution row, and a read-only check is healthy. No supervised strategy session has been run. |
 
@@ -23,9 +23,9 @@ NomadQuant is a local, paper-only research workstation. Three claims stay separa
 
 `.\scripts\doctor.ps1` passed for Python 3.12, uv, Node, the web build, the local databases, the API, the dashboard, and Ollama's tag endpoint. No secret was printed.
 
-`.\scripts\release-check.ps1` then passed: ruff, mypy on 149 source files, 458 pytest tests, eslint, TypeScript, and `npm run operator-browser`. The browser check covered the paper page, home navigation, agents, health, research, and market data, on desktop and a 390-pixel paper page. It did not submit an order. The same command did not read `.env` or the live SQLite files.
+`.\scripts\release-check.ps1` passed again the same day. It now runs ruff format, builds the dashboard itself, and calls `.\scripts\fresh-boot.ps1`. The boot answered on port 8011 because port 8000 was already in use. Health was ok, trading mode was paper, order submission was false, credentials were absent, and the broker status was disconnected. `.env` was unchanged. The browser check blocked calls to port 8000 and required the disconnected copy on paper, health, research, market data, and portfolio, including a 390-pixel portfolio page.
 
-GitHub Actions run [40106555100](https://github.com/ayoub-hanif-evrp/NomadQuant/actions/runs/40106555100) on `8774de0` completed successfully. The Linux job's browser step and the Windows smoke job both passed. That run does not include the tests added after `8774de0`.
+GitHub Actions run [40107872703](https://github.com/ayoub-hanif-evrp/NomadQuant/actions/runs/40107872703) on `63fd34b` completed successfully. It does not include the fresh Windows install job added after that commit.
 
 ## What the code has proved
 
@@ -35,7 +35,9 @@ GitHub Actions run [40106555100](https://github.com/ayoub-hanif-evrp/NomadQuant/
 - One offline buy, partial fill, restart, loss stop, protective sell, and kill switch.
 - Two processes cannot both claim the same prepared row. A second process cannot claim a row left `unknown` after an uncertain submission.
 - A paper verification with no Alpaca credentials is `blocked` / `credentials_absent` and does not create a paper database. The report states that the $100 sleeve is not broker cash.
-- A price changed after the locked fingerprint is `NOT_EVALUABLE`. A missing model comparison is `NOT_MEASURED`.
+- A price changed after the locked fingerprint is `NOT_EVALUABLE`. A missing model comparison is `NOT_MEASURED`, with no model name and zero recorded outputs.
+- Daily closes do not price an intraday paper market order. That path stays `session_market_model: NOT_EVALUABLE`.
+- `paper-verify` includes a `next_action` that does not authorize a session.
 - Corporate actions stored apart from raw bars.
 - Qualification gates that can fail, with `permission_to_trade` false.
 
@@ -44,7 +46,8 @@ GitHub Actions run [40106555100](https://github.com/ayoub-hanif-evrp/NomadQuant/
 - An edge for the ETF rules.
 - That a next-close backtest matches an intraday Alpaca market fill.
 - A supervised forward paper session. The daily pilot stays off.
-- A wiped second computer. The automated check used this PC's existing install and temporary databases.
+- The new Windows fresh-install job on GitHub. It checks out a clean runner, installs from the lockfiles, builds the dashboard, and runs the isolated boot. It has not been observed yet.
+- A wiped second computer beyond that runner.
 - Historical Ollama decisions. None were invented.
 
 ## What the operator can run
