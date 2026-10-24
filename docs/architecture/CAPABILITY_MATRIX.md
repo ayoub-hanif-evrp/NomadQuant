@@ -21,4 +21,4 @@ Versions refer to the behavior in the working tree after the portfolio-truth rep
 | Shadow and research backtests | Available | Historical research. They do not submit paper orders. |
 | Unattended Windows schedule | Unavailable | No daily or shadow task is installed by this repair. |
 | Dashboard views for truth, validation, audit, data quality, and readiness | Partial | The paper page has those sections and shows `research_evidence`. They are not separate apps. Playwright is not wired. |
-| Strategy qualification | Not granted | `qualify_daily_strategies` returns `NOT_EVALUABLE` on raw prices. It is not permission to trade. |
+| Strategy qualification | Not granted on stored data | The locked gates can return `RESEARCH_QUALIFIED` for an announcement-vintage total-return series. Raw prices and Alpaca `process_date` files stay `NOT_EVALUABLE`. That label is not permission to trade. |

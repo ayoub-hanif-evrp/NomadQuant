@@ -12,13 +12,15 @@ Reviewed against `7a741dc` and the completion pass after it. A checked item is i
 
 ## Phase 2 — Market data
 
-- [x] Raw daily bars stay the stored dataset. `iex` and `sip` stay distinct. `dataset_evidence()` reports `NOT_EVALUABLE` because corporate actions are not stored.
-- [ ] Separate split-adjusted and dividend-adjusted datasets. Do not invent them, and do not rewrite the raw experiments.
+- [x] Raw daily bars stay the stored dataset. `iex` and `sip` stay distinct. `dataset_evidence()` reports `NOT_EVALUABLE` because the default store has no announcement-vintage corporate actions.
+- [x] Splits and dividends can be stored beside the raw bars. A derived total-return series is a separate table. A future split is not applied to a price known before its announcement.
+- [x] A local Alpaca snapshot for SPY and QQQ, 2016-01-01 through 2026-10-24, stored 85 cash dividends and no splits. `known_at` is empty on every row. The file is `data/market.sqlite`, which is not in git. Raw bars were not rewritten. This snapshot is not point-in-time.
 
 ## Phase 3 — Qualification
 
-- [x] `qualify_daily_strategies` records walk-forward folds, a cash benchmark, and SPY buy-and-hold. The current data returns `NOT_EVALUABLE`. That is not permission to trade.
-- [ ] A locked total-return test with costs, regimes, and a multiple-testing adjustment. The present walk-forward is a price-only illustration.
+- [x] `qualify_daily_strategies` can return `FAILED`, `INCONCLUSIVE`, or `RESEARCH_QUALIFIED` when every action has an announcement time. The gates are locked. A result is not permission to trade.
+- [x] The default raw-price study remains `NOT_EVALUABLE`. A synthetic path is the only series that has cleared the gates. That is not an edge on SPY or QQQ.
+- [ ] A locked total-return test on real announcement-vintage history. Alpaca process dates are not that history.
 
 ## Phase 4 — AI versus baseline
 

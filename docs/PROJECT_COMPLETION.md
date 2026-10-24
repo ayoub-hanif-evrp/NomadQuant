@@ -7,7 +7,7 @@ NomadQuant is a local, paper-only research workstation. This note separates thre
 | State | Result | Why |
 | --- | --- | --- |
 | `ENGINEERING_READY` | Not granted | The paper path covered by the suite does what its tests say. Corporate-action datasets, a browser suite, a clean-install rerun, and a live broker lifecycle are still open. |
-| `RESEARCH_QUALIFIED` | Not granted | Registered ETF rules run on raw prices. `qualify_daily_strategies` returns `NOT_EVALUABLE` because split and dividend history is not stored. |
+| `RESEARCH_QUALIFIED` | Not granted | The engine can qualify a study once every corporate action has an announcement time. The stored research prices are raw. Alpaca's corporate-action file uses `process_date`, which Alpaca says is not a creation time, so the registered ETF rules stay `NOT_EVALUABLE`. A synthetic fixture has cleared the locked gates. That fixture is not SPY or QQQ history. |
 | `PAPER_VALIDATED` | Not granted | `nomadquant-shadow paper-verify` is read-only. The last live read found the connectivity SPY position and no local execution row for `nq-connect-spy-buy-5`. That report was unverified. This pass did not call Alpaca. |
 
 ## What is implemented
@@ -17,7 +17,7 @@ NomadQuant is a local, paper-only research workstation. This note separates thre
 - Paper submission with the $100 sleeve, the emergency stop, fractional sells, paged fills, and an execution journal.
 - A read-only verifier: `nomadquant-shadow paper-verify`.
 - Offline evidence in `tests/test_project_completion.py`: one buy, one partial fill, no second buy after restart, a loss stop, one protective sell, then the kill switch.
-- Dataset and AI labels that refuse a qualification the data cannot support.
+- Dataset and qualification labels that refuse a result the data cannot support. On announcement-vintage total-return prices, the same function applies next-session fills, spread and slippage, a cash benchmark, matched and full SPY buy-and-hold, three walk-forward folds, and a twice-cost stress. `permission_to_trade` stays false.
 
 ## What the operator can run
 

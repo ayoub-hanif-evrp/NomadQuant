@@ -6,6 +6,8 @@ from datetime import UTC, date, datetime
 
 from nomadquant.audit import AuditLog
 from nomadquant.config import Settings, get_settings
+from nomadquant.marketdata.action_client import alpaca_page_fetcher, download_corporate_actions
+from nomadquant.marketdata.actions import ActionStore
 from nomadquant.marketdata.alpaca_bars import AlpacaDailyBars
 from nomadquant.marketdata.availability import latest_safe_session
 from nomadquant.marketdata.errors import MarketDataError
@@ -29,6 +31,13 @@ def main(argv: list[str] | None = None) -> None:
     report.add_argument("--start", default=None)
     report.add_argument("--end", default=None)
     report.add_argument("--feed", choices=["sip", "iex"], default=None)
+    actions = sub.add_parser(
+        "actions", help="Download corporate actions. Does not change raw bars."
+    )
+    actions.add_argument("--symbols", default="SPY,QQQ")
+    actions.add_argument("--start", required=True)
+    actions.add_argument("--end", default=None)
+    actions.add_argument("--database", default=None)
     args = parser.parse_args(argv)
     try:
         settings = get_settings()
@@ -37,6 +46,9 @@ def main(argv: list[str] | None = None) -> None:
         raise SystemExit(2) from None
     database = args.database or settings.market_data_path
     audit = AuditLog(settings.database_path, settings.secret_values)
+    if args.command == "actions":
+        _actions(settings, database, args.symbols, args.start, args.end)
+        return
     if args.command == "report":
         status = _print_status(
             database,
@@ -50,6 +62,52 @@ def main(argv: list[str] | None = None) -> None:
         _record_report(audit, status)
         return
     _sync(settings, audit, database, args.symbols, args.start, args.end, args.feed)
+
+
+def _actions(
+    settings: Settings,
+    database: str,
+    symbols_text: str,
+    start_text: str,
+    end_text: str | None,
+) -> None:
+    key = settings.alpaca_api_key
+    secret = settings.alpaca_api_secret
+    if key is None or secret is None:
+        print(
+            "Alpaca credentials are not configured. Set both keys in .env. "
+            "Do not paste them into chat.",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+    symbols = [part.strip().upper() for part in symbols_text.split(",") if part.strip()]
+    start = date.fromisoformat(start_text)
+    end = date.fromisoformat(end_text) if end_text else datetime.now(UTC).date()
+    print(f"symbols={','.join(symbols)} window={start.isoformat()}..{end.isoformat()}")
+    print("adjustment=corporate_actions. Raw bars are not modified.")
+    store = ActionStore(database)
+    try:
+        download = download_corporate_actions(
+            store,
+            alpaca_page_fetcher(
+                key.get_secret_value(),
+                secret.get_secret_value(),
+                symbols,
+                start,
+                end,
+            ),
+        )
+    except Exception as exc:
+        print(f"corporate action download failed: {type(exc).__name__}", file=sys.stderr)
+        raise SystemExit(1) from None
+    if not download.complete:
+        print(f"incomplete reason={download.reason} pages={download.pages}. Nothing was stored.")
+        raise SystemExit(1)
+    print(f"stored={len(download.actions)} pages={download.pages} point_in_time_total_return=false")
+    print(
+        "These rows use Alpaca process_date. That is not an announcement time, "
+        "so the strategies stay NOT_EVALUABLE."
+    )
 
 
 def _sync(
