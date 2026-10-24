@@ -15,7 +15,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from nomadquant.config import PAPER_API_URL, Settings
-from nomadquant.daily.fills import journal_broker_order
+from nomadquant.daily.fills import collect_fill_pages, journal_broker_order
 from nomadquant.marketdata.availability import modeled_available_at
 from nomadquant.marketdata.calendar import is_early_close, next_session, sessions_between
 from nomadquant.marketdata.store import MarketStore
@@ -363,7 +363,9 @@ def submit_connectivity_order(
         if recovered is None:
             return _refused("broker_record_not_confirmed")
         return recovered
-    return _send(settings, client, CONNECTIVITY_CLIENT_ID, "SPY", "buy", CONNECTIVITY_CAP)
+    return _send(
+        settings, client, CONNECTIVITY_CLIENT_ID, "SPY", "buy", CONNECTIVITY_CAP, now=clock
+    )
 
 
 def submit_strategy_paper_order(
@@ -455,7 +457,7 @@ def submit_strategy_paper_order(
         if recovered is None:
             return _refused("broker_record_not_confirmed")
         return recovered
-    return _send(settings, client, client_order_id, symbol, side, notional)
+    return _send(settings, client, client_order_id, symbol, side, notional, now=clock)
 
 
 def enable_automatic_paper_pilot(
@@ -770,10 +772,30 @@ def _send(
     side: str,
     notional: Decimal | None = None,
     qty: Decimal | None = None,
+    now: datetime | None = None,
 ) -> dict[str, Any]:
     from alpaca.trading.enums import OrderSide, TimeInForce
     from alpaca.trading.requests import MarketOrderRequest
 
+    clock = now or datetime.now(UTC)
+    local = _find(settings.paper_path, client_order_id)
+    if local is None:
+        return _refused("ledger_unreadable")
+    if (
+        str(local.get("symbol") or "").upper() != symbol.upper()
+        or str(local.get("side") or "") != side
+    ):
+        return _refused("order_ownership_mismatch")
+    if str(local.get("broker_status") or "") != "prepared":
+        return _confirm_broker_record(settings, client, client_order_id)
+    blocked = _final_submission_gate(settings, client, local, clock)
+    if blocked is not None:
+        return _refused(blocked)
+    if not _claim_submit(settings.paper_path, client_order_id):
+        return _confirm_broker_record(settings, client, client_order_id)
+    blocked = _final_submission_gate(settings, client, local, clock)
+    if blocked is not None:
+        return _refused(blocked)
     request = MarketOrderRequest(
         symbol=symbol,
         notional=None if qty is not None else notional,
@@ -787,6 +809,47 @@ def _send(
     except Exception:  # noqa: BLE001 — acceptance is decided by the broker record
         pass
     return _confirm_broker_record(settings, client, client_order_id)
+
+
+def _final_submission_gate(
+    settings: Settings,
+    client: Any,
+    local: dict[str, Any],
+    now: datetime,
+) -> str | None:
+    """Last check before a broker submission. A failure does not send."""
+    from nomadquant.daily.authorization import authorization_status, shared_emergency_stop
+
+    if shared_emergency_stop(settings, now=now) is not None:
+        return "killed"
+    client_order_id = str(local.get("client_order_id") or "")
+    if client_order_id.startswith("nq-daily-"):
+        auth = authorization_status(settings, now=now)
+        if not auth.get("enabled"):
+            return str(auth.get("reason") or "daily_pilot_not_authorized")
+    elif str(local.get("purpose") or "") == "connectivity":
+        auth = _authorization(settings.paper_path, now)
+        if not auth.get("enabled"):
+            return str(auth.get("reason") or "paper_orders_disabled")
+    try:
+        market = client.get_clock()
+    except Exception as exc:  # noqa: BLE001
+        return f"broker_unread:{type(exc).__name__}"
+    return _clock_problem(market, now)
+
+
+def _claim_submit(path: str, client_order_id: str) -> bool:
+    """Move prepared → submitted once. The loser confirms and does not send."""
+    with _connect(path) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        updated = connection.execute(
+            """
+            UPDATE paper_orders SET broker_status = 'submitted'
+            WHERE client_order_id = ? AND broker_status = 'prepared'
+            """,
+            (client_order_id,),
+        )
+        return updated.rowcount == 1
 
 
 def _confirm_broker_record(settings: Settings, client: Any, client_order_id: str) -> dict[str, Any]:
@@ -816,12 +879,15 @@ def _confirm_broker_record(settings: Settings, client: Any, client_order_id: str
         filled_qty=None if filled_qty is None else format(filled_qty, "f"),
         remaining_qty=None if remaining is None else format(remaining, "f"),
     )
+    broker_id = str(getattr(found, "id", "") or "")
+    activity_state, activities = _fill_activities(client, broker_id)
     journal = journal_broker_order(
         settings.paper_path,
         local,
         found,
-        _fill_activities(client),
+        activities,
         recorded_at=datetime.now(UTC).isoformat(),
+        activity_state=activity_state,
     )
     if journal == "conflict":
         return _refused("ledger_disagreement")
@@ -835,6 +901,7 @@ def _confirm_broker_record(settings: Settings, client: Any, client_order_id: str
         "label": CONNECTIVITY_LABEL if client_order_id == CONNECTIVITY_CLIENT_ID else LABEL,
         "counts_as_strategy_pnl": bool(local and local.get("counts_as_strategy_pnl")),
         "described_as_filled": mapped == "filled",
+        "fills": journal,
     }
 
 
@@ -890,26 +957,46 @@ def _recover_existing(
     return _confirm_broker_record(settings, client, client_order_id)
 
 
-def _fill_activities(client: Any) -> list[Any] | None:
-    """Read Alpaca FILL activities when the client can. A fake client returns none.
+def _fill_activities(client: Any, broker_order_id: str) -> tuple[str, list[Any] | None]:
+    """Read every FILL for one broker order.
 
-    The installed trading SDK has no activities method. A real TradingClient is
-    read with GET /account/activities/FILL. A failed or truncated page is not
-    treated as an empty fill list.
+    Alpaca pages with ``order_id``, ``page_size``, and ``page_token``. A short
+    page ends the read. A failed or unfinished page is ``incomplete``.
     """
-    supplied = getattr(client, "fill_activities", None)
-    if callable(supplied):
-        rows = supplied()
-        return list(rows) if isinstance(rows, list) else None
+    if not broker_order_id:
+        return "incomplete", None
+    pages = getattr(client, "fill_pages", None)
+    if callable(pages):
+
+        def fetch(token: str | None) -> list[Any] | None:
+            rows = pages(broker_order_id, token)
+            return rows if isinstance(rows, list) else None
+
+        collected = collect_fill_pages(fetch)
+        if collected is None:
+            return "incomplete", None
+        return "complete", collected
     if type(client).__name__ != "TradingClient":
-        return None
-    try:
-        data = client.get("/account/activities/FILL", {"page_size": 100})
-    except Exception:  # noqa: BLE001 — activity text can contain account details
-        return None
-    if not isinstance(data, list) or len(data) >= 100:
-        return None
-    return data
+        return "unavailable", None
+
+    def fetch_broker(token: str | None) -> list[Any] | None:
+        params: dict[str, object] = {
+            "page_size": 100,
+            "order_id": broker_order_id,
+            "direction": "desc",
+        }
+        if token is not None:
+            params["page_token"] = token
+        try:
+            data = client.get("/account/activities/FILL", params)
+        except Exception:  # noqa: BLE001 — activity text can contain account details
+            return None
+        return data if isinstance(data, list) else None
+
+    collected = collect_fill_pages(fetch_broker)
+    if collected is None:
+        return "incomplete", None
+    return "complete", collected
 
 
 def _lookup(client: Any, client_order_id: str) -> tuple[str, Any]:
@@ -1098,8 +1185,6 @@ def _broker_qty(client: Any, symbol: str) -> Decimal | None:
 def _reconcile(settings: Settings, client: Any, orders: list[dict[str, Any]]) -> bool:
     disagreed = False
     for row in orders:
-        if row["broker_status"] in {"prepared", *_RELEASED}:
-            continue
         before = row.get("filled_qty")
         result = _confirm_broker_record(settings, client, str(row["client_order_id"]))
         if result.get("reason") == "ledger_disagreement":

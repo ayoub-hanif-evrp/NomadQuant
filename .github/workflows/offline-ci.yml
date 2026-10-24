@@ -72,3 +72,27 @@ jobs:
           npm run lint
           npx tsc --noEmit
           npm run build
+
+  windows-smoke:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "0.5.14"
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Sync dependencies
+        run: uv sync --locked --all-groups
+
+      - name: Reconciliation smoke
+        run: uv run pytest -q tests/test_fill_reconciliation.py
+        env:
+          TRADING_MODE: paper
+          ALLOW_ORDER_SUBMISSION: "false"
+          INITIAL_VIRTUAL_CAPITAL_USD: "100"
+          API_HOST: 127.0.0.1

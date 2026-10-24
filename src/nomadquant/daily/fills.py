@@ -8,6 +8,9 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+_PAGE_SIZE = 100
+_MAX_PAGES = 20
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS paper_executions (
     execution_id TEXT PRIMARY KEY,
@@ -67,6 +70,79 @@ def record_execution(path: str, execution: dict[str, Any], *, recorded_at: str) 
                 recorded_at,
             ),
         )
+    return "recorded"
+
+
+def collect_fill_pages(
+    fetch_page: Any,
+    *,
+    page_size: int = _PAGE_SIZE,
+    max_pages: int = _MAX_PAGES,
+) -> list[Any] | None:
+    """Read every page. A failed, repeated, or unfinished page is incomplete."""
+    found: list[Any] = []
+    token: str | None = None
+    seen: set[str] = set()
+    for _ in range(max_pages):
+        page = fetch_page(token)
+        if not isinstance(page, list):
+            return None
+        found.extend(page)
+        if len(page) < page_size:
+            return found
+        last = str(_field(page[-1], "id") or "")
+        if not last or last in seen:
+            return None
+        seen.add(last)
+        token = last
+    return None
+
+
+def record_executions(path: str, executions: list[dict[str, Any]], *, recorded_at: str) -> str:
+    """Insert a batch in one transaction. A conflict writes nothing new."""
+    pending: list[tuple[str, dict[str, Any]]] = []
+    for execution in executions:
+        execution_id = str(execution.get("execution_id") or "")
+        row = _normalized(execution)
+        if not execution_id or row is None:
+            return "conflict"
+        pending.append((execution_id, row))
+    file = Path(path)
+    file.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(file) as connection:
+        connection.row_factory = sqlite3.Row
+        connection.executescript(_SCHEMA)
+        connection.execute("BEGIN IMMEDIATE")
+        for execution_id, row in pending:
+            existing = connection.execute(
+                "SELECT * FROM paper_executions WHERE execution_id = ?",
+                (execution_id,),
+            ).fetchone()
+            if existing is not None:
+                if not _same(existing, row):
+                    connection.rollback()
+                    return "conflict"
+                continue
+            connection.execute(
+                """
+                INSERT INTO paper_executions (
+                    execution_id, client_order_id, symbol, side, qty, price,
+                    executed_at, purpose, aggregate, recorded_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    execution_id,
+                    row["client_order_id"],
+                    row["symbol"],
+                    row["side"],
+                    row["qty"],
+                    row["price"],
+                    row["executed_at"],
+                    row["purpose"],
+                    1 if row["aggregate"] else 0,
+                    recorded_at,
+                ),
+            )
     return "recorded"
 
 
@@ -134,32 +210,75 @@ def journal_broker_order(
     activities: list[Any] | None,
     *,
     recorded_at: str,
+    activity_state: str = "unavailable",
 ) -> str:
-    """Store broker fills for one order. Returns ``ok``, ``conflict``, or ``unverified``."""
+    """Store broker fills for one order.
+
+    ``complete`` means every page for that broker order was read. Those rows are
+    written only when the symbol, side, quantity, and average price agree.
+    ``incomplete`` is never stored as a finished history. ``unavailable`` may
+    store one aggregate estimate, which is not a session fill.
+    """
     if local is None:
         return "ok"
+    broker_id = str(getattr(broker_order, "id", "") or "")
+    if not broker_id:
+        return "unverified"
     client_order_id = str(local.get("client_order_id") or "")
     purpose = str(local.get("purpose") or "")
-    broker_id = str(getattr(broker_order, "id", "") or "")
-    detailed: list[dict[str, Any]] = []
-    if activities is not None:
-        for activity in activities:
-            if broker_id and str(_field(activity, "order_id") or "") != broker_id:
+    symbol = str(local.get("symbol") or "").upper()
+    side = str(local.get("side") or "").lower()
+    if activity_state == "incomplete":
+        return "unverified"
+    if activity_state == "complete":
+        detailed: list[dict[str, Any]] = []
+        for activity in activities or []:
+            if str(_field(activity, "order_id") or "") != broker_id:
                 continue
             parsed = execution_from_activity(
                 activity, client_order_id=client_order_id, purpose=purpose
             )
-            if parsed is None:
+            if (
+                parsed is None
+                or parsed["symbol"] != symbol
+                or parsed["side"] != side
+                or parsed["purpose"] != purpose
+                or parsed.get("executed_at") is None
+            ):
                 return "unverified"
-            state = record_execution(path, parsed, recorded_at=recorded_at)
-            if state == "conflict":
-                return "conflict"
             detailed.append(parsed)
-    if detailed:
-        return "ok"
+        filled = _money(getattr(broker_order, "filled_qty", None)) or Decimal("0")
+        if not detailed:
+            return "ok" if filled == 0 else "unverified"
+        average = _money(getattr(broker_order, "filled_avg_price", None))
+        if not _totals_match(detailed, filled, average):
+            return "unverified"
+        state = record_executions(path, detailed, recorded_at=recorded_at)
+        return "ok" if state == "recorded" else "conflict"
+    return _journal_aggregate(
+        path,
+        local,
+        broker_order,
+        broker_id=broker_id,
+        client_order_id=client_order_id,
+        purpose=purpose,
+        recorded_at=recorded_at,
+    )
+
+
+def _journal_aggregate(
+    path: str,
+    local: dict[str, Any],
+    broker_order: Any,
+    *,
+    broker_id: str,
+    client_order_id: str,
+    purpose: str,
+    recorded_at: str,
+) -> str:
     status = str(getattr(broker_order, "status", "") or "").lower().rsplit(".", 1)[-1]
     filled_at = getattr(broker_order, "filled_at", None)
-    if status != "filled" or filled_at is None or not broker_id:
+    if status != "filled" or filled_at is None:
         return "unverified"
     aggregate = _event(
         execution_id=f"alpaca-order:{broker_id}:complete",
@@ -172,10 +291,28 @@ def journal_broker_order(
         purpose=purpose,
         aggregate=True,
     )
-    if aggregate is None:
+    if aggregate is None or aggregate["symbol"] != str(local.get("symbol") or "").upper():
+        return "unverified"
+    if aggregate["side"] != str(local.get("side") or "").lower():
         return "unverified"
     state = record_execution(path, aggregate, recorded_at=recorded_at)
     return "conflict" if state == "conflict" else "ok"
+
+
+def _totals_match(lots: list[dict[str, Any]], filled: Decimal, average: Decimal | None) -> bool:
+    total = sum((lot["qty"] for lot in lots), Decimal("0"))
+    if average is None or total != filled or total <= 0:
+        return False
+    weighted = sum((lot["qty"] * lot["price"] for lot in lots), Decimal("0")) / total
+    quantum = _quantum(average)
+    return weighted.quantize(quantum) == average.quantize(quantum)
+
+
+def _quantum(value: Decimal) -> Decimal:
+    text = format(value, "f")
+    if "." not in text:
+        return Decimal("1")
+    return Decimal("1").scaleb(-len(text.split(".", 1)[1]))
 
 
 def fill_lots(

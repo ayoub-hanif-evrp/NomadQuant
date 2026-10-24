@@ -81,6 +81,7 @@ def build_portfolio(
     realized = Decimal("0")
     realized_today = Decimal("0")
     today_known = session is not None
+    session_fills_known = True
     connectivity_qty = Decimal("0")
     connectivity_cost = Decimal("0")
     quantity: dict[str, Decimal] = {}
@@ -101,6 +102,8 @@ def build_portfolio(
             else:
                 uncertain = True
             continue
+        if lot.get("aggregate"):
+            session_fills_known = False
         if side == "sell":
             owned = quantity.get(symbol, Decimal("0"))
             basis = cost.get(symbol, Decimal("0"))
@@ -113,8 +116,13 @@ def build_portfolio(
             gain = filled * price - removed
             cash += filled * price
             realized += gain
+            if lot.get("aggregate"):
+                session_fills_known = False
+                today_known = False
+                continue
             traded = _session_day(lot.get("executed_at"))
             if traded is None:
+                session_fills_known = False
                 today_known = False
             elif session is not None and traded == session:
                 realized_today += gain
@@ -201,9 +209,18 @@ def build_portfolio(
         "connectivity_counts_as_strategy_pnl": False,
         "marks_complete": readiness == "ready",
         "disputed": disputed,
+        "accounting_state": _accounting_state(disputed, session_fills_known),
         "readiness": readiness,
         "loss_stop": bool(strategy_pnl is not None and strategy_pnl <= -STRATEGY_LOSS_STOP),
     }
+
+
+def _accounting_state(disputed: bool, session_fills_known: bool) -> str:
+    if disputed:
+        return "disputed"
+    if not session_fills_known:
+        return "unverified"
+    return "verified"
 
 
 def _session_day(value: object) -> date | None:

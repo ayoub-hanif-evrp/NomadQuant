@@ -237,6 +237,7 @@ def submit_daily_paper_order(
         action.lower(),
         None if action == "SELL" else notional,
         quantity if action == "SELL" else None,
+        now=clock,
     )
     if action == "SELL":
         result["residual_qty"] = format(residual, "f")
