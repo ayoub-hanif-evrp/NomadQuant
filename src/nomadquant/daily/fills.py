@@ -318,7 +318,11 @@ def _quantum(value: Decimal) -> Decimal:
 def fill_lots(
     orders: list[dict[str, Any]], executions: list[dict[str, Any]]
 ) -> tuple[list[dict[str, Any]], bool]:
-    """Choose the fills that reconstruct a book. A qty mismatch is a disagreement."""
+    """Choose the fills that reconstruct a book.
+
+    A stored row must match its parent order. A mismatch or an unreadable row
+    disputes the book and is not replaced with the order total.
+    """
     clean, conflict = _unique(executions)
     grouped: dict[str, list[dict[str, Any]]] = {}
     for lot in clean:
@@ -330,6 +334,9 @@ def fill_lots(
         client_order_id = str(row.get("client_order_id") or "")
         filled = _money(row.get("filled_qty")) or Decimal("0")
         matches = grouped.get(client_order_id, [])
+        if any(not _agrees(lot, row) for lot in matches):
+            disputed = True
+            continue
         detailed = [lot for lot in matches if not lot["aggregate"]]
         usable = detailed or [lot for lot in matches if lot["aggregate"]]
         if usable:
@@ -339,7 +346,7 @@ def fill_lots(
                 continue
             chosen.extend(usable)
             continue
-        if filled <= 0:
+        if filled <= 0 or conflict:
             continue
         price = _money(row.get("filled_avg_price"))
         if price is None or price <= 0:
@@ -446,6 +453,29 @@ def _same(existing: sqlite3.Row, row: dict[str, Any]) -> bool:
         bool(existing["aggregate"]) == row["aggregate"],
     )
     return bool(all(checks))
+
+
+def _agrees(lot: dict[str, Any], order: dict[str, Any]) -> bool:
+    """A stored fill must name the same order, symbol, side, purpose, and quantity."""
+    side = str(order.get("side") or "").lower()
+    if "buy" in side:
+        side = "buy"
+    elif "sell" in side:
+        side = "sell"
+    qty = lot.get("qty")
+    price = lot.get("price")
+    stamp = lot.get("executed_at")
+    return bool(
+        str(lot.get("client_order_id") or "") == str(order.get("client_order_id") or "")
+        and str(lot.get("symbol") or "").upper() == str(order.get("symbol") or "").upper()
+        and str(lot.get("side") or "") == side
+        and str(lot.get("purpose") or "") == str(order.get("purpose") or "")
+        and isinstance(qty, Decimal)
+        and qty > 0
+        and isinstance(price, Decimal)
+        and price > 0
+        and (stamp in {None, ""} or _aware_text(stamp) is not None)
+    )
 
 
 def _unique(executions: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], bool]:

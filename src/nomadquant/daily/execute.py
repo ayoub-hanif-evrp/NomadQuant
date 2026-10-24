@@ -11,7 +11,6 @@ from nomadquant.broker.paper_pilot import (
     _broker_qty,
     _exposure,
     _find,
-    _insert_order,
     _listed_orders,
     _money,
     _orders,
@@ -20,9 +19,10 @@ from nomadquant.broker.paper_pilot import (
     _recheck_before_send,
     _recover_existing,
     _refused,
-    _send,
     _sleeve,
+    _submit_claimed,
     _untracked,
+    hold_submission,
 )
 from nomadquant.config import PAPER_API_URL, Settings
 from nomadquant.daily.authorization import authorization_status, shared_emergency_stop
@@ -122,8 +122,12 @@ def submit_daily_paper_order(
     )
     if quotes is None and symbols:
         return _refused("portfolio_unreconciled")
-    if book["disputed"] or not book["marks_complete"]:
+    if book["disputed"]:
+        return _refused("portfolio_disputed")
+    if not book["marks_complete"]:
         return _refused("portfolio_unreconciled")
+    if action == "BUY" and book["accounting_state"] != "verified":
+        return _refused(str(book["accounting_reason"] or "accounting_unverified"))
     if action == "BUY" and book["loss_stop"]:
         return _refused("strategy_loss_stop")
     holdings = {key: Decimal(value) for key, value in book["strategy_qty"].items()}
@@ -187,8 +191,14 @@ def submit_daily_paper_order(
         if touch is None or touch <= 0:
             return _refused("missing_quote")
         quantity = (notional / touch).quantize(_QTY_STEP, rounding=ROUND_DOWN)
-    if book["equity_usd"] is None or book["realized_today_usd"] is None:
+    if book["equity_usd"] is None:
         return _refused("portfolio_unreconciled")
+    if action == "BUY" and book["realized_today_usd"] is None:
+        return _refused("execution_history_incomplete")
+    # A missing session figure must not block an authorized strategy exit.
+    risk_book = book
+    if action == "SELL" and book["realized_today_usd"] is None:
+        risk_book = {**book, "realized_today_usd": "0"}
     peak = Decimal(
         note_equity(
             settings.daily_path,
@@ -197,7 +207,7 @@ def submit_daily_paper_order(
             realized=str(book["realized_pnl_usd"]),
         )
     )
-    verdict = _risk(stored, symbol, action, quantity, quotes, quote, clock, book, peak)
+    verdict = _risk(stored, symbol, action, quantity, quotes, quote, clock, risk_book, peak)
     if verdict is not None:
         return _refused(verdict)
     fresh = _recheck_before_send(settings, client, symbol, quote_client, now)
@@ -209,36 +219,24 @@ def submit_daily_paper_order(
         if bid is None or bid <= 0:
             return _refused("missing_quote")
         notional = (quantity * bid).quantize(Decimal("0.01"))
-    verdict = _risk(stored, symbol, action, quantity, quotes, refreshed, clock, book, peak)
+    verdict = _risk(stored, symbol, action, quantity, quotes, refreshed, clock, risk_book, peak)
     if verdict is not None:
         return _refused(verdict)
-    claimed = _insert_order(
-        settings.paper_path,
-        client_order_id=client_order_id,
-        purpose="strategy",
-        symbol=symbol,
-        side=action.lower(),
-        notional=notional,
-        created_at=clock.isoformat(),
-        decision_id=f"{strategy_id}:{signal}:{symbol}:{action.lower()}",
-        counts_as_strategy_pnl=True,
-    )
-    if not claimed:
-        existing = _find(settings.paper_path, client_order_id)
-        recovered = _recover_existing(settings, client, client_order_id, existing)
-        if recovered is None:
-            return _refused("broker_record_not_confirmed")
-        return recovered
-    result = _send(
-        settings,
-        client,
-        client_order_id,
-        symbol,
-        action.lower(),
-        None if action == "SELL" else notional,
-        quantity if action == "SELL" else None,
-        now=clock,
-    )
+    with hold_submission():
+        result = _submit_claimed(
+            settings,
+            client,
+            client_order_id=client_order_id,
+            purpose="strategy",
+            symbol=symbol,
+            side=action.lower(),
+            notional=notional,
+            created_at=clock.isoformat(),
+            decision_id=f"{strategy_id}:{signal}:{symbol}:{action.lower()}",
+            counts_as_strategy_pnl=True,
+            qty=quantity if action == "SELL" else None,
+            now=clock,
+        )
     if action == "SELL":
         result["residual_qty"] = format(residual, "f")
     result["counts_as_strategy_pnl"] = True

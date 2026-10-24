@@ -11,7 +11,7 @@ The review after `a927831` is the source of this list. Later phases that were no
 | One sell quantity | The risk proposal and the broker request both use the strategy-owned share quantity. The sell request carries `qty` and no notional. |
 | Durable peak | Equity 110 then 90 keeps peak 110. |
 | Price binding | The stored fingerprint names one feed and `alpaca|raw|1Day`. A missing bar, a close mismatch, or a bar published after the decision refuses. A second stored feed does not. |
-| Read-only status | `paper_status` does not rewrite fills. `reconcile_paper_orders` does, including prepared and cancelled rows, and it pages FILL activities for that broker order only. |
+| Read-only status | `paper_status` does not rewrite fills. `reconcile_paper_orders` does, including prepared and cancelled rows, and it pages FILL activities for that broker order only. `paper-verify` compares orders, fills, cash, and positions and writes nothing. |
 | Exit precedence | An eligible SELL is the primary action ahead of a new BUY. |
 | Loss stop versus exit | A strategy loss stop blocks a new BUY. It does not replace the kill switch, and it does not by itself forbid a strategy SELL. |
 

@@ -94,6 +94,8 @@ def build_portfolio(
         symbol = str(lot.get("symbol") or "")
         filled = _money(lot.get("qty")) or Decimal("0")
         price = _money(lot.get("price"))
+        if _history_incomplete(lot):
+            session_fills_known = False
         if purpose == "connectivity":
             if side == "buy" and filled > 0 and price is not None and price > 0:
                 connectivity_qty += filled
@@ -210,6 +212,7 @@ def build_portfolio(
         "marks_complete": readiness == "ready",
         "disputed": disputed,
         "accounting_state": _accounting_state(disputed, session_fills_known),
+        "accounting_reason": _accounting_reason(disputed, session_fills_known),
         "readiness": readiness,
         "loss_stop": bool(strategy_pnl is not None and strategy_pnl <= -STRATEGY_LOSS_STOP),
     }
@@ -221,6 +224,36 @@ def _accounting_state(disputed: bool, session_fills_known: bool) -> str:
     if not session_fills_known:
         return "unverified"
     return "verified"
+
+
+def _accounting_reason(disputed: bool, session_fills_known: bool) -> str | None:
+    if disputed:
+        return "journal_disagreement"
+    if not session_fills_known:
+        return "execution_history_incomplete"
+    return None
+
+
+def system_readiness(*, blocked: bool, blocked_reason: str | None, accounting_state: str) -> str:
+    """Operator state. A bad journal outranks a missing authorization."""
+    if accounting_state == "disputed" or blocked_reason in {
+        "ledger_disagreement",
+        "journal_disagreement",
+    }:
+        return "disputed"
+    if accounting_state == "unverified":
+        return "unverified"
+    if blocked or blocked_reason:
+        return "blocked"
+    return "healthy"
+
+
+def _history_incomplete(lot: dict[str, Any]) -> bool:
+    return bool(
+        lot.get("aggregate")
+        or not lot.get("executed_at")
+        or str(lot.get("execution_id") or "").startswith("unverified:")
+    )
 
 
 def _session_day(value: object) -> date | None:

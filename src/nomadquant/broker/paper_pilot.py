@@ -8,6 +8,9 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, date, datetime, timedelta
 from decimal import ROUND_DOWN, Decimal, InvalidOperation
 from pathlib import Path
@@ -15,7 +18,8 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from nomadquant.config import PAPER_API_URL, Settings
-from nomadquant.daily.fills import collect_fill_pages, journal_broker_order
+from nomadquant.daily.fills import collect_fill_pages, journal_broker_order, load_executions
+from nomadquant.daily.portfolio import build_portfolio, system_readiness
 from nomadquant.marketdata.availability import modeled_available_at
 from nomadquant.marketdata.calendar import is_early_close, next_session, sessions_between
 from nomadquant.marketdata.store import MarketStore
@@ -37,6 +41,16 @@ ENABLE_PHRASE = "ENABLE_ALPACA_PAPER_ORDERS"
 KILL_PHRASE = "DISABLE_ALPACA_PAPER_ORDERS"
 CONNECTIVITY_PHRASE = "SUBMIT_ONE_FIVE_DOLLAR_PAPER_CONNECTIVITY_ORDER"
 AUTOMATIC_PHRASE = "ENABLE_AUTOMATIC_PAPER_PILOT"
+_SUBMISSION = threading.RLock()
+
+
+@contextmanager
+def hold_submission() -> Iterator[None]:
+    """Keep insert, send, and confirm on one order from interleaving."""
+    with _SUBMISSION:
+        yield
+
+
 CONNECTIVITY_CLIENT_ID = "nq-connect-spy-buy-5"
 TRUSTED_QUOTE_SOURCE = "alpaca_snapshot_latest_quote"
 STRATEGY_SYMBOL = "SPY"
@@ -154,9 +168,16 @@ def paper_status(
         if disagreement
         else _sleeve(cash, buying_power, exposure["capital"])
     )
-    blocked = sleeve["blocked"] or not bool(getattr(asset, "fractionable", False))
+    blocked = bool(sleeve["blocked"]) or not bool(getattr(asset, "fractionable", False))
+    accounting = _accounting_view(settings.paper_path, disputed=bool(disagreement))
     return {
         **base,
+        **accounting,
+        "system_readiness": system_readiness(
+            blocked=blocked,
+            blocked_reason=None if sleeve["reason"] is None else str(sleeve["reason"]),
+            accounting_state=str(accounting["accounting_state"]),
+        ),
         "connected": True,
         "blocked": blocked,
         "reason": sleeve["reason"],
@@ -346,26 +367,21 @@ def submit_connectivity_order(
     fresh = _recheck_before_send(settings, client, "SPY", quote_client, now)
     if fresh is not None:
         return _refused(fresh)
-    claimed = _insert_order(
-        settings.paper_path,
-        client_order_id=CONNECTIVITY_CLIENT_ID,
-        purpose="connectivity",
-        symbol="SPY",
-        side="buy",
-        notional=CONNECTIVITY_CAP,
-        created_at=clock.isoformat(),
-        decision_id=CONNECTIVITY_CLIENT_ID,
-        counts_as_strategy_pnl=False,
-    )
-    if not claimed:
-        existing = _find(settings.paper_path, CONNECTIVITY_CLIENT_ID)
-        recovered = _recover_existing(settings, client, CONNECTIVITY_CLIENT_ID, existing)
-        if recovered is None:
-            return _refused("broker_record_not_confirmed")
-        return recovered
-    return _send(
-        settings, client, CONNECTIVITY_CLIENT_ID, "SPY", "buy", CONNECTIVITY_CAP, now=clock
-    )
+    with hold_submission():
+        return _submit_claimed(
+            settings,
+            client,
+            client_order_id=CONNECTIVITY_CLIENT_ID,
+            purpose="connectivity",
+            symbol="SPY",
+            side="buy",
+            notional=CONNECTIVITY_CAP,
+            created_at=clock.isoformat(),
+            decision_id=CONNECTIVITY_CLIENT_ID,
+            counts_as_strategy_pnl=False,
+            qty=None,
+            now=clock,
+        )
 
 
 def submit_strategy_paper_order(
@@ -439,25 +455,21 @@ def submit_strategy_paper_order(
     fresh = _recheck_before_send(settings, client, symbol, quote_client, now)
     if fresh is not None:
         return _refused(fresh)
-    claimed = _insert_order(
-        settings.paper_path,
-        client_order_id=client_order_id,
-        purpose="strategy",
-        symbol=symbol,
-        side=side,
-        notional=notional,
-        created_at=clock.isoformat(),
-        decision_id=decision_id,
-        counts_as_strategy_pnl=True,
-    )
-    if not claimed:
-        recovered = _recover_existing(
-            settings, client, client_order_id, _find(settings.paper_path, client_order_id)
+    with hold_submission():
+        return _submit_claimed(
+            settings,
+            client,
+            client_order_id=client_order_id,
+            purpose="strategy",
+            symbol=symbol,
+            side=side,
+            notional=notional,
+            created_at=clock.isoformat(),
+            decision_id=decision_id,
+            counts_as_strategy_pnl=True,
+            qty=None,
+            now=clock,
         )
-        if recovered is None:
-            return _refused("broker_record_not_confirmed")
-        return recovered
-    return _send(settings, client, client_order_id, symbol, side, notional, now=clock)
 
 
 def enable_automatic_paper_pilot(
@@ -764,6 +776,52 @@ def _recompute_risk(
     return quantity * touch, None
 
 
+def _submit_claimed(
+    settings: Settings,
+    client: Any,
+    *,
+    client_order_id: str,
+    purpose: str,
+    symbol: str,
+    side: str,
+    notional: Decimal,
+    created_at: str,
+    decision_id: str,
+    counts_as_strategy_pnl: bool,
+    qty: Decimal | None,
+    now: datetime,
+) -> dict[str, Any]:
+    """Insert and send while the caller holds ``hold_submission``."""
+    claimed = _insert_order(
+        settings.paper_path,
+        client_order_id=client_order_id,
+        purpose=purpose,
+        symbol=symbol,
+        side=side,
+        notional=notional,
+        created_at=created_at,
+        decision_id=decision_id,
+        counts_as_strategy_pnl=counts_as_strategy_pnl,
+    )
+    if not claimed:
+        recovered = _recover_existing(
+            settings, client, client_order_id, _find(settings.paper_path, client_order_id)
+        )
+        if recovered is None:
+            return _refused("broker_record_not_confirmed")
+        return recovered
+    return _send(
+        settings,
+        client,
+        client_order_id,
+        symbol,
+        side,
+        None if qty is not None else notional,
+        qty,
+        now=now,
+    )
+
+
 def _send(
     settings: Settings,
     client: Any,
@@ -774,10 +832,24 @@ def _send(
     qty: Decimal | None = None,
     now: datetime | None = None,
 ) -> dict[str, Any]:
+    clock = now or datetime.now(UTC)
+    with _SUBMISSION:
+        return _send_locked(settings, client, client_order_id, symbol, side, notional, qty, clock)
+
+
+def _send_locked(
+    settings: Settings,
+    client: Any,
+    client_order_id: str,
+    symbol: str,
+    side: str,
+    notional: Decimal | None,
+    qty: Decimal | None,
+    clock: datetime,
+) -> dict[str, Any]:
     from alpaca.trading.enums import OrderSide, TimeInForce
     from alpaca.trading.requests import MarketOrderRequest
 
-    clock = now or datetime.now(UTC)
     local = _find(settings.paper_path, client_order_id)
     if local is None:
         return _refused("ledger_unreadable")
@@ -853,6 +925,11 @@ def _claim_submit(path: str, client_order_id: str) -> bool:
 
 
 def _confirm_broker_record(settings: Settings, client: Any, client_order_id: str) -> dict[str, Any]:
+    with _SUBMISSION:
+        return _confirm_locked(settings, client, client_order_id)
+
+
+def _confirm_locked(settings: Settings, client: Any, client_order_id: str) -> dict[str, Any]:
     local = _find(settings.paper_path, client_order_id)
     try:
         found = client.get_order_by_client_id(client_order_id)
@@ -1183,17 +1260,38 @@ def _broker_qty(client: Any, symbol: str) -> Decimal | None:
 
 
 def _reconcile(settings: Settings, client: Any, orders: list[dict[str, Any]]) -> bool:
+    """Refresh broker totals. An unverified fill history is not rewritten here.
+
+    ``fills == unverified`` stays on the order through the journal comparison.
+    It blocks a later BUY. It is not the same failure as a quantity that moved
+    backwards, which does block the sleeve.
+    """
     disagreed = False
     for row in orders:
         before = row.get("filled_qty")
         result = _confirm_broker_record(settings, client, str(row["client_order_id"]))
-        if result.get("reason") == "ledger_disagreement":
+        if result.get("reason") == "ledger_disagreement" or result.get("fills") == "conflict":
             disagreed = True
         elif before and result.get("filled_qty"):
             later = Decimal(str(result["filled_qty"]))
             if later < Decimal(str(before)):
                 disagreed = True
     return disagreed
+
+
+def _accounting_view(path: str, *, disputed: bool) -> dict[str, str | None]:
+    if disputed:
+        return {"accounting_state": "disputed", "accounting_reason": "ledger_disagreement"}
+    try:
+        book = build_portfolio(_orders(path), executions=load_executions(path))
+    except sqlite3.DatabaseError:
+        return {"accounting_state": "disputed", "accounting_reason": "ledger_unreadable"}
+    state = str(book["accounting_state"])
+    reason = book["accounting_reason"]
+    return {
+        "accounting_state": state,
+        "accounting_reason": None if reason is None else str(reason),
+    }
 
 
 def _client(settings: Settings) -> Any | None:
@@ -1220,6 +1318,9 @@ def _base(clock: datetime) -> dict[str, Any]:
         "paper_url": PAPER_API_URL,
         "live_trading": False,
         "allow_order_submission": False,
+        "accounting_state": None,
+        "accounting_reason": None,
+        "system_readiness": "blocked",
         "historical_replay_counts_as_performance": False,
         "execution_model": "alpaca_paper_market_order",
         "internal_hypothetical_fills": "not_authoritative",

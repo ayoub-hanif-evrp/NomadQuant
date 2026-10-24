@@ -16,7 +16,7 @@ Only Python functions call Alpaca `submit_order`. There is no HTTP route whose p
 
 ## Portfolio truth
 
-`daily/portfolio.py` is the allocated $100 projection. It separates connectivity quantity from strategy quantity. Cash, quantity, cost, and realized P&L are rebuilt from the append-only `paper_executions` journal. A partial fill on a later cancelled or expired order keeps the executed shares. The same execution id is not applied twice. Daily realized P&L uses a timezone-aware FILL timestamp in America/New_York. Order creation time is not a fill time. An order-level average at `filled_at` is an aggregate estimate and is not assigned to one session. The book reports `verified`, `unverified`, or `disputed`.
+`daily/portfolio.py` is the allocated $100 projection. It separates connectivity quantity from strategy quantity. Cash, quantity, cost, and realized P&L are rebuilt from the append-only `paper_executions` journal. A partial fill on a later cancelled or expired order keeps the executed shares. The same execution id is not applied twice. Daily realized P&L uses a timezone-aware FILL timestamp in America/New_York. Order creation time is not a fill time. An order-level average at `filled_at` is an aggregate estimate and is not assigned to one session. The book reports `verified`, `unverified`, or `disputed`. Each stored fill is checked against its parent order's client id, symbol, side, purpose, quantity, and execution timestamp. A mismatch disputes the book and does not create a holding. An incomplete history blocks a new BUY. An authorized strategy SELL can still be sent when the book is unverified rather than disputed. `paper_status` and `daily_status` expose `accounting_state`, `accounting_reason`, and `system_readiness` (`healthy`, `unverified`, `blocked`, `disputed`).
 
 Valuation uses a supplied mark. A missing mark sets `valuation` to `unavailable` and does not treat cost basis as a market price. Strategy loss is realized plus marked P&L, and it blocks a new BUY at $20. A SELL of strategy-owned shares can still be risk-checked while that stop is active. The kill switch blocks both.
 
@@ -31,8 +31,8 @@ The trend rule does not buy again while that strategy already holds the target. 
 ## What is still not true
 
 - The daily pilot is not authorized. `ALLOW_ORDER_SUBMISSION` remains false. No Windows task is installed.
-- Fill reads for one broker order use Alpaca `order_id` and `page_token`. A failed or unfinished page stays unverified. That paged read has automated tests against a fake client. A live paper-account read is a separate check and is not itself a fill.
-- Reconciliation revisits prepared and cancelled orders. The send path claims `prepared` once, rechecks the emergency stop and authorization, and does not submit when the broker outcome is unknown.
+- Fill reads for one broker order use Alpaca `order_id` and `page_token`. A failed or unfinished page stays unverified and blocks a new BUY. `nomadquant-shadow paper-verify` is the read-only comparison. It does not reconcile or repair.
+- Reconciliation revisits prepared and cancelled orders. The send path claims `prepared` once, rechecks the emergency stop and authorization, and does not submit when the broker outcome is unknown. Insert, send, and confirm for the same order do not interleave, so two overlapping requests still produce one broker submission.
 - Passing tests are not a complete broker lifecycle. They have not shown a live Alpaca partial fill.
 - Official Alpaca, FRED, EDGAR, and other external MCP servers are not connected. Agents only see the in-process read-only tool list.
 - `apps/web/lib/api.ts` and `broker/paper_pilot.py` are still large modules. They were not split in this repair.

@@ -2367,6 +2367,9 @@ export type PaperStatus = {
   }>;
   quote_required_before_submit?: boolean;
   automatic_pilot?: { enabled: boolean; reason?: string | null };
+  accounting_state?: string | null;
+  accounting_reason?: string | null;
+  system_readiness?: string;
 };
 
 export async function loadPaperStatus(): Promise<PaperStatus> {
@@ -2396,6 +2399,9 @@ export type DailyPilotStatus = {
   schedule_installed?: boolean;
   emergency_stop?: boolean;
   orders_blocked_reasons?: string[];
+  accounting_state?: string | null;
+  accounting_reason?: string | null;
+  system_readiness?: string;
   strategies?: Array<{ strategy_id: string; name: string }>;
   tool_calls?: Array<{ tool: string; status: string }>;
 };

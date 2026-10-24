@@ -87,6 +87,10 @@ def main(argv: list[str] | None = None) -> None:
 
     sub.add_parser("quote-observe", help="Read one IEX quote. Does not fill or trade.")
     sub.add_parser("paper-status", help="Read Alpaca paper status. Does not submit an order.")
+    sub.add_parser(
+        "paper-verify",
+        help="Compare the local paper ledger with Alpaca. Does not submit or rewrite.",
+    )
     smtp_test = sub.add_parser(
         "smtp-test",
         help="Send one harmless SMTP test after the exact confirmation phrase.",
@@ -151,6 +155,17 @@ def _dispatch(args: argparse.Namespace, settings: Settings) -> int:
 
         print(redact(paper_status(settings)))
         return 0
+    if args.command == "paper-verify":
+        from nomadquant.broker.paper_pilot import redact
+        from nomadquant.broker.verify_account import verify_paper_account
+
+        report = verify_paper_account(settings)
+        print(redact(report))
+        if report["readiness"] == "healthy":
+            return 0
+        if report["readiness"] == "unverified":
+            return 1
+        return 2
     if args.command == "smtp-test":
         from nomadquant.approvals.mailer import send_harmless_smtp_test
 

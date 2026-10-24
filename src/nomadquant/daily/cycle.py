@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
@@ -12,11 +13,12 @@ from nomadquant.config import Settings
 from nomadquant.daily.agents import LanguageModel, run_agents
 from nomadquant.daily.authorization import authorization_status
 from nomadquant.daily.engine import primary_candidate
+from nomadquant.daily.fills import load_executions
 from nomadquant.daily.fingerprint import DATASET_ID, price_fingerprint
 from nomadquant.daily.mailer import deliver_notice
 from nomadquant.daily.mcp_client import invoke_readonly_tools
 from nomadquant.daily.mcp_server import MarketContext
-from nomadquant.daily.portfolio import build_portfolio
+from nomadquant.daily.portfolio import build_portfolio, system_readiness
 from nomadquant.daily.registry import INFLUENCE_POLICY, RISK_POLICY, public_registry
 from nomadquant.daily.store import (
     enqueue_notice,
@@ -136,6 +138,11 @@ def evaluate_daily(
 def daily_status(settings: Settings, *, now: datetime | None = None) -> dict[str, Any]:
     clock = now or datetime.now(UTC)
     auth = authorization_status(settings, now=clock)
+    accounting = _desk_accounting(settings)
+    reasons = _blocked_reasons(auth)
+    if accounting["accounting_reason"]:
+        reasons.append(str(accounting["accounting_reason"]))
+    blocked = auth.get("enabled") is not True or auth.get("reason") == "killed"
     return {
         "label": "DAILY AI PAPER PILOT",
         "broker_orders_submitted_by_this_request": False,
@@ -150,9 +157,30 @@ def daily_status(settings: Settings, *, now: datetime | None = None) -> dict[str
         "connectivity_position_isolated": True,
         "per_trade_approval": False,
         "emergency_stop": auth.get("reason") == "killed",
-        "orders_blocked_reasons": _blocked_reasons(auth),
+        "accounting_state": accounting["accounting_state"],
+        "accounting_reason": accounting["accounting_reason"],
+        "system_readiness": system_readiness(
+            blocked=blocked,
+            blocked_reason=None if not auth.get("reason") else str(auth["reason"]),
+            accounting_state=str(accounting["accounting_state"]),
+        ),
+        "orders_blocked_reasons": list(dict.fromkeys(reasons)),
         "activation_phrase": "AUTHORIZE_DAILY_PAPER_PILOT",
         "as_of": clock.isoformat(),
+    }
+
+
+def _desk_accounting(settings: Settings) -> dict[str, str | None]:
+    try:
+        book = build_portfolio(
+            _orders(settings.paper_path), executions=load_executions(settings.paper_path)
+        )
+    except sqlite3.DatabaseError:
+        return {"accounting_state": "disputed", "accounting_reason": "ledger_unreadable"}
+    reason = book["accounting_reason"]
+    return {
+        "accounting_state": str(book["accounting_state"]),
+        "accounting_reason": None if reason is None else str(reason),
     }
 
 

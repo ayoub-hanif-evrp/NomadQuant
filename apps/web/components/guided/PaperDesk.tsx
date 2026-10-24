@@ -62,6 +62,11 @@ export function PaperDesk() {
           <p>
             Valuation time: {data?.market_timestamp ?? "not reported"}. A missing quote is not a price of zero.
           </p>
+          <p>
+            Accounting: {data?.accounting_state ?? "not reported"}
+            {data?.accounting_reason ? ` (${data.accounting_reason})` : ""}. System readiness:{" "}
+            {data?.system_readiness ?? "not reported"}.
+          </p>
           <p>Readiness: {data?.blocked ? `blocked (${data.reason ?? "unspecified"})` : "status readable"}.</p>
         </article>
         <article className="panel p-4 text-sm">
@@ -73,6 +78,10 @@ export function PaperDesk() {
           </p>
           <p>Schedule installed: {flag(pilot?.schedule_installed)}. This computer must be on for any later local run.</p>
           <p>
+            Desk state: {pilot?.system_readiness ?? (daily.isLoading ? "…" : "not reported")}
+            {pilot?.accounting_reason ? ` (${pilot.accounting_reason})` : ""}.
+          </p>
+          <p>
             Orders are unavailable because:{" "}
             {pilot?.orders_blocked_reasons?.join(", ") || (daily.isLoading ? "…" : "not reported")}
           </p>
@@ -82,6 +91,11 @@ export function PaperDesk() {
           <p className="kicker">Execution audit</p>
           <p className="mt-2">
             This list is the local paper ledger. Accepted is not filled. This page does not reconcile or submit.
+          </p>
+          <p>
+            Accounting {data?.accounting_state ?? "not reported"}
+            {data?.accounting_reason ? `: ${data.accounting_reason}` : ""}. A missing or conflicting fill
+            history stays visible. This page does not repair it.
           </p>
           <p>Latest decision {pilot?.latest_decision?.action ?? "none"} is not itself a broker acknowledgement.</p>
         </article>

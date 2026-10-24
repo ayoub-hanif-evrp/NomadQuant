@@ -90,7 +90,7 @@ jobs:
         run: uv sync --locked --all-groups
 
       - name: Reconciliation smoke
-        run: uv run pytest -q tests/test_fill_reconciliation.py
+        run: uv run pytest -q tests/test_fill_reconciliation.py tests/test_accounting_integrity.py
         env:
           TRADING_MODE: paper
           ALLOW_ORDER_SUBMISSION: "false"
