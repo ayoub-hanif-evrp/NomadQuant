@@ -2402,6 +2402,7 @@ export type DailyPilotStatus = {
   accounting_state?: string | null;
   accounting_reason?: string | null;
   system_readiness?: string;
+  research_evidence?: { research_state?: string; reason?: string; permission_to_trade?: boolean };
   strategies?: Array<{ strategy_id: string; name: string }>;
   tool_calls?: Array<{ tool: string; status: string }>;
 };

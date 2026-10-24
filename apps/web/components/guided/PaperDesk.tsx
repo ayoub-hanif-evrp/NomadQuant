@@ -103,8 +103,10 @@ export function PaperDesk() {
           <p className="kicker">Strategy validation and data quality</p>
           <p className="mt-2">
             Registered research rules:{" "}
-            {pilot?.strategies?.map((item) => item.strategy_id).join(", ") || "not loaded"}. Their historical results
-            are not Alpaca profit and are not shown here as an equity curve.
+            {pilot?.strategies?.map((item) => item.strategy_id).join(", ") || "not loaded"}. Research evidence:{" "}
+            {pilot?.research_evidence?.research_state ?? "not reported"}
+            {pilot?.research_evidence?.reason ? ` (${pilot.research_evidence.reason})` : ""}. That label is not
+            permission to trade. Historical results are not Alpaca profit and are not shown here as an equity curve.
           </p>
           <p>
             SPY and QQQ share the equity market. A second ticker is not treated as diversification unless their

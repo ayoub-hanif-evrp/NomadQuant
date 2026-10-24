@@ -20,4 +20,5 @@ Versions refer to the behavior in the working tree after the portfolio-truth rep
 | Ollama daily adapter | Experimental | Fail-closed when the model is down. Not demonstrated against a live model in this repair. |
 | Shadow and research backtests | Available | Historical research. They do not submit paper orders. |
 | Unattended Windows schedule | Unavailable | No daily or shadow task is installed by this repair. |
-| Dashboard views for truth, validation, audit, data quality, and readiness | Unavailable | The existing paper page remains. Those five views were not added. |
+| Dashboard views for truth, validation, audit, data quality, and readiness | Partial | The paper page has those sections and shows `research_evidence`. They are not separate apps. Playwright is not wired. |
+| Strategy qualification | Not granted | `qualify_daily_strategies` returns `NOT_EVALUABLE` on raw prices. It is not permission to trade. |

@@ -30,6 +30,7 @@ from nomadquant.daily.store import (
 )
 from nomadquant.marketdata.availability import modeled_available_at
 from nomadquant.marketdata.calendar import is_session, next_session
+from nomadquant.marketdata.evidence import dataset_evidence
 
 Prices = dict[str, dict[Any, Decimal]]
 
@@ -165,6 +166,7 @@ def daily_status(settings: Settings, *, now: datetime | None = None) -> dict[str
             accounting_state=str(accounting["accounting_state"]),
         ),
         "orders_blocked_reasons": list(dict.fromkeys(reasons)),
+        "research_evidence": dataset_evidence(),
         "activation_phrase": "AUTHORIZE_DAILY_PAPER_PILOT",
         "as_of": clock.isoformat(),
     }
