@@ -31,6 +31,8 @@ GATES = {
     "slippage_bps": format(_SLIPPAGE_BPS, "f"),
     "stress": "twice_spread_and_slippage",
     "execution": "signal_close_fill_next_close",
+    "paper_execution": "market_order_during_the_session",
+    "comparable_to_paper_fills": False,
     "primary_strategy_id": PRIMARY_STRATEGY_ID,
     "parameter_refit": False,
 }
@@ -186,7 +188,7 @@ def _result(
         "primary_strategy_id": PRIMARY_STRATEGY_ID,
         "parameter_refit": False,
         "gates": GATES,
-        "execution": "signal_close_fill_next_close",
+        **_execution_note(),
         "walk_forward": {"label": "historical_research", "status": "completed", "folds": folds},
         "benchmarks": {
             "cash_return": "0",
@@ -255,6 +257,7 @@ def _unqualified(
         "primary_strategy_id": PRIMARY_STRATEGY_ID,
         "parameter_refit": False,
         "gates": GATES,
+        **_execution_note(),
         "walk_forward": study,
         "benchmarks": {
             "cash_return": "0",
@@ -269,6 +272,15 @@ def _unqualified(
         "trials_recorded": 1,
         "multiple_testing_adjustment": "not_applied",
         "sample_sessions": len(usable),
+    }
+
+
+def _execution_note() -> dict[str, object]:
+    """Next-close research fills are not the paper market-order path."""
+    return {
+        "execution": "signal_close_fill_next_close",
+        "paper_execution": "market_order_during_the_session",
+        "comparable_to_paper_fills": False,
     }
 
 

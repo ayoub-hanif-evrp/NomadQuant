@@ -25,7 +25,7 @@ These remain because they need their own evidence, not because the P0 defects we
 - Split `apps/web/lib/api.ts` by domain.
 - Add the five dashboard views, reusing the current chart components.
 - Derived split and total-return series are stored separately from raw bars. Alpaca corporate actions can be downloaded with `nomadquant-data actions`. Their `process_date` is not an announcement time, so `dataset_evidence()` stays `NOT_EVALUABLE`.
-- The qualification report can return `FAILED`, `INCONCLUSIVE`, or `RESEARCH_QUALIFIED` when announcement times exist. It is not permission to trade. A local Alpaca snapshot of 85 SPY and QQQ cash dividends has process dates and no announcement times, so the registered rules are not qualified.
+- The qualification report can return `FAILED`, `INCONCLUSIVE`, or `RESEARCH_QUALIFIED` when announcement times exist. It is not permission to trade. Its fill is the next close, not an intraday paper market order. A local Alpaca snapshot of 85 SPY and QQQ cash dividends has process dates and no announcement times, so the registered rules are not qualified.
 - A missing model is recorded as `DETERMINISTIC_BASELINE`. A live Ollama comparison has not been run.
 - Add opt-in read-only adapters for FRED/ALFRED or SEC EDGAR. Do not put Alpaca's order-capable MCP server on the agent path.
 - Audit `docs/ui-shots/` and move superseded captures out of the tree only after a visual-regression check.

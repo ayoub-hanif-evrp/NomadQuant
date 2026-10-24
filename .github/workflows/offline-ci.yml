@@ -73,6 +73,12 @@ jobs:
           npx tsc --noEmit
           npm run build
 
+      - name: Browser operator check
+        working-directory: apps/web
+        run: |
+          npx playwright install --with-deps chromium
+          npm run operator-browser
+
   windows-smoke:
     runs-on: windows-latest
     steps:
@@ -90,7 +96,7 @@ jobs:
         run: uv sync --locked --all-groups
 
       - name: Reconciliation smoke
-        run: uv run pytest -q tests/test_fill_reconciliation.py tests/test_accounting_integrity.py
+        run: uv run pytest -q tests/test_fill_reconciliation.py tests/test_accounting_integrity.py tests/test_process_claim.py
         env:
           TRADING_MODE: paper
           ALLOW_ORDER_SUBMISSION: "false"
