@@ -7,6 +7,7 @@ or missing P&L inputs required by loss-limit rules.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Any, Literal, Protocol
@@ -178,11 +179,11 @@ class RiskEngine:
         # Account / drawdown checks. Cash-only empty ledgers may omit account
         # metrics; any nonzero holding without equity inputs is insufficient.
         resolved_account = _resolve_account(account, working, price_map)
-        if run(_realized_daily_loss(resolved_account, policy)):
+        if _blocks_new_exposure(run, proposal.side, _realized_daily_loss(resolved_account, policy)):
             status = rule_verdicts[-1].verdict
             return finalize("INSUFFICIENT_DATA" if status == "INSUFFICIENT_DATA" else "REJECT")
 
-        if run(_unrealized_drawdown(resolved_account, policy)):
+        if _blocks_new_exposure(run, proposal.side, _unrealized_drawdown(resolved_account, policy)):
             status = rule_verdicts[-1].verdict
             return finalize("INSUFFICIENT_DATA" if status == "INSUFFICIENT_DATA" else "REJECT")
 
@@ -933,6 +934,17 @@ def _transaction_cost_budget(costs: Decimal, policy: RiskPolicy) -> _RuleOutcome
         "PASS",
         f"Estimated transaction costs ${costs} are within the cost budget.",
     )
+
+
+def _blocks_new_exposure(
+    run: Callable[[_RuleOutcome], bool], side: str, outcome: _RuleOutcome
+) -> bool:
+    """A loss or drawdown breaker stops new buys. A sell may still reduce risk."""
+    rule, status, reason = outcome
+    if side == "sell" and status == "REJECT":
+        run((rule, "PASS", f"{reason} A risk-reducing sell remains allowed."))
+        return False
+    return run(outcome)
 
 
 def _realized_daily_loss(account: AccountMetrics | None, policy: RiskPolicy) -> _RuleOutcome:

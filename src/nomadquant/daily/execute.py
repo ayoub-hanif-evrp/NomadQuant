@@ -88,7 +88,7 @@ def submit_daily_paper_order(
 
     if stored.get("price_fingerprint") != price_fingerprint(prices):
         return _refused("price_fingerprint_mismatch")
-    disagreed = authoritative_disagreement(settings, prices)
+    disagreed = authoritative_disagreement(settings, prices, now=clock)
     if disagreed is not None:
         return _refused(disagreed)
     orders = _orders(settings.paper_path)
@@ -96,13 +96,11 @@ def submit_daily_paper_order(
     strategy_held = any(Decimal(value) > 0 for value in held_book["strategy_qty"].values())
     if action == "SELL" and Decimal(held_book["connectivity_qty"]) > 0 and not strategy_held:
         return _refused("connectivity_position_isolated")
-    marks = _marks(settings, _marked_symbols(held_book), quote_client, clock)
-    book = (
-        held_book
-        if marks is None and not _marked_symbols(held_book)
-        else build_portfolio(orders, marks)
-    )
-    if marks is None and _marked_symbols(held_book):
+    symbols = _marked_symbols(held_book)
+    marks = _marks(settings, symbols, quote_client, clock)
+    session_day = clock.astimezone(ZoneInfo("America/New_York")).date()
+    book = build_portfolio(orders, {} if marks is None else marks, session=session_day)
+    if marks is None and symbols:
         return _refused("portfolio_unreconciled")
     if book["disputed"] or not book["marks_complete"]:
         return _refused("portfolio_unreconciled")
@@ -155,9 +153,12 @@ def submit_daily_paper_order(
     if action == "SELL":
         if owned <= 0 and broker_qty is not None and broker_qty > 0:
             return _refused("connectivity_position_isolated")
-        if sell_qty <= 0 or broker_qty is None or broker_qty < owned:
-            return _refused("connectivity_position_isolated")
-        quantity = sell_qty
+        quantity = _floor_shares(sell_qty)
+        residual = sell_qty - quantity
+        if quantity <= 0 or quantity > sell_qty or broker_qty is None or broker_qty < quantity:
+            return _refused(
+                "quantity_below_precision" if quantity <= 0 else "connectivity_position_isolated"
+            )
     else:
         remaining = _sleeve(cash, buying_power, full["capital"])["remaining"]
         if notional > remaining or Decimal(book["available_cash_usd"]) < notional:
@@ -166,7 +167,7 @@ def submit_daily_paper_order(
         if touch is None or touch <= 0:
             return _refused("missing_quote")
         quantity = (notional / touch).quantize(Decimal("0.000001"), rounding=ROUND_DOWN)
-    if book["equity_usd"] is None:
+    if book["equity_usd"] is None or book["realized_today_usd"] is None:
         return _refused("portfolio_unreconciled")
     peak = Decimal(
         note_equity(
@@ -209,11 +210,18 @@ def submit_daily_paper_order(
         symbol,
         action.lower(),
         None if action == "SELL" else notional,
-        sell_qty if action == "SELL" else None,
+        quantity if action == "SELL" else None,
     )
+    if action == "SELL":
+        result["residual_qty"] = format(residual, "f")
     result["counts_as_strategy_pnl"] = True
     result["connectivity_excluded"] = True
     return result
+
+
+def _floor_shares(quantity: Decimal) -> Decimal:
+    """Match the risk policy's 6 decimal places without rounding a sell upward."""
+    return quantity.quantize(Decimal("0.000001"), rounding=ROUND_DOWN)
 
 
 def _trusted(
@@ -229,7 +237,11 @@ def _session_limit(orders: list[dict[str, Any]], now: datetime) -> bool:
     released = {"canceled", "cancelled", "rejected", "expired"}
     count = 0
     for row in orders:
-        if str(row.get("purpose")) != "strategy" or str(row.get("broker_status")) in released:
+        status = str(row.get("broker_status"))
+        filled = _money(row.get("filled_qty")) or Decimal("0")
+        if str(row.get("purpose")) != "strategy":
+            continue
+        if status in released and filled <= 0:
             continue
         text = str(row.get("created_at") or "")
         try:
@@ -314,7 +326,7 @@ def _risk(
     equity = Decimal(str(book["equity_usd"]))
     ledger = InternalLedger(cash_usd=cash, holdings=holdings)
     account = AccountMetrics(
-        realized_pnl_today_usd=Decimal(str(book["realized_pnl_usd"])),
+        realized_pnl_today_usd=Decimal(str(book["realized_today_usd"])),
         equity_usd=equity,
         peak_equity_usd=peak,
     )

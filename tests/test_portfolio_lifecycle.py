@@ -17,6 +17,7 @@ from nomadquant.daily.portfolio import build_portfolio
 from nomadquant.daily.store import save_decision
 from nomadquant.marketdata.calendar import sessions_between
 from tests.conftest import make_settings
+from tests.market_bars import seed_closes
 from tests.test_daily_pilot import SIGNAL, WHEN
 from tests.test_paper_pilot import CONNECTIVITY_CLIENT_ID, FakeClient, _Quotes
 
@@ -108,6 +109,7 @@ def test_a_price_change_does_not_increase_the_sell_quantity(tmp_path: Path) -> N
             "price_fingerprint": price_fingerprint(prices),
         },
     )
+    seed_closes(settings, prices, now=WHEN)
     _insert_order(
         settings.paper_path,
         client_order_id="nq-daily-open",
@@ -175,6 +177,7 @@ def test_a_stale_mark_blocks_a_held_position(tmp_path: Path) -> None:
             "price_fingerprint": price_fingerprint(prices),
         },
     )
+    seed_closes(settings, prices, now=WHEN)
     _insert_order(
         settings.paper_path,
         client_order_id="nq-daily-open",

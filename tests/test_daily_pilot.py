@@ -19,6 +19,7 @@ from nomadquant.daily.mcp_server import MarketContext
 from nomadquant.daily.walkforward import walk_forward
 from nomadquant.marketdata.calendar import is_session, next_session, sessions_between
 from tests.conftest import make_settings
+from tests.market_bars import seed_closes
 from tests.test_paper_pilot import CONNECTIVITY_CLIENT_ID, FakeClient, _Quotes
 
 SIGNAL = date(2024, 11, 1)
@@ -227,6 +228,7 @@ def test_authorized_pilot_submits_once_and_kill_stops_the_next(tmp_path: Path) -
     )
     assert decision["action"] == "BUY"
     assert decision["strategy_version"] == "1.0.0"
+    seed_closes(settings, prices, now=WHEN)
     client = FakeClient(when=WHEN)
     first = submit_daily_paper_order(
         settings,
@@ -290,6 +292,7 @@ def test_connectivity_shares_cannot_be_sold_as_strategy_shares(tmp_path: Path) -
             "price_fingerprint": price_fingerprint(prices),
         },
     )
+    seed_closes(settings, prices, now=WHEN)
     _insert_order(
         settings.paper_path,
         client_order_id=CONNECTIVITY_CLIENT_ID,
@@ -494,6 +497,7 @@ def test_held_strategy_shares_can_be_sold_after_a_mark(tmp_path: Path) -> None:
             "price_fingerprint": price_fingerprint(prices),
         },
     )
+    seed_closes(settings, prices, now=WHEN)
     _insert_order(
         settings.paper_path,
         client_order_id="nq-daily-open",

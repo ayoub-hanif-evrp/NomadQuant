@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any
+from zoneinfo import ZoneInfo
 
 ALLOCATION = Decimal("100")
 STRATEGY_LOSS_STOP = Decimal("20")
@@ -59,6 +61,8 @@ def _deduped(orders: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def build_portfolio(
     orders: list[dict[str, Any]],
     marks: dict[str, Decimal] | None = None,
+    *,
+    session: date | None = None,
 ) -> dict[str, Any]:
     """Return allocated cash, cost basis, and strategy P&L.
 
@@ -68,6 +72,8 @@ def build_portfolio(
     cash = ALLOCATION
     reserved = Decimal("0")
     realized = Decimal("0")
+    realized_today = Decimal("0")
+    today_known = session is not None
     connectivity_qty = Decimal("0")
     connectivity_cost = Decimal("0")
     quantity: dict[str, Decimal] = {}
@@ -114,8 +120,15 @@ def build_portfolio(
                 removed = basis * filled / owned
                 quantity[symbol] = owned - filled
                 cost[symbol] = basis - removed
+                gain = filled * price - removed
                 cash += filled * price
-                realized += filled * price - removed
+                realized += gain
+                if session is not None:
+                    traded = _session_day(row)
+                    if traded is None:
+                        today_known = False
+                    elif traded == session:
+                        realized_today += gain
             if status in _OPEN:
                 remaining = _money(row.get("remaining_qty"))
                 if remaining is None:
@@ -170,6 +183,9 @@ def build_portfolio(
         "available_cash_usd": format(cash, "f"),
         "reserved_cash_usd": format(reserved, "f"),
         "realized_pnl_usd": format(realized, "f"),
+        "realized_today_usd": None
+        if session is None or not today_known
+        else format(realized_today, "f"),
         "unrealized_pnl_usd": None if strategy_pnl is None else format(unrealized, "f"),
         "strategy_pnl_usd": None if strategy_pnl is None else format(strategy_pnl, "f"),
         "equity_usd": None if equity is None else format(equity, "f"),
@@ -187,3 +203,14 @@ def build_portfolio(
         "readiness": readiness,
         "loss_stop": bool(strategy_pnl is not None and strategy_pnl <= -STRATEGY_LOSS_STOP),
     }
+
+
+def _session_day(row: dict[str, Any]) -> date | None:
+    text = str(row.get("created_at") or "")
+    try:
+        created = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if created.tzinfo is None:
+        created = created.replace(tzinfo=UTC)
+    return created.astimezone(ZoneInfo("America/New_York")).date()
